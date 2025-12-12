@@ -80,6 +80,7 @@ class NessusHistoryTrackerApp:
         self.filter_cvss_min = tk.StringVar(value="0.0")
         self.filter_cvss_max = tk.StringVar(value="10.0")
         self.filter_opdir_status = tk.StringVar(value="All")
+        self.filter_env_type = tk.StringVar(value="All")  # Production/Pre-Production
 
         # Build UI
         self._setup_styles()
@@ -218,20 +219,23 @@ class NessusHistoryTrackerApp:
         ttk.Combobox(sev_row, textvariable=self.filter_status,
                     values=["All", "Active", "Resolved"], state="readonly", width=8).pack(side=tk.LEFT, padx=1)
 
-        # Row 4: Host Type + Location (inline)
+        # Row 4: Host Type + Env Type (inline)
         host_row = ttk.Frame(filter_frame)
         host_row.pack(fill=tk.X, pady=3)
         ttk.Label(host_row, text="Type:", width=8).pack(side=tk.LEFT)
         ttk.Combobox(host_row, textvariable=self.filter_host_type,
-                    values=["All", "Physical", "Virtual", "ILOM"], state="readonly", width=10).pack(side=tk.LEFT, padx=1)
-        ttk.Label(host_row, text="Loc:").pack(side=tk.LEFT, padx=(5, 0))
-        ttk.Entry(host_row, textvariable=self.filter_location, width=8).pack(side=tk.LEFT, padx=1)
+                    values=["All", "Physical", "Virtual", "ILOM"], state="readonly", width=8).pack(side=tk.LEFT, padx=1)
+        ttk.Label(host_row, text="Env:").pack(side=tk.LEFT, padx=(5, 0))
+        ttk.Combobox(host_row, textvariable=self.filter_env_type,
+                    values=["All", "Production", "Pre-Prod"], state="readonly", width=9).pack(side=tk.LEFT, padx=1)
 
-        # Row 5: Host Pattern (inline)
-        pattern_row = ttk.Frame(filter_frame)
-        pattern_row.pack(fill=tk.X, pady=3)
-        ttk.Label(pattern_row, text="Host:", width=8).pack(side=tk.LEFT)
-        ttk.Entry(pattern_row, textvariable=self.filter_host).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+        # Row 5: Location + Host Pattern (inline)
+        loc_row = ttk.Frame(filter_frame)
+        loc_row.pack(fill=tk.X, pady=3)
+        ttk.Label(loc_row, text="Loc:", width=8).pack(side=tk.LEFT)
+        ttk.Entry(loc_row, textvariable=self.filter_location, width=6).pack(side=tk.LEFT, padx=1)
+        ttk.Label(loc_row, text="Host:").pack(side=tk.LEFT, padx=(5, 0))
+        ttk.Entry(loc_row, textvariable=self.filter_host, width=12).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
 
         # Row 6: CVSS Range (inline)
         cvss_row = ttk.Frame(filter_frame)
@@ -1081,6 +1085,27 @@ class NessusHistoryTrackerApp:
             filtered = filtered[filtered['hostname'].apply(check_host_type)]
             filter_descriptions.append(f"Type: {host_type}")
 
+        # Filter: Environment Type (Production/Pre-Production)
+        env_type = self.filter_env_type.get()
+        if env_type != "All" and 'hostname' in filtered.columns:
+            def check_env_type(hostname):
+                if not isinstance(hostname, str) or len(hostname) < 9:
+                    return False
+                # Environment char is at position 7 (0-indexed) in 9-char format
+                hostname_lower = hostname.lower()
+                # Handle ILOM suffix
+                if '-ilom' in hostname_lower:
+                    hostname_lower = hostname_lower.replace('-ilom', '')
+                if len(hostname_lower) == 9:
+                    env_char = hostname_lower[7]
+                    if env_type == "Production":
+                        return env_char.isalpha()  # Letter = Production
+                    elif env_type == "Pre-Prod":
+                        return env_char.isdigit()  # Number = Pre-Production
+                return False
+            filtered = filtered[filtered['hostname'].apply(check_env_type)]
+            filter_descriptions.append(f"Env: {env_type}")
+
         # Filter: Location
         location = self.filter_location.get().strip().upper()
         if location and 'hostname' in filtered.columns:
@@ -1149,6 +1174,7 @@ class NessusHistoryTrackerApp:
         self.filter_severity.set("All")
         self.filter_status.set("All")
         self.filter_host_type.set("All")
+        self.filter_env_type.set("All")
         self.filter_host.set("")
         self.filter_location.set("")
         self.filter_cvss_min.set("0.0")
