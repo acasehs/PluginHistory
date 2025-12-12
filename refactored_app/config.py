@@ -79,6 +79,46 @@ HOST_TYPE_PHYSICAL = 'p'
 HOST_TYPE_VIRTUAL = 'v'
 HOST_TYPE_ILOM = 'ilom'
 
+# Environment type configuration
+# Labels for environment types
+ENV_TYPE_LABELS = {
+    'production': 'Production',
+    'pre_production': 'PSS',  # Pre-Production Support Systems
+    'shared': 'Shared',
+    'unknown': 'Unknown'
+}
+
+# Explicit hostname-to-environment mappings (checked FIRST before auto-detection)
+# Add hostnames or patterns that should be explicitly mapped to an environment
+# Format: 'hostname_pattern': 'environment_type'
+# environment_type can be: 'production', 'pre_production', 'shared'
+EXPLICIT_ENV_MAPPINGS = {
+    # Example network devices - add your shared infrastructure here
+    # 'core-switch-01': 'shared',
+    # 'fw-main-01': 'shared',
+    # 'lb-prod-01': 'production',
+}
+
+# Hostname patterns for shared resources (regex patterns)
+# These are checked if hostname doesn't match explicit mappings or standard format
+SHARED_RESOURCE_PATTERNS = [
+    r'^fw-',           # Firewalls
+    r'^lb-',           # Load balancers
+    r'^switch-',       # Switches
+    r'^router-',       # Routers
+    r'^core-',         # Core infrastructure
+    r'^san-',          # Storage area network
+    r'^nas-',          # Network attached storage
+    r'^dns-',          # DNS servers
+    r'^ntp-',          # NTP servers
+    r'^proxy-',        # Proxy servers
+    r'^vpn-',          # VPN devices
+    r'^mgmt-',         # Management devices
+]
+
+# Whether to auto-classify unmatched hostnames as shared (False = Unknown)
+AUTO_CLASSIFY_UNMATCHED_AS_SHARED = False
+
 # OPDIR compliance status colors
 OPDIR_STATUS_COLORS = {
     'On Track': '#28a745',

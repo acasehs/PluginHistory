@@ -227,7 +227,7 @@ class NessusHistoryTrackerApp:
                     values=["All", "Physical", "Virtual", "ILOM"], state="readonly", width=8).pack(side=tk.LEFT, padx=1)
         ttk.Label(host_row, text="Env:").pack(side=tk.LEFT, padx=(5, 0))
         ttk.Combobox(host_row, textvariable=self.filter_env_type,
-                    values=["All", "Production", "Pre-Prod"], state="readonly", width=9).pack(side=tk.LEFT, padx=1)
+                    values=["All", "Production", "PSS", "Shared"], state="readonly", width=9).pack(side=tk.LEFT, padx=1)
 
         # Row 5: Location + Host Pattern (inline)
         loc_row = ttk.Frame(filter_frame)
@@ -1085,23 +1085,21 @@ class NessusHistoryTrackerApp:
             filtered = filtered[filtered['hostname'].apply(check_host_type)]
             filter_descriptions.append(f"Type: {host_type}")
 
-        # Filter: Environment Type (Production/Pre-Production)
+        # Filter: Environment Type (Production/PSS/Shared)
+        # Uses hostname parser which checks: 1) Explicit mappings, 2) Shared patterns, 3) Auto-detection
         env_type = self.filter_env_type.get()
         if env_type != "All" and 'hostname' in filtered.columns:
+            from ..models.hostname_structure import parse_hostname, EnvironmentType
             def check_env_type(hostname):
-                if not isinstance(hostname, str) or len(hostname) < 9:
+                if not isinstance(hostname, str):
                     return False
-                # Environment char is at position 7 (0-indexed) in 9-char format
-                hostname_lower = hostname.lower()
-                # Handle ILOM suffix
-                if '-ilom' in hostname_lower:
-                    hostname_lower = hostname_lower.replace('-ilom', '')
-                if len(hostname_lower) == 9:
-                    env_char = hostname_lower[7]
-                    if env_type == "Production":
-                        return env_char.isalpha()  # Letter = Production
-                    elif env_type == "Pre-Prod":
-                        return env_char.isdigit()  # Number = Pre-Production
+                parsed = parse_hostname(hostname)
+                if env_type == "Production":
+                    return parsed.environment_type == EnvironmentType.PRODUCTION
+                elif env_type == "PSS":
+                    return parsed.environment_type == EnvironmentType.PRE_PRODUCTION
+                elif env_type == "Shared":
+                    return parsed.environment_type == EnvironmentType.SHARED
                 return False
             filtered = filtered[filtered['hostname'].apply(check_env_type)]
             filter_descriptions.append(f"Env: {env_type}")

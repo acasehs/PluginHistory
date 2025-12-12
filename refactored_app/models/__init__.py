@@ -6,12 +6,14 @@ from .finding import Finding, FindingLifecycle
 from .host import Host, HostPresence
 from .hostname_structure import (
     HostnameStructure, parse_hostname, HostType, EnvironmentType,
-    classify_environment_type, is_production_host, is_preprod_host
+    classify_environment_type, is_production_host, is_preprod_host,
+    is_shared_host, get_environment_label
 )
 
 __all__ = [
     'Finding', 'FindingLifecycle',
     'Host', 'HostPresence',
     'HostnameStructure', 'parse_hostname', 'HostType', 'EnvironmentType',
-    'classify_environment_type', 'is_production_host', 'is_preprod_host'
+    'classify_environment_type', 'is_production_host', 'is_preprod_host',
+    'is_shared_host', 'get_environment_label'
 ]
