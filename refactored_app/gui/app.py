@@ -22,7 +22,9 @@ except ImportError:
     HAS_MATPLOTLIB = False
 
 # Import application modules
-from ..config import GUI_WINDOW_SIZE, GUI_DARK_THEME, SEVERITY_ORDER
+from ..config import (GUI_WINDOW_SIZE, GUI_DARK_THEME, SEVERITY_ORDER,
+                       SLA_TARGETS_DAYS, SLA_WARNING_THRESHOLD, SLA_STATUS_COLORS,
+                       SLA_STATUS_OVERDUE, SLA_STATUS_APPROACHING, SLA_STATUS_ON_TRACK, SLA_STATUS_NO_SLA)
 from ..core.archive_extraction import extract_nested_archives, find_files_by_extension, cleanup_temp_directory
 from ..core.nessus_parser import parse_multiple_nessus_files
 from ..core.plugin_database import load_plugins_database
@@ -146,6 +148,10 @@ class NessusHistoryTrackerApp:
         self._build_opdir_tab()
         self._build_efficiency_tab()
         self._build_network_tab()
+        self._build_plugin_tab()
+        self._build_priority_tab()
+        self._build_sla_tab()
+        self._build_host_tracking_tab()
 
     def _build_file_selection(self, parent):
         """Build file selection section with compact layout."""
@@ -653,6 +659,164 @@ class NessusHistoryTrackerApp:
             self.network_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
         else:
             ttk.Label(network_frame, text="Install matplotlib for visualizations").pack(pady=50)
+
+    def _build_plugin_tab(self):
+        """Build plugin analysis visualization tab."""
+        plugin_frame = ttk.Frame(self.notebook)
+        self.notebook.add(plugin_frame, text="Plugins")
+        self.plugin_frame = plugin_frame
+
+        if HAS_MATPLOTLIB:
+            self.plugin_fig = Figure(figsize=(10, 8), dpi=100, facecolor=GUI_DARK_THEME['bg'])
+
+            # Top recurring plugins
+            self.plugin_ax1 = self.plugin_fig.add_subplot(221)
+            self.plugin_ax1.set_title('Top 15 Most Common Plugins', color=GUI_DARK_THEME['fg'])
+
+            # Plugin severity distribution
+            self.plugin_ax2 = self.plugin_fig.add_subplot(222)
+            self.plugin_ax2.set_title('Plugin Severity Distribution', color=GUI_DARK_THEME['fg'])
+
+            # Plugins by host count
+            self.plugin_ax3 = self.plugin_fig.add_subplot(223)
+            self.plugin_ax3.set_title('Plugins Affecting Most Hosts', color=GUI_DARK_THEME['fg'])
+
+            # Plugin age analysis
+            self.plugin_ax4 = self.plugin_fig.add_subplot(224)
+            self.plugin_ax4.set_title('Plugin Avg Age (Days Open)', color=GUI_DARK_THEME['fg'])
+
+            for ax in [self.plugin_ax1, self.plugin_ax2, self.plugin_ax3, self.plugin_ax4]:
+                ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
+                ax.tick_params(colors=GUI_DARK_THEME['fg'])
+                for spine in ax.spines.values():
+                    spine.set_color(GUI_DARK_THEME['fg'])
+
+            self.plugin_canvas = FigureCanvasTkAgg(self.plugin_fig, master=plugin_frame)
+            self.plugin_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        else:
+            ttk.Label(plugin_frame, text="Install matplotlib for visualizations").pack(pady=50)
+
+    def _build_priority_tab(self):
+        """Build remediation priority visualization tab (CVSS vs Age quadrant)."""
+        priority_frame = ttk.Frame(self.notebook)
+        self.notebook.add(priority_frame, text="Priority")
+        self.priority_frame = priority_frame
+
+        if HAS_MATPLOTLIB:
+            self.priority_fig = Figure(figsize=(10, 8), dpi=100, facecolor=GUI_DARK_THEME['bg'])
+
+            # Main quadrant chart - CVSS vs Days Open
+            self.priority_ax1 = self.priority_fig.add_subplot(221)
+            self.priority_ax1.set_title('Remediation Priority Matrix', color=GUI_DARK_THEME['fg'])
+
+            # Priority distribution pie
+            self.priority_ax2 = self.priority_fig.add_subplot(222)
+            self.priority_ax2.set_title('Priority Distribution', color=GUI_DARK_THEME['fg'])
+
+            # Top priority findings
+            self.priority_ax3 = self.priority_fig.add_subplot(223)
+            self.priority_ax3.set_title('Top 10 Priority Findings', color=GUI_DARK_THEME['fg'])
+
+            # Priority by severity
+            self.priority_ax4 = self.priority_fig.add_subplot(224)
+            self.priority_ax4.set_title('Priority Score by Severity', color=GUI_DARK_THEME['fg'])
+
+            for ax in [self.priority_ax1, self.priority_ax2, self.priority_ax3, self.priority_ax4]:
+                ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
+                ax.tick_params(colors=GUI_DARK_THEME['fg'])
+                for spine in ax.spines.values():
+                    spine.set_color(GUI_DARK_THEME['fg'])
+
+            self.priority_canvas = FigureCanvasTkAgg(self.priority_fig, master=priority_frame)
+            self.priority_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        else:
+            ttk.Label(priority_frame, text="Install matplotlib for visualizations").pack(pady=50)
+
+    def _build_sla_tab(self):
+        """Build SLA compliance visualization tab."""
+        sla_frame = ttk.Frame(self.notebook)
+        self.notebook.add(sla_frame, text="SLA")
+        self.sla_frame = sla_frame
+
+        # SLA Targets info at top
+        info_frame = ttk.LabelFrame(sla_frame, text="SLA Targets (Days)", padding=5)
+        info_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        sla_info = ttk.Frame(info_frame)
+        sla_info.pack(fill=tk.X)
+        for i, (sev, days) in enumerate(SLA_TARGETS_DAYS.items()):
+            if days is not None:
+                color = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff'}.get(sev, 'white')
+                ttk.Label(sla_info, text=f"{sev}: {days}d", foreground=color).grid(row=0, column=i, padx=10)
+
+        if HAS_MATPLOTLIB:
+            chart_frame = ttk.Frame(sla_frame)
+            chart_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+            self.sla_fig = Figure(figsize=(10, 7), dpi=100, facecolor=GUI_DARK_THEME['bg'])
+
+            # SLA Status overview
+            self.sla_ax1 = self.sla_fig.add_subplot(221)
+            self.sla_ax1.set_title('SLA Compliance Status', color=GUI_DARK_THEME['fg'])
+
+            # Overdue by severity
+            self.sla_ax2 = self.sla_fig.add_subplot(222)
+            self.sla_ax2.set_title('Overdue Findings by Severity', color=GUI_DARK_THEME['fg'])
+
+            # Approaching deadline
+            self.sla_ax3 = self.sla_fig.add_subplot(223)
+            self.sla_ax3.set_title('Approaching SLA Deadline', color=GUI_DARK_THEME['fg'])
+
+            # SLA breach trend
+            self.sla_ax4 = self.sla_fig.add_subplot(224)
+            self.sla_ax4.set_title('Days Until/Past SLA by Finding', color=GUI_DARK_THEME['fg'])
+
+            for ax in [self.sla_ax1, self.sla_ax2, self.sla_ax3, self.sla_ax4]:
+                ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
+                ax.tick_params(colors=GUI_DARK_THEME['fg'])
+                for spine in ax.spines.values():
+                    spine.set_color(GUI_DARK_THEME['fg'])
+
+            self.sla_canvas = FigureCanvasTkAgg(self.sla_fig, master=chart_frame)
+            self.sla_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        else:
+            ttk.Label(sla_frame, text="Install matplotlib for visualizations").pack(pady=50)
+
+    def _build_host_tracking_tab(self):
+        """Build host tracking visualization tab."""
+        host_tracking_frame = ttk.Frame(self.notebook)
+        self.notebook.add(host_tracking_frame, text="Host Track")
+        self.host_tracking_frame = host_tracking_frame
+
+        if HAS_MATPLOTLIB:
+            self.host_tracking_fig = Figure(figsize=(10, 8), dpi=100, facecolor=GUI_DARK_THEME['bg'])
+
+            # Missing hosts (dropped from recent scans)
+            self.host_tracking_ax1 = self.host_tracking_fig.add_subplot(221)
+            self.host_tracking_ax1.set_title('Hosts Missing from Recent Scans', color=GUI_DARK_THEME['fg'])
+
+            # Host presence trend
+            self.host_tracking_ax2 = self.host_tracking_fig.add_subplot(222)
+            self.host_tracking_ax2.set_title('Host Presence Over Time', color=GUI_DARK_THEME['fg'])
+
+            # Declining presence hosts
+            self.host_tracking_ax3 = self.host_tracking_fig.add_subplot(223)
+            self.host_tracking_ax3.set_title('Hosts with Declining Presence', color=GUI_DARK_THEME['fg'])
+
+            # Host status distribution
+            self.host_tracking_ax4 = self.host_tracking_fig.add_subplot(224)
+            self.host_tracking_ax4.set_title('Host Status Distribution', color=GUI_DARK_THEME['fg'])
+
+            for ax in [self.host_tracking_ax1, self.host_tracking_ax2, self.host_tracking_ax3, self.host_tracking_ax4]:
+                ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
+                ax.tick_params(colors=GUI_DARK_THEME['fg'])
+                for spine in ax.spines.values():
+                    spine.set_color(GUI_DARK_THEME['fg'])
+
+            self.host_tracking_canvas = FigureCanvasTkAgg(self.host_tracking_fig, master=host_tracking_frame)
+            self.host_tracking_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        else:
+            ttk.Label(host_tracking_frame, text="Install matplotlib for visualizations").pack(pady=50)
 
     # File selection methods
     def _truncate_filename(self, name: str, max_len: int = 20) -> str:
@@ -1526,6 +1690,379 @@ class NessusHistoryTrackerApp:
         self.network_fig.tight_layout()
         self.network_canvas.draw()
 
+    def _update_plugin_charts(self):
+        """Update plugin analysis visualizations."""
+        if not HAS_MATPLOTLIB or not hasattr(self, 'plugin_ax1'):
+            return
+
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+
+        for ax in [self.plugin_ax1, self.plugin_ax2, self.plugin_ax3, self.plugin_ax4]:
+            ax.clear()
+            ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
+
+        if df.empty:
+            self.plugin_canvas.draw()
+            return
+
+        # Chart 1: Top 15 most common plugins
+        if 'plugin_id' in df.columns:
+            plugin_counts = df.groupby('plugin_id').size().nlargest(15)
+            if len(plugin_counts) > 0:
+                # Get plugin names if available
+                if 'plugin_name' in df.columns:
+                    names = df.groupby('plugin_id')['plugin_name'].first()
+                    labels = [str(names.get(pid, pid))[:25] for pid in plugin_counts.index]
+                else:
+                    labels = [str(pid) for pid in plugin_counts.index]
+                self.plugin_ax1.barh(range(len(plugin_counts)), plugin_counts.values, color='#007bff')
+                self.plugin_ax1.set_yticks(range(len(plugin_counts)))
+                self.plugin_ax1.set_yticklabels(labels, fontsize=6)
+        self.plugin_ax1.set_title('Top 15 Most Common Plugins', color=GUI_DARK_THEME['fg'])
+
+        # Chart 2: Plugin severity distribution
+        if 'plugin_id' in df.columns and 'severity_text' in df.columns:
+            plugin_severity = df.groupby(['plugin_id', 'severity_text']).size().unstack(fill_value=0)
+            severity_totals = {}
+            for sev in ['Critical', 'High', 'Medium', 'Low', 'Info']:
+                if sev in plugin_severity.columns:
+                    severity_totals[sev] = plugin_severity[sev].sum()
+            if severity_totals:
+                colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff', 'Info': '#6c757d'}
+                bar_colors = [colors.get(s, 'gray') for s in severity_totals.keys()]
+                self.plugin_ax2.bar(range(len(severity_totals)), list(severity_totals.values()), color=bar_colors)
+                self.plugin_ax2.set_xticks(range(len(severity_totals)))
+                self.plugin_ax2.set_xticklabels(list(severity_totals.keys()), fontsize=8)
+        self.plugin_ax2.set_title('Plugin Severity Distribution', color=GUI_DARK_THEME['fg'])
+
+        # Chart 3: Plugins affecting most hosts
+        if 'plugin_id' in df.columns and 'hostname' in df.columns:
+            plugin_hosts = df.groupby('plugin_id')['hostname'].nunique().nlargest(10)
+            if len(plugin_hosts) > 0:
+                if 'plugin_name' in df.columns:
+                    names = df.groupby('plugin_id')['plugin_name'].first()
+                    labels = [str(names.get(pid, pid))[:20] for pid in plugin_hosts.index]
+                else:
+                    labels = [str(pid) for pid in plugin_hosts.index]
+                self.plugin_ax3.barh(range(len(plugin_hosts)), plugin_hosts.values, color='#17a2b8')
+                self.plugin_ax3.set_yticks(range(len(plugin_hosts)))
+                self.plugin_ax3.set_yticklabels(labels, fontsize=7)
+        self.plugin_ax3.set_title('Plugins Affecting Most Hosts', color=GUI_DARK_THEME['fg'])
+        self.plugin_ax3.set_xlabel('Host Count', color=GUI_DARK_THEME['fg'])
+
+        # Chart 4: Plugin average age
+        if 'plugin_id' in df.columns and 'days_open' in df.columns:
+            plugin_age = df.groupby('plugin_id')['days_open'].mean().nlargest(10)
+            if len(plugin_age) > 0:
+                if 'plugin_name' in df.columns:
+                    names = df.groupby('plugin_id')['plugin_name'].first()
+                    labels = [str(names.get(pid, pid))[:20] for pid in plugin_age.index]
+                else:
+                    labels = [str(pid) for pid in plugin_age.index]
+                self.plugin_ax4.barh(range(len(plugin_age)), plugin_age.values, color='#fd7e14')
+                self.plugin_ax4.set_yticks(range(len(plugin_age)))
+                self.plugin_ax4.set_yticklabels(labels, fontsize=7)
+        self.plugin_ax4.set_title('Plugin Avg Age (Days Open)', color=GUI_DARK_THEME['fg'])
+        self.plugin_ax4.set_xlabel('Days', color=GUI_DARK_THEME['fg'])
+
+        for ax in [self.plugin_ax1, self.plugin_ax2, self.plugin_ax3, self.plugin_ax4]:
+            ax.tick_params(colors=GUI_DARK_THEME['fg'])
+            for spine in ax.spines.values():
+                spine.set_color(GUI_DARK_THEME['fg'])
+
+        self.plugin_fig.tight_layout()
+        self.plugin_canvas.draw()
+
+    def _update_priority_charts(self):
+        """Update remediation priority visualizations (CVSS vs Age quadrant)."""
+        if not HAS_MATPLOTLIB or not hasattr(self, 'priority_ax1'):
+            return
+
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+
+        for ax in [self.priority_ax1, self.priority_ax2, self.priority_ax3, self.priority_ax4]:
+            ax.clear()
+            ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
+
+        if df.empty:
+            self.priority_canvas.draw()
+            return
+
+        # Only look at active findings for priority
+        active_df = df[df['status'] == 'Active'].copy() if 'status' in df.columns else df.copy()
+
+        # Calculate priority score (CVSS * days_open normalized)
+        if 'cvss3_base_score' in active_df.columns and 'days_open' in active_df.columns:
+            active_df['cvss'] = pd.to_numeric(active_df['cvss3_base_score'], errors='coerce').fillna(5.0)
+            active_df['priority_score'] = active_df['cvss'] * (1 + active_df['days_open'] / 30)
+        elif 'severity_value' in active_df.columns and 'days_open' in active_df.columns:
+            active_df['cvss'] = active_df['severity_value'] * 2.5  # Approximate CVSS from severity
+            active_df['priority_score'] = active_df['cvss'] * (1 + active_df['days_open'] / 30)
+        else:
+            active_df['cvss'] = 5.0
+            active_df['priority_score'] = 5.0
+
+        # Chart 1: CVSS vs Days Open scatter (Priority Matrix)
+        if 'days_open' in active_df.columns and len(active_df) > 0:
+            sample_df = active_df.head(500)  # Limit for performance
+            colors = sample_df['priority_score'].values if 'priority_score' in sample_df.columns else 'red'
+            scatter = self.priority_ax1.scatter(
+                sample_df['days_open'], sample_df['cvss'],
+                c=colors, cmap='RdYlGn_r', alpha=0.6, s=20
+            )
+            # Draw quadrant lines
+            self.priority_ax1.axhline(y=7.0, color='gray', linestyle='--', alpha=0.5)
+            self.priority_ax1.axvline(x=30, color='gray', linestyle='--', alpha=0.5)
+            # Label quadrants
+            self.priority_ax1.text(5, 8.5, 'Critical\nPriority', fontsize=8, color='#dc3545')
+            self.priority_ax1.text(60, 8.5, 'Urgent\n(Old+High)', fontsize=8, color='#fd7e14')
+            self.priority_ax1.text(5, 3, 'Monitor', fontsize=8, color='#28a745')
+            self.priority_ax1.text(60, 3, 'Schedule', fontsize=8, color='#ffc107')
+        self.priority_ax1.set_title('Remediation Priority Matrix', color=GUI_DARK_THEME['fg'])
+        self.priority_ax1.set_xlabel('Days Open', color=GUI_DARK_THEME['fg'])
+        self.priority_ax1.set_ylabel('CVSS Score', color=GUI_DARK_THEME['fg'])
+
+        # Chart 2: Priority distribution pie
+        if 'priority_score' in active_df.columns and len(active_df) > 0:
+            def categorize_priority(score):
+                if score >= 50:
+                    return 'Critical'
+                elif score >= 30:
+                    return 'High'
+                elif score >= 15:
+                    return 'Medium'
+                else:
+                    return 'Low'
+            priority_cats = active_df['priority_score'].apply(categorize_priority).value_counts()
+            colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#28a745'}
+            pie_colors = [colors.get(c, 'gray') for c in priority_cats.index]
+            self.priority_ax2.pie(priority_cats.values, labels=priority_cats.index, colors=pie_colors,
+                                 autopct='%1.1f%%', textprops={'color': GUI_DARK_THEME['fg']})
+        self.priority_ax2.set_title('Priority Distribution', color=GUI_DARK_THEME['fg'])
+
+        # Chart 3: Top 10 priority findings
+        if 'priority_score' in active_df.columns and len(active_df) > 0:
+            top_priority = active_df.nlargest(10, 'priority_score')
+            if 'hostname' in top_priority.columns and 'plugin_id' in top_priority.columns:
+                labels = [f"{row['hostname'][:10]}-{row['plugin_id']}" for _, row in top_priority.iterrows()]
+            else:
+                labels = [str(i) for i in range(len(top_priority))]
+            self.priority_ax3.barh(range(len(top_priority)), top_priority['priority_score'].values, color='#dc3545')
+            self.priority_ax3.set_yticks(range(len(top_priority)))
+            self.priority_ax3.set_yticklabels(labels, fontsize=7)
+        self.priority_ax3.set_title('Top 10 Priority Findings', color=GUI_DARK_THEME['fg'])
+        self.priority_ax3.set_xlabel('Priority Score', color=GUI_DARK_THEME['fg'])
+
+        # Chart 4: Priority by severity
+        if 'priority_score' in active_df.columns and 'severity_text' in active_df.columns:
+            sev_priority = active_df.groupby('severity_text')['priority_score'].mean()
+            sev_order = ['Critical', 'High', 'Medium', 'Low', 'Info']
+            sev_priority = sev_priority.reindex([s for s in sev_order if s in sev_priority.index])
+            if len(sev_priority) > 0:
+                colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff', 'Info': '#6c757d'}
+                bar_colors = [colors.get(s, 'gray') for s in sev_priority.index]
+                self.priority_ax4.bar(range(len(sev_priority)), sev_priority.values, color=bar_colors)
+                self.priority_ax4.set_xticks(range(len(sev_priority)))
+                self.priority_ax4.set_xticklabels(sev_priority.index, fontsize=8)
+        self.priority_ax4.set_title('Avg Priority Score by Severity', color=GUI_DARK_THEME['fg'])
+        self.priority_ax4.set_ylabel('Priority Score', color=GUI_DARK_THEME['fg'])
+
+        for ax in [self.priority_ax1, self.priority_ax2, self.priority_ax3, self.priority_ax4]:
+            ax.tick_params(colors=GUI_DARK_THEME['fg'])
+            for spine in ax.spines.values():
+                spine.set_color(GUI_DARK_THEME['fg'])
+
+        self.priority_fig.tight_layout()
+        self.priority_canvas.draw()
+
+    def _calculate_sla_status(self, row):
+        """Calculate SLA status for a finding based on severity and days open."""
+        severity = row.get('severity_text', 'Info')
+        days_open = row.get('days_open', 0)
+
+        target = SLA_TARGETS_DAYS.get(severity)
+        if target is None:
+            return SLA_STATUS_NO_SLA, None, None
+
+        days_remaining = target - days_open
+        if days_remaining < 0:
+            return SLA_STATUS_OVERDUE, days_remaining, target
+        elif days_remaining <= target * SLA_WARNING_THRESHOLD:
+            return SLA_STATUS_APPROACHING, days_remaining, target
+        else:
+            return SLA_STATUS_ON_TRACK, days_remaining, target
+
+    def _update_sla_charts(self):
+        """Update SLA compliance visualizations."""
+        if not HAS_MATPLOTLIB or not hasattr(self, 'sla_ax1'):
+            return
+
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+
+        for ax in [self.sla_ax1, self.sla_ax2, self.sla_ax3, self.sla_ax4]:
+            ax.clear()
+            ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
+
+        if df.empty:
+            self.sla_canvas.draw()
+            return
+
+        # Only active findings for SLA
+        active_df = df[df['status'] == 'Active'].copy() if 'status' in df.columns else df.copy()
+
+        if active_df.empty:
+            self.sla_canvas.draw()
+            return
+
+        # Calculate SLA status for each finding
+        sla_data = active_df.apply(lambda row: self._calculate_sla_status(row), axis=1)
+        active_df['sla_status'] = [x[0] for x in sla_data]
+        active_df['days_remaining'] = [x[1] for x in sla_data]
+        active_df['sla_target'] = [x[2] for x in sla_data]
+
+        # Chart 1: SLA Status overview (pie)
+        status_counts = active_df['sla_status'].value_counts()
+        if len(status_counts) > 0:
+            colors = [SLA_STATUS_COLORS.get(s, '#6c757d') for s in status_counts.index]
+            self.sla_ax1.pie(status_counts.values, labels=status_counts.index, colors=colors,
+                           autopct='%1.1f%%', textprops={'color': GUI_DARK_THEME['fg']})
+        self.sla_ax1.set_title('SLA Compliance Status', color=GUI_DARK_THEME['fg'])
+
+        # Chart 2: Overdue by severity
+        overdue = active_df[active_df['sla_status'] == SLA_STATUS_OVERDUE]
+        if not overdue.empty and 'severity_text' in overdue.columns:
+            overdue_by_sev = overdue['severity_text'].value_counts()
+            sev_order = ['Critical', 'High', 'Medium', 'Low']
+            overdue_by_sev = overdue_by_sev.reindex([s for s in sev_order if s in overdue_by_sev.index])
+            if len(overdue_by_sev) > 0:
+                colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff'}
+                bar_colors = [colors.get(s, 'gray') for s in overdue_by_sev.index]
+                self.sla_ax2.bar(range(len(overdue_by_sev)), overdue_by_sev.values, color=bar_colors)
+                self.sla_ax2.set_xticks(range(len(overdue_by_sev)))
+                self.sla_ax2.set_xticklabels(overdue_by_sev.index, fontsize=9)
+        self.sla_ax2.set_title(f'Overdue Findings ({len(overdue)} total)', color=GUI_DARK_THEME['fg'])
+        self.sla_ax2.set_ylabel('Count', color=GUI_DARK_THEME['fg'])
+
+        # Chart 3: Approaching deadline - show findings closest to SLA breach
+        approaching = active_df[active_df['sla_status'] == SLA_STATUS_APPROACHING].copy()
+        if not approaching.empty:
+            approaching = approaching.nsmallest(15, 'days_remaining')
+            if 'hostname' in approaching.columns and 'severity_text' in approaching.columns:
+                labels = [f"{row['hostname'][:12]} ({row['severity_text'][:1]})" for _, row in approaching.iterrows()]
+            else:
+                labels = [str(i) for i in range(len(approaching))]
+            colors = ['#ffc107' if d > 0 else '#dc3545' for d in approaching['days_remaining']]
+            self.sla_ax3.barh(range(len(approaching)), approaching['days_remaining'].values, color=colors)
+            self.sla_ax3.set_yticks(range(len(approaching)))
+            self.sla_ax3.set_yticklabels(labels, fontsize=7)
+            self.sla_ax3.axvline(x=0, color='#dc3545', linestyle='-', linewidth=2)
+        self.sla_ax3.set_title(f'Approaching Deadline ({len(approaching)} findings)', color=GUI_DARK_THEME['fg'])
+        self.sla_ax3.set_xlabel('Days Until SLA Breach', color=GUI_DARK_THEME['fg'])
+
+        # Chart 4: Days until/past SLA distribution
+        has_sla = active_df[active_df['sla_status'] != SLA_STATUS_NO_SLA]
+        if not has_sla.empty and 'days_remaining' in has_sla.columns:
+            days_vals = has_sla['days_remaining'].dropna()
+            if len(days_vals) > 0:
+                # Color by positive (green) or negative (red)
+                bins = list(range(int(days_vals.min()) - 5, int(days_vals.max()) + 5, 5))
+                if len(bins) < 2:
+                    bins = [-30, -15, 0, 15, 30, 45, 60]
+                n, bins_out, patches = self.sla_ax4.hist(days_vals, bins=bins, edgecolor='white')
+                for i, patch in enumerate(patches):
+                    if bins_out[i] < 0:
+                        patch.set_facecolor('#dc3545')  # Overdue - red
+                    elif bins_out[i] < 10:
+                        patch.set_facecolor('#ffc107')  # Approaching - yellow
+                    else:
+                        patch.set_facecolor('#28a745')  # On track - green
+                self.sla_ax4.axvline(x=0, color='white', linestyle='--', linewidth=2)
+        self.sla_ax4.set_title('Days Until/Past SLA Distribution', color=GUI_DARK_THEME['fg'])
+        self.sla_ax4.set_xlabel('Days (negative = overdue)', color=GUI_DARK_THEME['fg'])
+        self.sla_ax4.set_ylabel('Finding Count', color=GUI_DARK_THEME['fg'])
+
+        for ax in [self.sla_ax1, self.sla_ax2, self.sla_ax3, self.sla_ax4]:
+            ax.tick_params(colors=GUI_DARK_THEME['fg'])
+            for spine in ax.spines.values():
+                spine.set_color(GUI_DARK_THEME['fg'])
+
+        self.sla_fig.tight_layout()
+        self.sla_canvas.draw()
+
+    def _update_host_tracking_charts(self):
+        """Update host tracking visualizations."""
+        if not HAS_MATPLOTLIB or not hasattr(self, 'host_tracking_ax1'):
+            return
+
+        host_df = self.filtered_host_df if not self.filtered_host_df.empty else self.host_presence_df
+        hist_df = self.historical_df
+
+        for ax in [self.host_tracking_ax1, self.host_tracking_ax2, self.host_tracking_ax3, self.host_tracking_ax4]:
+            ax.clear()
+            ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
+
+        if host_df.empty:
+            self.host_tracking_canvas.draw()
+            return
+
+        # Chart 1: Hosts missing from recent scans
+        if 'status' in host_df.columns:
+            missing = host_df[host_df['status'] != 'Active']
+            if not missing.empty and 'last_seen' in missing.columns:
+                missing = missing.copy()
+                missing['last_seen'] = pd.to_datetime(missing['last_seen'])
+                missing = missing.nlargest(15, 'last_seen') if len(missing) > 15 else missing
+                if 'hostname' in missing.columns:
+                    labels = [str(h)[:15] for h in missing['hostname']]
+                    # Days since last seen
+                    days_missing = (pd.Timestamp.now() - missing['last_seen']).dt.days
+                    self.host_tracking_ax1.barh(range(len(missing)), days_missing.values, color='#dc3545')
+                    self.host_tracking_ax1.set_yticks(range(len(missing)))
+                    self.host_tracking_ax1.set_yticklabels(labels, fontsize=7)
+        self.host_tracking_ax1.set_title('Hosts Missing from Recent Scans', color=GUI_DARK_THEME['fg'])
+        self.host_tracking_ax1.set_xlabel('Days Since Last Seen', color=GUI_DARK_THEME['fg'])
+
+        # Chart 2: Host presence over time
+        if not hist_df.empty and 'scan_date' in hist_df.columns and 'hostname' in hist_df.columns:
+            hist_copy = hist_df.copy()
+            hist_copy['scan_date'] = pd.to_datetime(hist_copy['scan_date'])
+            hosts_per_scan = hist_copy.groupby(hist_copy['scan_date'].dt.date)['hostname'].nunique()
+            if len(hosts_per_scan) > 0:
+                self.host_tracking_ax2.plot(range(len(hosts_per_scan)), hosts_per_scan.values, 'c-', marker='o', markersize=4)
+                self.host_tracking_ax2.fill_between(range(len(hosts_per_scan)), hosts_per_scan.values, alpha=0.3, color='cyan')
+        self.host_tracking_ax2.set_title('Host Presence Over Time', color=GUI_DARK_THEME['fg'])
+        self.host_tracking_ax2.set_ylabel('Unique Hosts', color=GUI_DARK_THEME['fg'])
+
+        # Chart 3: Hosts with declining presence (low presence %)
+        if 'presence_percentage' in host_df.columns:
+            low_presence = host_df[host_df['presence_percentage'] < 50].nsmallest(15, 'presence_percentage')
+            if not low_presence.empty and 'hostname' in low_presence.columns:
+                labels = [str(h)[:15] for h in low_presence['hostname']]
+                self.host_tracking_ax3.barh(range(len(low_presence)), low_presence['presence_percentage'].values, color='#ffc107')
+                self.host_tracking_ax3.set_yticks(range(len(low_presence)))
+                self.host_tracking_ax3.set_yticklabels(labels, fontsize=7)
+                self.host_tracking_ax3.axvline(x=50, color='#dc3545', linestyle='--', alpha=0.7)
+        self.host_tracking_ax3.set_title('Hosts with Low Presence (<50%)', color=GUI_DARK_THEME['fg'])
+        self.host_tracking_ax3.set_xlabel('Presence %', color=GUI_DARK_THEME['fg'])
+
+        # Chart 4: Host status distribution
+        if 'status' in host_df.columns:
+            status_counts = host_df['status'].value_counts()
+            if len(status_counts) > 0:
+                colors = {'Active': '#28a745', 'Inactive': '#dc3545', 'Intermittent': '#ffc107'}
+                pie_colors = [colors.get(s, '#6c757d') for s in status_counts.index]
+                self.host_tracking_ax4.pie(status_counts.values, labels=status_counts.index, colors=pie_colors,
+                                          autopct='%1.1f%%', textprops={'color': GUI_DARK_THEME['fg']})
+        self.host_tracking_ax4.set_title('Host Status Distribution', color=GUI_DARK_THEME['fg'])
+
+        for ax in [self.host_tracking_ax1, self.host_tracking_ax2, self.host_tracking_ax3, self.host_tracking_ax4]:
+            ax.tick_params(colors=GUI_DARK_THEME['fg'])
+            for spine in ax.spines.values():
+                spine.set_color(GUI_DARK_THEME['fg'])
+
+        self.host_tracking_fig.tight_layout()
+        self.host_tracking_canvas.draw()
+
     def _update_all_visualizations(self):
         """Update all visualization tabs."""
         self._update_trends_chart()
@@ -1534,6 +2071,10 @@ class NessusHistoryTrackerApp:
         self._update_opdir_charts()
         self._update_efficiency_charts()
         self._update_network_charts()
+        self._update_plugin_charts()
+        self._update_priority_charts()
+        self._update_sla_charts()
+        self._update_host_tracking_charts()
 
     # Export methods
     def _export_excel(self):

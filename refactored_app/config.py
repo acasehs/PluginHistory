@@ -96,6 +96,32 @@ AGE_BUCKETS = [
     (121, float('inf'), '121+')
 ]
 
+# SLA Compliance Targets (in days) - configurable per severity
+# These define the maximum allowed days to remediate findings
+SLA_TARGETS_DAYS = {
+    'Critical': 15,    # Critical findings must be remediated within 15 days
+    'High': 30,        # High findings within 30 days
+    'Medium': 60,      # Medium findings within 60 days
+    'Low': 90,         # Low findings within 90 days
+    'Info': None       # Informational findings have no SLA
+}
+
+# SLA Warning threshold (percentage of SLA remaining to trigger "Approaching" status)
+SLA_WARNING_THRESHOLD = 0.25  # 25% - e.g., Critical at 11+ days is "Approaching"
+
+# SLA Status definitions
+SLA_STATUS_OVERDUE = 'Overdue'
+SLA_STATUS_APPROACHING = 'Approaching'
+SLA_STATUS_ON_TRACK = 'On Track'
+SLA_STATUS_NO_SLA = 'No SLA'
+
+SLA_STATUS_COLORS = {
+    'Overdue': '#dc3545',       # Red
+    'Approaching': '#ffc107',    # Yellow/Orange
+    'On Track': '#28a745',       # Green
+    'No SLA': '#6c757d'          # Gray
+}
+
 # GUI settings
 GUI_WINDOW_SIZE = "1400x900"
 GUI_DARK_THEME = {
