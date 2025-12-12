@@ -73,6 +73,7 @@ class NessusHistoryTrackerApp:
         style = ttk.Style()
         style.theme_use('clam')
 
+        # Base styles
         style.configure('TFrame', background=GUI_DARK_THEME['bg'])
         style.configure('TLabel', background=GUI_DARK_THEME['bg'], foreground=GUI_DARK_THEME['fg'])
         style.configure('TButton', background=GUI_DARK_THEME['button_bg'], foreground=GUI_DARK_THEME['fg'])
@@ -80,6 +81,24 @@ class NessusHistoryTrackerApp:
         style.configure('TCheckbutton', background=GUI_DARK_THEME['bg'], foreground=GUI_DARK_THEME['fg'])
         style.configure('TNotebook', background=GUI_DARK_THEME['bg'])
         style.configure('TNotebook.Tab', background=GUI_DARK_THEME['button_bg'], foreground=GUI_DARK_THEME['fg'])
+
+        # Combobox dark theme
+        style.configure('TCombobox',
+                       fieldbackground=GUI_DARK_THEME['entry_bg'],
+                       background=GUI_DARK_THEME['button_bg'],
+                       foreground=GUI_DARK_THEME['fg'],
+                       arrowcolor=GUI_DARK_THEME['fg'])
+        style.map('TCombobox',
+                 fieldbackground=[('readonly', GUI_DARK_THEME['entry_bg'])],
+                 selectbackground=[('readonly', GUI_DARK_THEME['button_bg'])],
+                 selectforeground=[('readonly', GUI_DARK_THEME['fg'])])
+
+        # LabelFrame dark theme
+        style.configure('TLabelframe', background=GUI_DARK_THEME['bg'])
+        style.configure('TLabelframe.Label', background=GUI_DARK_THEME['bg'], foreground=GUI_DARK_THEME['fg'])
+
+        # Separator
+        style.configure('TSeparator', background=GUI_DARK_THEME['button_bg'])
 
     def _build_ui(self):
         """Build the main user interface."""
@@ -109,113 +128,115 @@ class NessusHistoryTrackerApp:
         self._build_host_tab()
 
     def _build_file_selection(self, parent):
-        """Build file selection section."""
-        file_frame = ttk.LabelFrame(parent, text="Data Sources", padding=10)
-        file_frame.pack(fill=tk.X, pady=(0, 10))
+        """Build file selection section with compact layout."""
+        file_frame = ttk.LabelFrame(parent, text="Data Sources", padding=5)
+        file_frame.pack(fill=tk.X, pady=(0, 5))
 
-        # Archives
-        ttk.Label(file_frame, text="Nessus Archives:").pack(anchor=tk.W)
+        # Archives row
         archive_row = ttk.Frame(file_frame)
         archive_row.pack(fill=tk.X, pady=2)
-        self.archives_label = ttk.Label(archive_row, text="No files selected", foreground="gray")
+        ttk.Label(archive_row, text="Archives:", width=9).pack(side=tk.LEFT)
+        self.archives_label = ttk.Label(archive_row, text="None", foreground="gray", width=18, anchor=tk.W)
         self.archives_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Button(archive_row, text="Browse", command=self._select_archives).pack(side=tk.RIGHT)
+        ttk.Button(archive_row, text="...", command=self._select_archives, width=3).pack(side=tk.RIGHT)
 
-        # Plugins DB
-        ttk.Label(file_frame, text="Plugins Database:").pack(anchor=tk.W, pady=(10, 0))
+        # Plugins DB row
         plugins_row = ttk.Frame(file_frame)
         plugins_row.pack(fill=tk.X, pady=2)
-        self.plugins_label = ttk.Label(plugins_row, text="None selected", foreground="gray")
+        ttk.Label(plugins_row, text="Plugins:", width=9).pack(side=tk.LEFT)
+        self.plugins_label = ttk.Label(plugins_row, text="None", foreground="gray", width=18, anchor=tk.W)
         self.plugins_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Button(plugins_row, text="Browse", command=self._select_plugins_db).pack(side=tk.RIGHT)
+        ttk.Button(plugins_row, text="...", command=self._select_plugins_db, width=3).pack(side=tk.RIGHT)
 
-        # Existing DB
-        ttk.Label(file_frame, text="Existing Database:").pack(anchor=tk.W, pady=(10, 0))
+        # Existing DB row
         db_row = ttk.Frame(file_frame)
         db_row.pack(fill=tk.X, pady=2)
-        self.existing_db_label = ttk.Label(db_row, text="None selected", foreground="gray")
+        ttk.Label(db_row, text="Existing:", width=9).pack(side=tk.LEFT)
+        self.existing_db_label = ttk.Label(db_row, text="None", foreground="gray", width=18, anchor=tk.W)
         self.existing_db_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Button(db_row, text="Browse", command=self._select_existing_db).pack(side=tk.RIGHT)
+        ttk.Button(db_row, text="...", command=self._select_existing_db, width=3).pack(side=tk.RIGHT)
 
-        # OPDIR
-        ttk.Label(file_frame, text="OPDIR Mapping:").pack(anchor=tk.W, pady=(10, 0))
+        # OPDIR row
         opdir_row = ttk.Frame(file_frame)
         opdir_row.pack(fill=tk.X, pady=2)
-        self.opdir_label = ttk.Label(opdir_row, text="None selected", foreground="gray")
+        ttk.Label(opdir_row, text="OPDIR:", width=9).pack(side=tk.LEFT)
+        self.opdir_label = ttk.Label(opdir_row, text="None", foreground="gray", width=18, anchor=tk.W)
         self.opdir_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Button(opdir_row, text="Browse", command=self._select_opdir_file).pack(side=tk.RIGHT)
+        ttk.Button(opdir_row, text="...", command=self._select_opdir_file, width=3).pack(side=tk.RIGHT)
 
     def _build_filter_panel(self, parent):
-        """Build filter controls section."""
-        filter_frame = ttk.LabelFrame(parent, text="Filters", padding=10)
-        filter_frame.pack(fill=tk.X, pady=(0, 10))
+        """Build filter controls section with compact inline layout."""
+        filter_frame = ttk.LabelFrame(parent, text="Filters", padding=5)
+        filter_frame.pack(fill=tk.X, pady=(0, 5))
 
-        # Include Info
+        # Row 1: Include Info checkbox
         ttk.Checkbutton(filter_frame, text="Include Info Severity",
                        variable=self.filter_include_info).pack(anchor=tk.W)
 
-        # Date Range
-        ttk.Label(filter_frame, text="Date Range:").pack(anchor=tk.W, pady=(10, 0))
+        # Row 2: Date Range (inline)
         date_row = ttk.Frame(filter_frame)
-        date_row.pack(fill=tk.X, pady=2)
-        ttk.Entry(date_row, textvariable=self.filter_start_date, width=12).pack(side=tk.LEFT)
-        ttk.Label(date_row, text=" to ").pack(side=tk.LEFT)
-        ttk.Entry(date_row, textvariable=self.filter_end_date, width=12).pack(side=tk.LEFT)
+        date_row.pack(fill=tk.X, pady=3)
+        ttk.Label(date_row, text="Dates:", width=8).pack(side=tk.LEFT)
+        ttk.Entry(date_row, textvariable=self.filter_start_date, width=10).pack(side=tk.LEFT, padx=1)
+        ttk.Label(date_row, text="-").pack(side=tk.LEFT)
+        ttk.Entry(date_row, textvariable=self.filter_end_date, width=10).pack(side=tk.LEFT, padx=1)
 
-        # Severity Filter
-        ttk.Label(filter_frame, text="Severity:").pack(anchor=tk.W, pady=(10, 0))
-        severity_options = ["All", "Critical", "High", "Medium", "Low", "Info", "Critical+High"]
-        ttk.Combobox(filter_frame, textvariable=self.filter_severity,
-                    values=severity_options, state="readonly").pack(fill=tk.X, pady=2)
+        # Row 3: Severity + Status (inline)
+        sev_row = ttk.Frame(filter_frame)
+        sev_row.pack(fill=tk.X, pady=3)
+        ttk.Label(sev_row, text="Severity:", width=8).pack(side=tk.LEFT)
+        severity_options = ["All", "Critical", "High", "Medium", "Low", "Info", "Crit+High"]
+        ttk.Combobox(sev_row, textvariable=self.filter_severity,
+                    values=severity_options, state="readonly", width=10).pack(side=tk.LEFT, padx=1)
+        ttk.Label(sev_row, text="Status:").pack(side=tk.LEFT, padx=(5, 0))
+        ttk.Combobox(sev_row, textvariable=self.filter_status,
+                    values=["All", "Active", "Resolved"], state="readonly", width=8).pack(side=tk.LEFT, padx=1)
 
-        # Status Filter
-        ttk.Label(filter_frame, text="Status:").pack(anchor=tk.W, pady=(10, 0))
-        ttk.Combobox(filter_frame, textvariable=self.filter_status,
-                    values=["All", "Active", "Resolved"], state="readonly").pack(fill=tk.X, pady=2)
+        # Row 4: Host Type + Location (inline)
+        host_row = ttk.Frame(filter_frame)
+        host_row.pack(fill=tk.X, pady=3)
+        ttk.Label(host_row, text="Type:", width=8).pack(side=tk.LEFT)
+        ttk.Combobox(host_row, textvariable=self.filter_host_type,
+                    values=["All", "Physical", "Virtual", "ILOM"], state="readonly", width=10).pack(side=tk.LEFT, padx=1)
+        ttk.Label(host_row, text="Loc:").pack(side=tk.LEFT, padx=(5, 0))
+        ttk.Entry(host_row, textvariable=self.filter_location, width=8).pack(side=tk.LEFT, padx=1)
 
-        # Host Type Filter
-        ttk.Label(filter_frame, text="Host Type:").pack(anchor=tk.W, pady=(10, 0))
-        ttk.Combobox(filter_frame, textvariable=self.filter_host_type,
-                    values=["All", "Physical", "Virtual", "ILOM"], state="readonly").pack(fill=tk.X, pady=2)
+        # Row 5: Host Pattern (inline)
+        pattern_row = ttk.Frame(filter_frame)
+        pattern_row.pack(fill=tk.X, pady=3)
+        ttk.Label(pattern_row, text="Host:", width=8).pack(side=tk.LEFT)
+        ttk.Entry(pattern_row, textvariable=self.filter_host).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
 
-        # Host Pattern
-        ttk.Label(filter_frame, text="Host Pattern:").pack(anchor=tk.W, pady=(10, 0))
-        ttk.Entry(filter_frame, textvariable=self.filter_host).pack(fill=tk.X, pady=2)
-
-        # Location Filter
-        ttk.Label(filter_frame, text="Location Code:").pack(anchor=tk.W, pady=(10, 0))
-        ttk.Entry(filter_frame, textvariable=self.filter_location).pack(fill=tk.X, pady=2)
-
-        # CVSS Range
-        ttk.Label(filter_frame, text="CVSS Range:").pack(anchor=tk.W, pady=(10, 0))
+        # Row 6: CVSS Range (inline)
         cvss_row = ttk.Frame(filter_frame)
-        cvss_row.pack(fill=tk.X, pady=2)
-        ttk.Entry(cvss_row, textvariable=self.filter_cvss_min, width=6).pack(side=tk.LEFT)
-        ttk.Label(cvss_row, text=" - ").pack(side=tk.LEFT)
-        ttk.Entry(cvss_row, textvariable=self.filter_cvss_max, width=6).pack(side=tk.LEFT)
-
-        # Apply Filters Button
-        ttk.Button(filter_frame, text="Apply Filters",
-                  command=self._apply_filters).pack(fill=tk.X, pady=(10, 0))
+        cvss_row.pack(fill=tk.X, pady=3)
+        ttk.Label(cvss_row, text="CVSS:", width=8).pack(side=tk.LEFT)
+        ttk.Entry(cvss_row, textvariable=self.filter_cvss_min, width=5).pack(side=tk.LEFT, padx=1)
+        ttk.Label(cvss_row, text="-").pack(side=tk.LEFT)
+        ttk.Entry(cvss_row, textvariable=self.filter_cvss_max, width=5).pack(side=tk.LEFT, padx=1)
+        ttk.Button(cvss_row, text="Apply", command=self._apply_filters, width=8).pack(side=tk.RIGHT)
 
     def _build_action_buttons(self, parent):
-        """Build action buttons section."""
-        action_frame = ttk.LabelFrame(parent, text="Actions", padding=10)
+        """Build action buttons section with compact 2-per-row layout."""
+        action_frame = ttk.LabelFrame(parent, text="Actions", padding=5)
         action_frame.pack(fill=tk.X)
 
-        ttk.Button(action_frame, text="Process Archives",
-                  command=self._process_archives).pack(fill=tk.X, pady=2)
-        ttk.Button(action_frame, text="Refresh Analysis",
-                  command=self._refresh_analysis).pack(fill=tk.X, pady=2)
+        # Row 1: Process + Refresh
+        row1 = ttk.Frame(action_frame)
+        row1.pack(fill=tk.X, pady=2)
+        ttk.Button(row1, text="Process", command=self._process_archives).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+        ttk.Button(row1, text="Refresh", command=self._refresh_analysis).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
 
-        ttk.Separator(action_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
+        # Row 2: Excel + SQLite
+        row2 = ttk.Frame(action_frame)
+        row2.pack(fill=tk.X, pady=2)
+        ttk.Button(row2, text="Excel", command=self._export_excel).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+        ttk.Button(row2, text="SQLite", command=self._export_sqlite).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
 
-        ttk.Button(action_frame, text="Export to Excel",
-                  command=self._export_excel).pack(fill=tk.X, pady=2)
-        ttk.Button(action_frame, text="Export to SQLite",
-                  command=self._export_sqlite).pack(fill=tk.X, pady=2)
-        ttk.Button(action_frame, text="Export to JSON",
-                  command=self._export_json).pack(fill=tk.X, pady=2)
+        # Row 3: JSON (centered)
+        row3 = ttk.Frame(action_frame)
+        row3.pack(fill=tk.X, pady=2)
+        ttk.Button(row3, text="JSON", command=self._export_json).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
 
     def _build_status_tab(self):
         """Build status/log tab."""
@@ -251,6 +272,12 @@ class NessusHistoryTrackerApp:
         self.host_frame = host_frame
 
     # File selection methods
+    def _truncate_filename(self, name: str, max_len: int = 20) -> str:
+        """Truncate filename to fit in label."""
+        if len(name) <= max_len:
+            return name
+        return name[:max_len-3] + "..."
+
     def _select_archives(self):
         """Select Nessus archive files."""
         filetypes = (('Archive files', '*.zip'), ('Nessus files', '*.nessus'), ('All files', '*.*'))
@@ -258,7 +285,7 @@ class NessusHistoryTrackerApp:
 
         if paths:
             self.archive_paths = list(paths)
-            self.archives_label.config(text=f"{len(self.archive_paths)} file(s) selected", foreground="white")
+            self.archives_label.config(text=f"{len(self.archive_paths)} file(s)", foreground="white")
             self._log(f"Selected {len(self.archive_paths)} archive(s)")
 
     def _select_plugins_db(self):
@@ -268,7 +295,7 @@ class NessusHistoryTrackerApp:
 
         if path:
             self.plugins_db_path = path
-            self.plugins_label.config(text=os.path.basename(path), foreground="white")
+            self.plugins_label.config(text=self._truncate_filename(os.path.basename(path)), foreground="white")
             self._log(f"Selected plugins DB: {os.path.basename(path)}")
 
     def _select_existing_db(self):
@@ -278,7 +305,7 @@ class NessusHistoryTrackerApp:
 
         if path:
             self.existing_db_path = path
-            self.existing_db_label.config(text=os.path.basename(path), foreground="white")
+            self.existing_db_label.config(text=self._truncate_filename(os.path.basename(path)), foreground="white")
             self._log(f"Selected existing DB: {os.path.basename(path)}")
 
     def _select_opdir_file(self):
@@ -288,7 +315,7 @@ class NessusHistoryTrackerApp:
 
         if path:
             self.opdir_file_path = path
-            self.opdir_label.config(text=os.path.basename(path), foreground="white")
+            self.opdir_label.config(text=self._truncate_filename(os.path.basename(path)), foreground="white")
             self._log(f"Selected OPDIR file: {os.path.basename(path)}")
 
     # Processing methods
