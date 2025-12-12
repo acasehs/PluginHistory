@@ -10,6 +10,17 @@ import os
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 
+# Matplotlib for charts (with Tk backend)
+try:
+    import matplotlib
+    matplotlib.use('TkAgg')
+    import matplotlib.pyplot as plt
+    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+    from matplotlib.figure import Figure
+    HAS_MATPLOTLIB = True
+except ImportError:
+    HAS_MATPLOTLIB = False
+
 # Import application modules
 from ..config import GUI_WINDOW_SIZE, GUI_DARK_THEME, SEVERITY_ORDER
 from ..core.archive_extraction import extract_nested_archives, find_files_by_extension, cleanup_temp_directory
@@ -44,6 +55,10 @@ class NessusHistoryTrackerApp:
         self.scan_changes_df = pd.DataFrame()
         self.opdir_df = pd.DataFrame()
         self.plugins_dict = None
+
+        # Filtered data for display
+        self.filtered_lifecycle_df = pd.DataFrame()
+        self.filtered_host_df = pd.DataFrame()
 
         # File paths
         self.archive_paths: List[str] = []
@@ -254,22 +269,191 @@ class NessusHistoryTrackerApp:
         self.status_text.config(yscrollcommand=scrollbar.set)
 
     def _build_dashboard_tab(self):
-        """Build dashboard tab placeholder."""
+        """Build dashboard tab with summary statistics."""
         dashboard_frame = ttk.Frame(self.notebook)
         self.notebook.add(dashboard_frame, text="Dashboard")
         self.dashboard_frame = dashboard_frame
 
+        # Summary statistics frame
+        stats_frame = ttk.LabelFrame(dashboard_frame, text="Summary Statistics", padding=10)
+        stats_frame.pack(fill=tk.X, padx=10, pady=10)
+
+        # Create grid of stat labels
+        self.stat_labels = {}
+        stats_config = [
+            ('total_findings', 'Total Findings:', 0, 0),
+            ('active_findings', 'Active:', 0, 1),
+            ('resolved_findings', 'Resolved:', 0, 2),
+            ('unique_hosts', 'Unique Hosts:', 1, 0),
+            ('unique_plugins', 'Unique Plugins:', 1, 1),
+            ('avg_days_open', 'Avg Days Open:', 1, 2),
+        ]
+
+        for key, label_text, row, col in stats_config:
+            frame = ttk.Frame(stats_frame)
+            frame.grid(row=row, column=col, padx=10, pady=5, sticky='w')
+            ttk.Label(frame, text=label_text).pack(side=tk.LEFT)
+            value_label = ttk.Label(frame, text="0", foreground="#00ff00")
+            value_label.pack(side=tk.LEFT, padx=(5, 0))
+            self.stat_labels[key] = value_label
+
+        # Severity breakdown frame
+        severity_frame = ttk.LabelFrame(dashboard_frame, text="Severity Breakdown", padding=10)
+        severity_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        self.severity_labels = {}
+        severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff', 'Info': '#6c757d'}
+        for i, sev in enumerate(['Critical', 'High', 'Medium', 'Low', 'Info']):
+            frame = ttk.Frame(severity_frame)
+            frame.grid(row=0, column=i, padx=15, pady=5)
+            ttk.Label(frame, text=f"{sev}:").pack(side=tk.LEFT)
+            value_label = ttk.Label(frame, text="0", foreground=severity_colors[sev])
+            value_label.pack(side=tk.LEFT, padx=(5, 0))
+            self.severity_labels[sev] = value_label
+
+        # Host type breakdown frame
+        host_type_frame = ttk.LabelFrame(dashboard_frame, text="Host Type Breakdown", padding=10)
+        host_type_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        self.host_type_labels = {}
+        for i, htype in enumerate(['Physical', 'Virtual', 'ILOM', 'Unknown']):
+            frame = ttk.Frame(host_type_frame)
+            frame.grid(row=0, column=i, padx=15, pady=5)
+            ttk.Label(frame, text=f"{htype}:").pack(side=tk.LEFT)
+            value_label = ttk.Label(frame, text="0", foreground="#00ff00")
+            value_label.pack(side=tk.LEFT, padx=(5, 0))
+            self.host_type_labels[htype] = value_label
+
+        # Filter status label
+        filter_frame = ttk.Frame(dashboard_frame)
+        filter_frame.pack(fill=tk.X, padx=10, pady=5)
+        ttk.Label(filter_frame, text="Filter Status:").pack(side=tk.LEFT)
+        self.filter_status_label = ttk.Label(filter_frame, text="No filters applied", foreground="gray")
+        self.filter_status_label.pack(side=tk.LEFT, padx=(5, 0))
+
+        # Trends chart frame
+        chart_frame = ttk.LabelFrame(dashboard_frame, text="Findings Trend Over Time", padding=5)
+        chart_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        if HAS_MATPLOTLIB:
+            # Create matplotlib figure for dark theme
+            self.trends_fig = Figure(figsize=(8, 3), dpi=100, facecolor=GUI_DARK_THEME['bg'])
+            self.trends_ax = self.trends_fig.add_subplot(111)
+            self.trends_ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
+            self.trends_ax.tick_params(colors=GUI_DARK_THEME['fg'])
+            for spine in self.trends_ax.spines.values():
+                spine.set_color(GUI_DARK_THEME['fg'])
+
+            self.trends_canvas = FigureCanvasTkAgg(self.trends_fig, master=chart_frame)
+            self.trends_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        else:
+            ttk.Label(chart_frame, text="Install matplotlib for trend charts: pip install matplotlib").pack(pady=20)
+
     def _build_lifecycle_tab(self):
-        """Build lifecycle analysis tab."""
+        """Build lifecycle analysis tab with treeview."""
         lifecycle_frame = ttk.Frame(self.notebook)
         self.notebook.add(lifecycle_frame, text="Lifecycle")
         self.lifecycle_frame = lifecycle_frame
 
+        # Info label
+        info_frame = ttk.Frame(lifecycle_frame)
+        info_frame.pack(fill=tk.X, padx=5, pady=5)
+        self.lifecycle_count_label = ttk.Label(info_frame, text="Showing 0 findings")
+        self.lifecycle_count_label.pack(side=tk.LEFT)
+
+        # Treeview with scrollbars
+        tree_frame = ttk.Frame(lifecycle_frame)
+        tree_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # Define columns
+        columns = ('hostname', 'plugin_id', 'name', 'severity', 'status', 'first_seen', 'last_seen', 'days_open')
+        self.lifecycle_tree = ttk.Treeview(tree_frame, columns=columns, show='headings', height=20)
+
+        # Configure columns
+        col_config = {
+            'hostname': ('Hostname', 100),
+            'plugin_id': ('Plugin ID', 70),
+            'name': ('Name', 250),
+            'severity': ('Severity', 70),
+            'status': ('Status', 70),
+            'first_seen': ('First Seen', 90),
+            'last_seen': ('Last Seen', 90),
+            'days_open': ('Days Open', 70)
+        }
+
+        for col, (heading, width) in col_config.items():
+            self.lifecycle_tree.heading(col, text=heading, command=lambda c=col: self._sort_lifecycle_tree(c))
+            self.lifecycle_tree.column(col, width=width, minwidth=50)
+
+        # Scrollbars
+        vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.lifecycle_tree.yview)
+        hsb = ttk.Scrollbar(tree_frame, orient="horizontal", command=self.lifecycle_tree.xview)
+        self.lifecycle_tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        # Grid layout
+        self.lifecycle_tree.grid(row=0, column=0, sticky='nsew')
+        vsb.grid(row=0, column=1, sticky='ns')
+        hsb.grid(row=1, column=0, sticky='ew')
+        tree_frame.grid_rowconfigure(0, weight=1)
+        tree_frame.grid_columnconfigure(0, weight=1)
+
+        # Configure treeview colors for dark theme
+        style = ttk.Style()
+        style.configure("Treeview",
+                       background=GUI_DARK_THEME['entry_bg'],
+                       foreground=GUI_DARK_THEME['fg'],
+                       fieldbackground=GUI_DARK_THEME['entry_bg'])
+        style.configure("Treeview.Heading",
+                       background=GUI_DARK_THEME['button_bg'],
+                       foreground=GUI_DARK_THEME['fg'])
+
     def _build_host_tab(self):
-        """Build host analysis tab."""
+        """Build host analysis tab with treeview."""
         host_frame = ttk.Frame(self.notebook)
         self.notebook.add(host_frame, text="Hosts")
         self.host_frame = host_frame
+
+        # Info label
+        info_frame = ttk.Frame(host_frame)
+        info_frame.pack(fill=tk.X, padx=5, pady=5)
+        self.host_count_label = ttk.Label(info_frame, text="Showing 0 hosts")
+        self.host_count_label.pack(side=tk.LEFT)
+
+        # Treeview with scrollbars
+        tree_frame = ttk.Frame(host_frame)
+        tree_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # Define columns
+        columns = ('hostname', 'ip_address', 'status', 'first_seen', 'last_seen', 'scan_count', 'presence_pct', 'host_type')
+        self.host_tree = ttk.Treeview(tree_frame, columns=columns, show='headings', height=20)
+
+        # Configure columns
+        col_config = {
+            'hostname': ('Hostname', 120),
+            'ip_address': ('IP Address', 100),
+            'status': ('Status', 70),
+            'first_seen': ('First Seen', 90),
+            'last_seen': ('Last Seen', 90),
+            'scan_count': ('Scans', 60),
+            'presence_pct': ('Presence %', 80),
+            'host_type': ('Type', 70)
+        }
+
+        for col, (heading, width) in col_config.items():
+            self.host_tree.heading(col, text=heading, command=lambda c=col: self._sort_host_tree(c))
+            self.host_tree.column(col, width=width, minwidth=50)
+
+        # Scrollbars
+        vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.host_tree.yview)
+        hsb = ttk.Scrollbar(tree_frame, orient="horizontal", command=self.host_tree.xview)
+        self.host_tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        # Grid layout
+        self.host_tree.grid(row=0, column=0, sticky='nsew')
+        vsb.grid(row=0, column=1, sticky='ns')
+        hsb.grid(row=1, column=0, sticky='ew')
+        tree_frame.grid_rowconfigure(0, weight=1)
+        tree_frame.grid_columnconfigure(0, weight=1)
 
     # File selection methods
     def _truncate_filename(self, name: str, max_len: int = 20) -> str:
@@ -456,14 +640,331 @@ class NessusHistoryTrackerApp:
         self.scan_changes_df = analyze_scan_changes(self.historical_df)
         self._log(f"Scan changes: {len(self.scan_changes_df)} transitions")
 
+        # Initialize filtered data and update displays
+        self.filtered_lifecycle_df = self.lifecycle_df.copy()
+        self.filtered_host_df = self.host_presence_df.copy()
+        self._update_dashboard()
+        self._update_lifecycle_tree()
+        self._update_host_tree()
+        self._update_trends_chart()
+
     def _apply_filters(self):
         """Apply current filters and refresh display."""
         if self.lifecycle_df.empty:
+            self._log("No data to filter")
             return
 
         self._log("Applying filters...")
-        # Filter implementation would go here
-        self._log("Filters applied")
+
+        # Start with full data
+        filtered = self.lifecycle_df.copy()
+        filter_descriptions = []
+
+        # Filter: Include Info
+        if not self.filter_include_info.get():
+            if 'severity_text' in filtered.columns:
+                filtered = filtered[filtered['severity_text'] != 'Info']
+                filter_descriptions.append("Excluding Info")
+
+        # Filter: Date range
+        start_date = self.filter_start_date.get().strip()
+        end_date = self.filter_end_date.get().strip()
+        if start_date and 'first_seen' in filtered.columns:
+            try:
+                start_dt = pd.to_datetime(start_date)
+                filtered = filtered[pd.to_datetime(filtered['first_seen']) >= start_dt]
+                filter_descriptions.append(f"From {start_date}")
+            except:
+                pass
+        if end_date and 'last_seen' in filtered.columns:
+            try:
+                end_dt = pd.to_datetime(end_date)
+                filtered = filtered[pd.to_datetime(filtered['last_seen']) <= end_dt]
+                filter_descriptions.append(f"To {end_date}")
+            except:
+                pass
+
+        # Filter: Severity
+        severity = self.filter_severity.get()
+        if severity != "All" and 'severity_text' in filtered.columns:
+            if severity == "Crit+High":
+                filtered = filtered[filtered['severity_text'].isin(['Critical', 'High'])]
+            else:
+                filtered = filtered[filtered['severity_text'] == severity]
+            filter_descriptions.append(f"Severity: {severity}")
+
+        # Filter: Status
+        status = self.filter_status.get()
+        if status != "All" and 'status' in filtered.columns:
+            filtered = filtered[filtered['status'] == status]
+            filter_descriptions.append(f"Status: {status}")
+
+        # Filter: Host Type
+        host_type = self.filter_host_type.get()
+        if host_type != "All" and 'hostname' in filtered.columns:
+            def check_host_type(hostname):
+                if not isinstance(hostname, str):
+                    return False
+                hostname_lower = hostname.lower()
+                if host_type == "Physical":
+                    return hostname_lower.endswith('p') and 'ilom' not in hostname_lower
+                elif host_type == "Virtual":
+                    return hostname_lower.endswith('v') and 'ilom' not in hostname_lower
+                elif host_type == "ILOM":
+                    return 'ilom' in hostname_lower
+                return True
+            filtered = filtered[filtered['hostname'].apply(check_host_type)]
+            filter_descriptions.append(f"Type: {host_type}")
+
+        # Filter: Location
+        location = self.filter_location.get().strip().upper()
+        if location and 'hostname' in filtered.columns:
+            filtered = filtered[filtered['hostname'].str.upper().str.startswith(location)]
+            filter_descriptions.append(f"Location: {location}")
+
+        # Filter: Host Pattern
+        host_pattern = self.filter_host.get().strip()
+        if host_pattern and 'hostname' in filtered.columns:
+            filtered = filtered[filtered['hostname'].str.contains(host_pattern, case=False, na=False)]
+            filter_descriptions.append(f"Host: *{host_pattern}*")
+
+        # Filter: CVSS Range
+        try:
+            cvss_min = float(self.filter_cvss_min.get() or 0)
+            cvss_max = float(self.filter_cvss_max.get() or 10)
+            if 'cvss_score' in filtered.columns and (cvss_min > 0 or cvss_max < 10):
+                filtered = filtered[(filtered['cvss_score'] >= cvss_min) & (filtered['cvss_score'] <= cvss_max)]
+                filter_descriptions.append(f"CVSS: {cvss_min}-{cvss_max}")
+        except ValueError:
+            pass
+
+        # Store filtered data
+        self.filtered_lifecycle_df = filtered
+
+        # Filter host presence data
+        if not self.host_presence_df.empty and 'hostname' in filtered.columns:
+            filtered_hosts = filtered['hostname'].unique()
+            self.filtered_host_df = self.host_presence_df[
+                self.host_presence_df['hostname'].isin(filtered_hosts)
+            ]
+        else:
+            self.filtered_host_df = self.host_presence_df.copy()
+
+        # Update filter status label
+        if filter_descriptions:
+            status_text = " | ".join(filter_descriptions)
+            self.filter_status_label.config(text=status_text, foreground="#00ff00")
+        else:
+            self.filter_status_label.config(text="No filters applied", foreground="gray")
+
+        # Update all displays
+        self._update_dashboard()
+        self._update_lifecycle_tree()
+        self._update_host_tree()
+        self._update_trends_chart()
+
+        self._log(f"Filters applied: {len(filtered)} findings, {len(self.filtered_host_df)} hosts")
+
+    def _update_dashboard(self):
+        """Update dashboard statistics from filtered data."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+
+        if df.empty:
+            return
+
+        # Update main stats
+        self.stat_labels['total_findings'].config(text=str(len(df)))
+
+        if 'status' in df.columns:
+            active = len(df[df['status'] == 'Active'])
+            resolved = len(df[df['status'] == 'Resolved'])
+            self.stat_labels['active_findings'].config(text=str(active))
+            self.stat_labels['resolved_findings'].config(text=str(resolved))
+
+        if 'hostname' in df.columns:
+            self.stat_labels['unique_hosts'].config(text=str(df['hostname'].nunique()))
+
+        if 'plugin_id' in df.columns:
+            self.stat_labels['unique_plugins'].config(text=str(df['plugin_id'].nunique()))
+
+        if 'days_open' in df.columns:
+            avg_days = df['days_open'].mean()
+            self.stat_labels['avg_days_open'].config(text=f"{avg_days:.1f}" if pd.notna(avg_days) else "N/A")
+
+        # Update severity breakdown
+        if 'severity_text' in df.columns:
+            severity_counts = df['severity_text'].value_counts()
+            for sev in ['Critical', 'High', 'Medium', 'Low', 'Info']:
+                count = severity_counts.get(sev, 0)
+                self.severity_labels[sev].config(text=str(count))
+
+        # Update host type breakdown
+        if 'hostname' in df.columns:
+            hostnames = df['hostname'].unique()
+            type_counts = {'Physical': 0, 'Virtual': 0, 'ILOM': 0, 'Unknown': 0}
+            for h in hostnames:
+                if not isinstance(h, str):
+                    type_counts['Unknown'] += 1
+                    continue
+                h_lower = h.lower()
+                if 'ilom' in h_lower:
+                    type_counts['ILOM'] += 1
+                elif h_lower.endswith('p'):
+                    type_counts['Physical'] += 1
+                elif h_lower.endswith('v'):
+                    type_counts['Virtual'] += 1
+                else:
+                    type_counts['Unknown'] += 1
+            for htype, count in type_counts.items():
+                self.host_type_labels[htype].config(text=str(count))
+
+    def _update_lifecycle_tree(self):
+        """Update lifecycle treeview with filtered data."""
+        # Clear existing items
+        for item in self.lifecycle_tree.get_children():
+            self.lifecycle_tree.delete(item)
+
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+
+        if df.empty:
+            self.lifecycle_count_label.config(text="Showing 0 findings")
+            return
+
+        # Limit display to prevent UI freeze (show first 1000)
+        display_df = df.head(1000)
+
+        for _, row in display_df.iterrows():
+            values = (
+                row.get('hostname', ''),
+                row.get('plugin_id', ''),
+                str(row.get('name', ''))[:50],  # Truncate long names
+                row.get('severity_text', row.get('severity', '')),
+                row.get('status', ''),
+                str(row.get('first_seen', ''))[:10],
+                str(row.get('last_seen', ''))[:10],
+                row.get('days_open', '')
+            )
+            self.lifecycle_tree.insert('', tk.END, values=values)
+
+        total = len(df)
+        shown = len(display_df)
+        label_text = f"Showing {shown} of {total} findings" if shown < total else f"Showing {total} findings"
+        self.lifecycle_count_label.config(text=label_text)
+
+    def _update_host_tree(self):
+        """Update host treeview with filtered data."""
+        # Clear existing items
+        for item in self.host_tree.get_children():
+            self.host_tree.delete(item)
+
+        df = self.filtered_host_df if not self.filtered_host_df.empty else self.host_presence_df
+
+        if df.empty:
+            self.host_count_label.config(text="Showing 0 hosts")
+            return
+
+        # Limit display
+        display_df = df.head(1000)
+
+        for _, row in display_df.iterrows():
+            hostname = row.get('hostname', '')
+            # Determine host type
+            host_type = 'Unknown'
+            if isinstance(hostname, str):
+                h_lower = hostname.lower()
+                if 'ilom' in h_lower:
+                    host_type = 'ILOM'
+                elif h_lower.endswith('p'):
+                    host_type = 'Physical'
+                elif h_lower.endswith('v'):
+                    host_type = 'Virtual'
+
+            values = (
+                hostname,
+                row.get('ip_address', ''),
+                row.get('status', ''),
+                str(row.get('first_seen', ''))[:10],
+                str(row.get('last_seen', ''))[:10],
+                row.get('scan_count', row.get('scans_present', '')),
+                f"{row.get('presence_percentage', 0):.1f}%" if 'presence_percentage' in row else '',
+                host_type
+            )
+            self.host_tree.insert('', tk.END, values=values)
+
+        total = len(df)
+        shown = len(display_df)
+        label_text = f"Showing {shown} of {total} hosts" if shown < total else f"Showing {total} hosts"
+        self.host_count_label.config(text=label_text)
+
+    def _sort_lifecycle_tree(self, col):
+        """Sort lifecycle treeview by column."""
+        items = [(self.lifecycle_tree.set(k, col), k) for k in self.lifecycle_tree.get_children('')]
+        try:
+            items.sort(key=lambda t: float(t[0]) if t[0].replace('.', '').isdigit() else t[0])
+        except:
+            items.sort(key=lambda t: t[0])
+        for index, (val, k) in enumerate(items):
+            self.lifecycle_tree.move(k, '', index)
+
+    def _sort_host_tree(self, col):
+        """Sort host treeview by column."""
+        items = [(self.host_tree.set(k, col), k) for k in self.host_tree.get_children('')]
+        try:
+            items.sort(key=lambda t: float(t[0].rstrip('%')) if t[0].replace('.', '').replace('%', '').isdigit() else t[0])
+        except:
+            items.sort(key=lambda t: t[0])
+        for index, (val, k) in enumerate(items):
+            self.host_tree.move(k, '', index)
+
+    def _update_trends_chart(self):
+        """Update the trends chart showing active vs resolved over time."""
+        if not HAS_MATPLOTLIB:
+            return
+
+        if not hasattr(self, 'trends_ax'):
+            return
+
+        self.trends_ax.clear()
+        self.trends_ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
+
+        # Use scan_changes_df to show trends over time
+        if not self.scan_changes_df.empty and 'scan_date' in self.scan_changes_df.columns:
+            df = self.scan_changes_df.copy()
+            df['scan_date'] = pd.to_datetime(df['scan_date'])
+
+            # Group by date and count new/resolved
+            if 'change_type' in df.columns:
+                trends = df.groupby([df['scan_date'].dt.date, 'change_type']).size().unstack(fill_value=0)
+
+                if 'New' in trends.columns:
+                    self.trends_ax.plot(trends.index, trends['New'], 'r-', label='New', marker='o', markersize=4)
+                if 'Resolved' in trends.columns:
+                    self.trends_ax.plot(trends.index, trends['Resolved'], 'g-', label='Resolved', marker='s', markersize=4)
+
+                self.trends_ax.legend(loc='upper right', facecolor=GUI_DARK_THEME['bg'],
+                                     labelcolor=GUI_DARK_THEME['fg'])
+
+        # If no scan_changes, try to use historical_df to show cumulative counts
+        elif not self.historical_df.empty and 'scan_date' in self.historical_df.columns:
+            df = self.historical_df.copy()
+            df['scan_date'] = pd.to_datetime(df['scan_date'])
+
+            # Count findings per scan date
+            counts = df.groupby(df['scan_date'].dt.date).size()
+
+            self.trends_ax.bar(range(len(counts)), counts.values, color='#007bff', alpha=0.7)
+            self.trends_ax.set_xticks(range(len(counts)))
+            self.trends_ax.set_xticklabels([str(d) for d in counts.index], rotation=45, ha='right', fontsize=8)
+
+        # Style the chart
+        self.trends_ax.set_xlabel('Date', color=GUI_DARK_THEME['fg'])
+        self.trends_ax.set_ylabel('Count', color=GUI_DARK_THEME['fg'])
+        self.trends_ax.tick_params(colors=GUI_DARK_THEME['fg'])
+        for spine in self.trends_ax.spines.values():
+            spine.set_color(GUI_DARK_THEME['fg'])
+
+        self.trends_fig.tight_layout()
+        self.trends_canvas.draw()
 
     # Export methods
     def _export_excel(self):
