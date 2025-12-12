@@ -141,6 +141,11 @@ class NessusHistoryTrackerApp:
         self._build_dashboard_tab()
         self._build_lifecycle_tab()
         self._build_host_tab()
+        self._build_timeline_tab()
+        self._build_risk_tab()
+        self._build_opdir_tab()
+        self._build_efficiency_tab()
+        self._build_network_tab()
 
     def _build_file_selection(self, parent):
         """Build file selection section with compact layout."""
@@ -200,9 +205,9 @@ class NessusHistoryTrackerApp:
         sev_row = ttk.Frame(filter_frame)
         sev_row.pack(fill=tk.X, pady=3)
         ttk.Label(sev_row, text="Severity:", width=8).pack(side=tk.LEFT)
-        severity_options = ["All", "Critical", "High", "Medium", "Low", "Info", "Crit+High"]
+        severity_options = ["All", "Critical", "High", "Medium", "Low", "Info", "Crit+High", "Med+High+Crit"]
         ttk.Combobox(sev_row, textvariable=self.filter_severity,
-                    values=severity_options, state="readonly", width=10).pack(side=tk.LEFT, padx=1)
+                    values=severity_options, state="readonly", width=12).pack(side=tk.LEFT, padx=1)
         ttk.Label(sev_row, text="Status:").pack(side=tk.LEFT, padx=(5, 0))
         ttk.Combobox(sev_row, textvariable=self.filter_status,
                     values=["All", "Active", "Resolved"], state="readonly", width=8).pack(side=tk.LEFT, padx=1)
@@ -229,7 +234,20 @@ class NessusHistoryTrackerApp:
         ttk.Entry(cvss_row, textvariable=self.filter_cvss_min, width=5).pack(side=tk.LEFT, padx=1)
         ttk.Label(cvss_row, text="-").pack(side=tk.LEFT)
         ttk.Entry(cvss_row, textvariable=self.filter_cvss_max, width=5).pack(side=tk.LEFT, padx=1)
-        ttk.Button(cvss_row, text="Apply", command=self._apply_filters, width=8).pack(side=tk.RIGHT)
+
+        # Row 7: OPDIR Status filter
+        opdir_row = ttk.Frame(filter_frame)
+        opdir_row.pack(fill=tk.X, pady=3)
+        ttk.Label(opdir_row, text="OPDIR:", width=8).pack(side=tk.LEFT)
+        opdir_options = ["All", "Overdue", "Due Soon", "On Track", "OPDIR Mapped", "No OPDIR"]
+        ttk.Combobox(opdir_row, textvariable=self.filter_opdir_status,
+                    values=opdir_options, state="readonly", width=12).pack(side=tk.LEFT, padx=1)
+
+        # Row 8: Apply and Reset buttons
+        btn_row = ttk.Frame(filter_frame)
+        btn_row.pack(fill=tk.X, pady=3)
+        ttk.Button(btn_row, text="Apply", command=self._apply_filters, width=10).pack(side=tk.LEFT, padx=1)
+        ttk.Button(btn_row, text="Reset", command=self._reset_filters, width=10).pack(side=tk.LEFT, padx=1)
 
     def _build_action_buttons(self, parent):
         """Build action buttons section with compact 2-per-row layout."""
@@ -455,6 +473,187 @@ class NessusHistoryTrackerApp:
         tree_frame.grid_rowconfigure(0, weight=1)
         tree_frame.grid_columnconfigure(0, weight=1)
 
+    def _build_timeline_tab(self):
+        """Build timeline analysis visualization tab."""
+        timeline_frame = ttk.Frame(self.notebook)
+        self.notebook.add(timeline_frame, text="Timeline")
+        self.timeline_frame = timeline_frame
+
+        if HAS_MATPLOTLIB:
+            # Create 2x2 grid of charts
+            self.timeline_fig = Figure(figsize=(10, 8), dpi=100, facecolor=GUI_DARK_THEME['bg'])
+
+            # Total findings over time
+            self.timeline_ax1 = self.timeline_fig.add_subplot(221)
+            self.timeline_ax1.set_title('Total Findings Over Time', color=GUI_DARK_THEME['fg'])
+
+            # Severity breakdown over time
+            self.timeline_ax2 = self.timeline_fig.add_subplot(222)
+            self.timeline_ax2.set_title('Findings by Severity', color=GUI_DARK_THEME['fg'])
+
+            # New vs Resolved by month
+            self.timeline_ax3 = self.timeline_fig.add_subplot(223)
+            self.timeline_ax3.set_title('New vs Resolved', color=GUI_DARK_THEME['fg'])
+
+            # Cumulative risk
+            self.timeline_ax4 = self.timeline_fig.add_subplot(224)
+            self.timeline_ax4.set_title('Cumulative Risk Exposure', color=GUI_DARK_THEME['fg'])
+
+            for ax in [self.timeline_ax1, self.timeline_ax2, self.timeline_ax3, self.timeline_ax4]:
+                ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
+                ax.tick_params(colors=GUI_DARK_THEME['fg'])
+                for spine in ax.spines.values():
+                    spine.set_color(GUI_DARK_THEME['fg'])
+
+            self.timeline_canvas = FigureCanvasTkAgg(self.timeline_fig, master=timeline_frame)
+            self.timeline_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        else:
+            ttk.Label(timeline_frame, text="Install matplotlib for visualizations").pack(pady=50)
+
+    def _build_risk_tab(self):
+        """Build risk analysis visualization tab."""
+        risk_frame = ttk.Frame(self.notebook)
+        self.notebook.add(risk_frame, text="Risk")
+        self.risk_frame = risk_frame
+
+        if HAS_MATPLOTLIB:
+            self.risk_fig = Figure(figsize=(10, 8), dpi=100, facecolor=GUI_DARK_THEME['bg'])
+
+            # CVSS distribution histogram
+            self.risk_ax1 = self.risk_fig.add_subplot(221)
+            self.risk_ax1.set_title('CVSS Score Distribution', color=GUI_DARK_THEME['fg'])
+
+            # Mean time to remediation by severity
+            self.risk_ax2 = self.risk_fig.add_subplot(222)
+            self.risk_ax2.set_title('Mean Time to Remediation', color=GUI_DARK_THEME['fg'])
+
+            # Risk by age bucket
+            self.risk_ax3 = self.risk_fig.add_subplot(223)
+            self.risk_ax3.set_title('Findings by Age', color=GUI_DARK_THEME['fg'])
+
+            # Top risky hosts
+            self.risk_ax4 = self.risk_fig.add_subplot(224)
+            self.risk_ax4.set_title('Top 10 Risky Hosts', color=GUI_DARK_THEME['fg'])
+
+            for ax in [self.risk_ax1, self.risk_ax2, self.risk_ax3, self.risk_ax4]:
+                ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
+                ax.tick_params(colors=GUI_DARK_THEME['fg'])
+                for spine in ax.spines.values():
+                    spine.set_color(GUI_DARK_THEME['fg'])
+
+            self.risk_canvas = FigureCanvasTkAgg(self.risk_fig, master=risk_frame)
+            self.risk_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        else:
+            ttk.Label(risk_frame, text="Install matplotlib for visualizations").pack(pady=50)
+
+    def _build_opdir_tab(self):
+        """Build OPDIR compliance visualization tab."""
+        opdir_frame = ttk.Frame(self.notebook)
+        self.notebook.add(opdir_frame, text="OPDIR")
+        self.opdir_frame = opdir_frame
+
+        if HAS_MATPLOTLIB:
+            self.opdir_fig = Figure(figsize=(10, 8), dpi=100, facecolor=GUI_DARK_THEME['bg'])
+
+            # OPDIR coverage pie
+            self.opdir_ax1 = self.opdir_fig.add_subplot(221)
+            self.opdir_ax1.set_title('OPDIR Mapping Coverage', color=GUI_DARK_THEME['fg'])
+
+            # OPDIR status distribution
+            self.opdir_ax2 = self.opdir_fig.add_subplot(222)
+            self.opdir_ax2.set_title('OPDIR Status Distribution', color=GUI_DARK_THEME['fg'])
+
+            # Timeline vs age scatter
+            self.opdir_ax3 = self.opdir_fig.add_subplot(223)
+            self.opdir_ax3.set_title('OPDIR Timeline vs Finding Age', color=GUI_DARK_THEME['fg'])
+
+            # Compliance by year
+            self.opdir_ax4 = self.opdir_fig.add_subplot(224)
+            self.opdir_ax4.set_title('Compliance by OPDIR Year', color=GUI_DARK_THEME['fg'])
+
+            for ax in [self.opdir_ax1, self.opdir_ax2, self.opdir_ax3, self.opdir_ax4]:
+                ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
+                ax.tick_params(colors=GUI_DARK_THEME['fg'])
+                for spine in ax.spines.values():
+                    spine.set_color(GUI_DARK_THEME['fg'])
+
+            self.opdir_canvas = FigureCanvasTkAgg(self.opdir_fig, master=opdir_frame)
+            self.opdir_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        else:
+            ttk.Label(opdir_frame, text="Install matplotlib for visualizations").pack(pady=50)
+
+    def _build_efficiency_tab(self):
+        """Build operational efficiency visualization tab."""
+        efficiency_frame = ttk.Frame(self.notebook)
+        self.notebook.add(efficiency_frame, text="Efficiency")
+        self.efficiency_frame = efficiency_frame
+
+        if HAS_MATPLOTLIB:
+            self.efficiency_fig = Figure(figsize=(10, 8), dpi=100, facecolor=GUI_DARK_THEME['bg'])
+
+            # Scan coverage consistency
+            self.efficiency_ax1 = self.efficiency_fig.add_subplot(221)
+            self.efficiency_ax1.set_title('Scan Coverage Consistency', color=GUI_DARK_THEME['fg'])
+
+            # False positive analysis (reappearances)
+            self.efficiency_ax2 = self.efficiency_fig.add_subplot(222)
+            self.efficiency_ax2.set_title('Reappearance Analysis', color=GUI_DARK_THEME['fg'])
+
+            # Host vulnerability burden
+            self.efficiency_ax3 = self.efficiency_fig.add_subplot(223)
+            self.efficiency_ax3.set_title('Host Vulnerability Burden', color=GUI_DARK_THEME['fg'])
+
+            # Scan quality
+            self.efficiency_ax4 = self.efficiency_fig.add_subplot(224)
+            self.efficiency_ax4.set_title('Resolution Velocity', color=GUI_DARK_THEME['fg'])
+
+            for ax in [self.efficiency_ax1, self.efficiency_ax2, self.efficiency_ax3, self.efficiency_ax4]:
+                ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
+                ax.tick_params(colors=GUI_DARK_THEME['fg'])
+                for spine in ax.spines.values():
+                    spine.set_color(GUI_DARK_THEME['fg'])
+
+            self.efficiency_canvas = FigureCanvasTkAgg(self.efficiency_fig, master=efficiency_frame)
+            self.efficiency_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        else:
+            ttk.Label(efficiency_frame, text="Install matplotlib for visualizations").pack(pady=50)
+
+    def _build_network_tab(self):
+        """Build network analysis visualization tab."""
+        network_frame = ttk.Frame(self.notebook)
+        self.notebook.add(network_frame, text="Network")
+        self.network_frame = network_frame
+
+        if HAS_MATPLOTLIB:
+            self.network_fig = Figure(figsize=(10, 8), dpi=100, facecolor=GUI_DARK_THEME['bg'])
+
+            # Top subnets
+            self.network_ax1 = self.network_fig.add_subplot(221)
+            self.network_ax1.set_title('Top Subnets by Vulnerability', color=GUI_DARK_THEME['fg'])
+
+            # Subnet risk heat map
+            self.network_ax2 = self.network_fig.add_subplot(222)
+            self.network_ax2.set_title('Subnet Risk Scores', color=GUI_DARK_THEME['fg'])
+
+            # Host criticality
+            self.network_ax3 = self.network_fig.add_subplot(223)
+            self.network_ax3.set_title('Host Criticality Distribution', color=GUI_DARK_THEME['fg'])
+
+            # Network segments
+            self.network_ax4 = self.network_fig.add_subplot(224)
+            self.network_ax4.set_title('Network Segment Analysis', color=GUI_DARK_THEME['fg'])
+
+            for ax in [self.network_ax1, self.network_ax2, self.network_ax3, self.network_ax4]:
+                ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
+                ax.tick_params(colors=GUI_DARK_THEME['fg'])
+                for spine in ax.spines.values():
+                    spine.set_color(GUI_DARK_THEME['fg'])
+
+            self.network_canvas = FigureCanvasTkAgg(self.network_fig, master=network_frame)
+            self.network_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        else:
+            ttk.Label(network_frame, text="Install matplotlib for visualizations").pack(pady=50)
+
     # File selection methods
     def _truncate_filename(self, name: str, max_len: int = 20) -> str:
         """Truncate filename to fit in label."""
@@ -646,7 +845,7 @@ class NessusHistoryTrackerApp:
         self._update_dashboard()
         self._update_lifecycle_tree()
         self._update_host_tree()
-        self._update_trends_chart()
+        self._update_all_visualizations()
 
     def _apply_filters(self):
         """Apply current filters and refresh display."""
@@ -689,6 +888,8 @@ class NessusHistoryTrackerApp:
         if severity != "All" and 'severity_text' in filtered.columns:
             if severity == "Crit+High":
                 filtered = filtered[filtered['severity_text'].isin(['Critical', 'High'])]
+            elif severity == "Med+High+Crit":
+                filtered = filtered[filtered['severity_text'].isin(['Critical', 'High', 'Medium'])]
             else:
                 filtered = filtered[filtered['severity_text'] == severity]
             filter_descriptions.append(f"Severity: {severity}")
@@ -738,6 +939,19 @@ class NessusHistoryTrackerApp:
         except ValueError:
             pass
 
+        # Filter: OPDIR Status
+        opdir_status = self.filter_opdir_status.get()
+        if opdir_status != "All":
+            if opdir_status == "OPDIR Mapped" and 'opdir_number' in filtered.columns:
+                filtered = filtered[filtered['opdir_number'].notna() & (filtered['opdir_number'] != '')]
+                filter_descriptions.append("OPDIR Mapped")
+            elif opdir_status == "No OPDIR" and 'opdir_number' in filtered.columns:
+                filtered = filtered[filtered['opdir_number'].isna() | (filtered['opdir_number'] == '')]
+                filter_descriptions.append("No OPDIR")
+            elif 'opdir_status' in filtered.columns:
+                filtered = filtered[filtered['opdir_status'] == opdir_status]
+                filter_descriptions.append(f"OPDIR: {opdir_status}")
+
         # Store filtered data
         self.filtered_lifecycle_df = filtered
 
@@ -761,9 +975,33 @@ class NessusHistoryTrackerApp:
         self._update_dashboard()
         self._update_lifecycle_tree()
         self._update_host_tree()
-        self._update_trends_chart()
+        self._update_all_visualizations()
 
         self._log(f"Filters applied: {len(filtered)} findings, {len(self.filtered_host_df)} hosts")
+
+    def _reset_filters(self):
+        """Reset all filters to default values."""
+        self.filter_include_info.set(True)
+        self.filter_severity.set("All")
+        self.filter_status.set("All")
+        self.filter_host_type.set("All")
+        self.filter_host.set("")
+        self.filter_location.set("")
+        self.filter_cvss_min.set("0.0")
+        self.filter_cvss_max.set("10.0")
+        self.filter_opdir_status.set("All")
+
+        # Reset date filters to data range if available
+        if not self.historical_df.empty and 'scan_date' in self.historical_df.columns:
+            self.filter_start_date.set(self.historical_df['scan_date'].min().strftime('%Y-%m-%d'))
+            self.filter_end_date.set(self.historical_df['scan_date'].max().strftime('%Y-%m-%d'))
+        else:
+            self.filter_start_date.set("")
+            self.filter_end_date.set("")
+
+        # Apply the reset filters
+        self._apply_filters()
+        self._log("Filters reset to defaults")
 
     def _update_dashboard(self):
         """Update dashboard statistics from filtered data."""
@@ -965,6 +1203,337 @@ class NessusHistoryTrackerApp:
 
         self.trends_fig.tight_layout()
         self.trends_canvas.draw()
+
+    def _update_timeline_charts(self):
+        """Update timeline analysis visualizations."""
+        if not HAS_MATPLOTLIB or not hasattr(self, 'timeline_ax1'):
+            return
+
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        hist_df = self.historical_df
+
+        # Clear all axes
+        for ax in [self.timeline_ax1, self.timeline_ax2, self.timeline_ax3, self.timeline_ax4]:
+            ax.clear()
+            ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
+
+        if hist_df.empty:
+            self.timeline_canvas.draw()
+            return
+
+        hist_df = hist_df.copy()
+        hist_df['scan_date'] = pd.to_datetime(hist_df['scan_date'])
+
+        # Chart 1: Total findings over time
+        counts = hist_df.groupby(hist_df['scan_date'].dt.date).size()
+        self.timeline_ax1.plot(range(len(counts)), counts.values, 'c-', marker='o', markersize=4)
+        self.timeline_ax1.set_title('Total Findings Over Time', color=GUI_DARK_THEME['fg'])
+        self.timeline_ax1.set_ylabel('Count', color=GUI_DARK_THEME['fg'])
+
+        # Chart 2: Severity breakdown over time
+        if 'severity_text' in hist_df.columns:
+            severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff', 'Info': '#6c757d'}
+            for sev in ['Critical', 'High', 'Medium', 'Low']:
+                sev_df = hist_df[hist_df['severity_text'] == sev]
+                if not sev_df.empty:
+                    counts = sev_df.groupby(sev_df['scan_date'].dt.date).size()
+                    self.timeline_ax2.plot(range(len(counts)), counts.values, color=severity_colors.get(sev, 'gray'),
+                                          label=sev, marker='.', markersize=3)
+            self.timeline_ax2.legend(fontsize=8, facecolor=GUI_DARK_THEME['bg'], labelcolor=GUI_DARK_THEME['fg'])
+        self.timeline_ax2.set_title('Findings by Severity', color=GUI_DARK_THEME['fg'])
+
+        # Chart 3: New vs Resolved
+        if not self.scan_changes_df.empty and 'change_type' in self.scan_changes_df.columns:
+            changes = self.scan_changes_df.copy()
+            changes['scan_date'] = pd.to_datetime(changes['scan_date'])
+            new_counts = changes[changes['change_type'] == 'New'].groupby(changes['scan_date'].dt.to_period('M')).size()
+            resolved_counts = changes[changes['change_type'] == 'Resolved'].groupby(changes['scan_date'].dt.to_period('M')).size()
+            x = range(max(len(new_counts), len(resolved_counts)))
+            if len(new_counts) > 0:
+                self.timeline_ax3.bar([i - 0.2 for i in range(len(new_counts))], new_counts.values, 0.4, label='New', color='#dc3545')
+            if len(resolved_counts) > 0:
+                self.timeline_ax3.bar([i + 0.2 for i in range(len(resolved_counts))], resolved_counts.values, 0.4, label='Resolved', color='#28a745')
+            self.timeline_ax3.legend(fontsize=8, facecolor=GUI_DARK_THEME['bg'], labelcolor=GUI_DARK_THEME['fg'])
+        self.timeline_ax3.set_title('New vs Resolved', color=GUI_DARK_THEME['fg'])
+
+        # Chart 4: Cumulative risk
+        if 'severity_value' in hist_df.columns:
+            risk = hist_df.groupby(hist_df['scan_date'].dt.date)['severity_value'].sum().cumsum()
+            self.timeline_ax4.fill_between(range(len(risk)), risk.values, alpha=0.5, color='#dc3545')
+            self.timeline_ax4.plot(range(len(risk)), risk.values, 'r-')
+        self.timeline_ax4.set_title('Cumulative Risk Exposure', color=GUI_DARK_THEME['fg'])
+
+        for ax in [self.timeline_ax1, self.timeline_ax2, self.timeline_ax3, self.timeline_ax4]:
+            ax.tick_params(colors=GUI_DARK_THEME['fg'])
+            for spine in ax.spines.values():
+                spine.set_color(GUI_DARK_THEME['fg'])
+
+        self.timeline_fig.tight_layout()
+        self.timeline_canvas.draw()
+
+    def _update_risk_charts(self):
+        """Update risk analysis visualizations."""
+        if not HAS_MATPLOTLIB or not hasattr(self, 'risk_ax1'):
+            return
+
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+
+        for ax in [self.risk_ax1, self.risk_ax2, self.risk_ax3, self.risk_ax4]:
+            ax.clear()
+            ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
+
+        if df.empty:
+            self.risk_canvas.draw()
+            return
+
+        # Chart 1: CVSS distribution
+        if 'cvss3_base_score' in df.columns:
+            cvss_scores = df['cvss3_base_score'].dropna()
+            if len(cvss_scores) > 0:
+                self.risk_ax1.hist(cvss_scores, bins=20, color='#007bff', edgecolor='white', alpha=0.7)
+        self.risk_ax1.set_title('CVSS Score Distribution', color=GUI_DARK_THEME['fg'])
+        self.risk_ax1.set_xlabel('CVSS Score', color=GUI_DARK_THEME['fg'])
+
+        # Chart 2: MTTR by severity
+        if 'severity_text' in df.columns and 'days_open' in df.columns:
+            resolved = df[df['status'] == 'Resolved']
+            if not resolved.empty:
+                mttr = resolved.groupby('severity_text')['days_open'].mean()
+                colors = ['#dc3545', '#fd7e14', '#ffc107', '#007bff', '#6c757d']
+                bars = self.risk_ax2.bar(range(len(mttr)), mttr.values, color=colors[:len(mttr)])
+                self.risk_ax2.set_xticks(range(len(mttr)))
+                self.risk_ax2.set_xticklabels(mttr.index, fontsize=8)
+        self.risk_ax2.set_title('Mean Time to Remediation', color=GUI_DARK_THEME['fg'])
+        self.risk_ax2.set_ylabel('Days', color=GUI_DARK_THEME['fg'])
+
+        # Chart 3: Findings by age
+        if 'days_open' in df.columns:
+            active = df[df['status'] == 'Active']
+            buckets = [0, 30, 60, 90, 120, float('inf')]
+            labels = ['0-30', '31-60', '61-90', '91-120', '121+']
+            age_counts = pd.cut(active['days_open'], bins=buckets, labels=labels).value_counts().sort_index()
+            self.risk_ax3.bar(range(len(age_counts)), age_counts.values, color='#fd7e14')
+            self.risk_ax3.set_xticks(range(len(age_counts)))
+            self.risk_ax3.set_xticklabels(labels, fontsize=8)
+        self.risk_ax3.set_title('Findings by Age (Days)', color=GUI_DARK_THEME['fg'])
+
+        # Chart 4: Top risky hosts
+        if 'hostname' in df.columns and 'severity_value' in df.columns:
+            host_risk = df.groupby('hostname')['severity_value'].sum().nlargest(10)
+            if len(host_risk) > 0:
+                self.risk_ax4.barh(range(len(host_risk)), host_risk.values, color='#dc3545')
+                self.risk_ax4.set_yticks(range(len(host_risk)))
+                self.risk_ax4.set_yticklabels([h[:15] for h in host_risk.index], fontsize=7)
+        self.risk_ax4.set_title('Top 10 Risky Hosts', color=GUI_DARK_THEME['fg'])
+
+        for ax in [self.risk_ax1, self.risk_ax2, self.risk_ax3, self.risk_ax4]:
+            ax.tick_params(colors=GUI_DARK_THEME['fg'])
+            for spine in ax.spines.values():
+                spine.set_color(GUI_DARK_THEME['fg'])
+
+        self.risk_fig.tight_layout()
+        self.risk_canvas.draw()
+
+    def _update_opdir_charts(self):
+        """Update OPDIR compliance visualizations."""
+        if not HAS_MATPLOTLIB or not hasattr(self, 'opdir_ax1'):
+            return
+
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+
+        for ax in [self.opdir_ax1, self.opdir_ax2, self.opdir_ax3, self.opdir_ax4]:
+            ax.clear()
+            ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
+
+        if df.empty:
+            self.opdir_canvas.draw()
+            return
+
+        # Chart 1: OPDIR coverage pie
+        if 'opdir_number' in df.columns:
+            mapped = df['opdir_number'].notna() & (df['opdir_number'] != '')
+            counts = [mapped.sum(), (~mapped).sum()]
+            labels = ['Mapped', 'Unmapped']
+            colors = ['#28a745', '#6c757d']
+            self.opdir_ax1.pie(counts, labels=labels, colors=colors, autopct='%1.1f%%',
+                              textprops={'color': GUI_DARK_THEME['fg']})
+        self.opdir_ax1.set_title('OPDIR Mapping Coverage', color=GUI_DARK_THEME['fg'])
+
+        # Chart 2: OPDIR status distribution
+        if 'opdir_status' in df.columns:
+            status_counts = df['opdir_status'].value_counts()
+            if len(status_counts) > 0:
+                colors = {'Overdue': '#dc3545', 'Due Soon': '#ffc107', 'On Track': '#28a745'}
+                bar_colors = [colors.get(s, '#6c757d') for s in status_counts.index]
+                self.opdir_ax2.bar(range(len(status_counts)), status_counts.values, color=bar_colors)
+                self.opdir_ax2.set_xticks(range(len(status_counts)))
+                self.opdir_ax2.set_xticklabels(status_counts.index, fontsize=8)
+        self.opdir_ax2.set_title('OPDIR Status Distribution', color=GUI_DARK_THEME['fg'])
+
+        # Chart 3: Days open vs OPDIR (scatter)
+        if 'days_open' in df.columns and 'opdir_number' in df.columns:
+            mapped_df = df[df['opdir_number'].notna() & (df['opdir_number'] != '')]
+            if not mapped_df.empty and len(mapped_df) < 1000:
+                self.opdir_ax3.scatter(range(len(mapped_df)), mapped_df['days_open'].values,
+                                       alpha=0.5, c='#007bff', s=10)
+        self.opdir_ax3.set_title('Finding Age (OPDIR Mapped)', color=GUI_DARK_THEME['fg'])
+        self.opdir_ax3.set_ylabel('Days Open', color=GUI_DARK_THEME['fg'])
+
+        # Chart 4: Placeholder for compliance by year
+        self.opdir_ax4.text(0.5, 0.5, 'OPDIR Year Analysis\n(requires OPDIR data)',
+                           ha='center', va='center', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.opdir_ax4.set_title('Compliance by OPDIR Year', color=GUI_DARK_THEME['fg'])
+
+        for ax in [self.opdir_ax1, self.opdir_ax2, self.opdir_ax3, self.opdir_ax4]:
+            ax.tick_params(colors=GUI_DARK_THEME['fg'])
+            for spine in ax.spines.values():
+                spine.set_color(GUI_DARK_THEME['fg'])
+
+        self.opdir_fig.tight_layout()
+        self.opdir_canvas.draw()
+
+    def _update_efficiency_charts(self):
+        """Update operational efficiency visualizations."""
+        if not HAS_MATPLOTLIB or not hasattr(self, 'efficiency_ax1'):
+            return
+
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        host_df = self.filtered_host_df if not self.filtered_host_df.empty else self.host_presence_df
+
+        for ax in [self.efficiency_ax1, self.efficiency_ax2, self.efficiency_ax3, self.efficiency_ax4]:
+            ax.clear()
+            ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
+
+        if df.empty:
+            self.efficiency_canvas.draw()
+            return
+
+        # Chart 1: Scan coverage (host presence distribution)
+        if not host_df.empty and 'presence_percentage' in host_df.columns:
+            self.efficiency_ax1.hist(host_df['presence_percentage'], bins=20, color='#17a2b8', edgecolor='white')
+        self.efficiency_ax1.set_title('Scan Coverage Consistency', color=GUI_DARK_THEME['fg'])
+        self.efficiency_ax1.set_xlabel('Presence %', color=GUI_DARK_THEME['fg'])
+
+        # Chart 2: Reappearance analysis
+        if 'reappearances' in df.columns:
+            reapp_counts = df['reappearances'].value_counts().sort_index()
+            if len(reapp_counts) > 0:
+                self.efficiency_ax2.bar(reapp_counts.index[:10], reapp_counts.values[:10], color='#fd7e14')
+        self.efficiency_ax2.set_title('Reappearance Analysis', color=GUI_DARK_THEME['fg'])
+        self.efficiency_ax2.set_xlabel('Reappearance Count', color=GUI_DARK_THEME['fg'])
+
+        # Chart 3: Host vulnerability burden
+        if 'hostname' in df.columns:
+            host_burden = df.groupby('hostname').size()
+            self.efficiency_ax3.hist(host_burden, bins=30, color='#6f42c1', edgecolor='white')
+        self.efficiency_ax3.set_title('Host Vulnerability Burden', color=GUI_DARK_THEME['fg'])
+        self.efficiency_ax3.set_xlabel('Findings per Host', color=GUI_DARK_THEME['fg'])
+
+        # Chart 4: Resolution velocity
+        if 'status' in df.columns and 'days_open' in df.columns:
+            resolved = df[df['status'] == 'Resolved']
+            if not resolved.empty:
+                self.efficiency_ax4.hist(resolved['days_open'], bins=30, color='#28a745', edgecolor='white')
+        self.efficiency_ax4.set_title('Resolution Velocity', color=GUI_DARK_THEME['fg'])
+        self.efficiency_ax4.set_xlabel('Days to Resolve', color=GUI_DARK_THEME['fg'])
+
+        for ax in [self.efficiency_ax1, self.efficiency_ax2, self.efficiency_ax3, self.efficiency_ax4]:
+            ax.tick_params(colors=GUI_DARK_THEME['fg'])
+            for spine in ax.spines.values():
+                spine.set_color(GUI_DARK_THEME['fg'])
+
+        self.efficiency_fig.tight_layout()
+        self.efficiency_canvas.draw()
+
+    def _update_network_charts(self):
+        """Update network analysis visualizations."""
+        if not HAS_MATPLOTLIB or not hasattr(self, 'network_ax1'):
+            return
+
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+
+        for ax in [self.network_ax1, self.network_ax2, self.network_ax3, self.network_ax4]:
+            ax.clear()
+            ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
+
+        if df.empty or 'ip_address' not in df.columns:
+            self.network_canvas.draw()
+            return
+
+        # Extract subnet from IP
+        def get_subnet(ip):
+            if pd.isna(ip) or not isinstance(ip, str):
+                return 'Unknown'
+            parts = ip.split('.')
+            if len(parts) >= 3:
+                return f"{parts[0]}.{parts[1]}.{parts[2]}.0/24"
+            return 'Unknown'
+
+        df = df.copy()
+        df['subnet'] = df['ip_address'].apply(get_subnet)
+
+        # Chart 1: Top subnets
+        subnet_counts = df.groupby('subnet').size().nlargest(10)
+        if len(subnet_counts) > 0:
+            self.network_ax1.barh(range(len(subnet_counts)), subnet_counts.values, color='#007bff')
+            self.network_ax1.set_yticks(range(len(subnet_counts)))
+            self.network_ax1.set_yticklabels([s[:18] for s in subnet_counts.index], fontsize=7)
+        self.network_ax1.set_title('Top Subnets by Vulnerability', color=GUI_DARK_THEME['fg'])
+
+        # Chart 2: Subnet risk scores
+        if 'severity_value' in df.columns:
+            subnet_risk = df.groupby('subnet')['severity_value'].sum().nlargest(10)
+            if len(subnet_risk) > 0:
+                colors = ['#dc3545' if v > subnet_risk.median() else '#ffc107' for v in subnet_risk.values]
+                self.network_ax2.barh(range(len(subnet_risk)), subnet_risk.values, color=colors)
+                self.network_ax2.set_yticks(range(len(subnet_risk)))
+                self.network_ax2.set_yticklabels([s[:18] for s in subnet_risk.index], fontsize=7)
+        self.network_ax2.set_title('Subnet Risk Scores', color=GUI_DARK_THEME['fg'])
+
+        # Chart 3: Host criticality distribution
+        if 'hostname' in df.columns and 'severity_value' in df.columns:
+            host_crit = df.groupby('hostname')['severity_value'].sum()
+            self.network_ax3.hist(host_crit, bins=30, color='#17a2b8', edgecolor='white')
+        self.network_ax3.set_title('Host Criticality Distribution', color=GUI_DARK_THEME['fg'])
+        self.network_ax3.set_xlabel('Risk Score', color=GUI_DARK_THEME['fg'])
+
+        # Chart 4: Network class distribution
+        def get_class(ip):
+            if pd.isna(ip) or not isinstance(ip, str):
+                return 'Unknown'
+            parts = ip.split('.')
+            if len(parts) >= 1:
+                first = int(parts[0]) if parts[0].isdigit() else 0
+                if first < 128:
+                    return 'Class A'
+                elif first < 192:
+                    return 'Class B'
+                elif first < 224:
+                    return 'Class C'
+            return 'Other'
+
+        class_counts = df['ip_address'].apply(get_class).value_counts()
+        if len(class_counts) > 0:
+            self.network_ax4.pie(class_counts.values, labels=class_counts.index,
+                                autopct='%1.1f%%', textprops={'color': GUI_DARK_THEME['fg']})
+        self.network_ax4.set_title('Network Segment Analysis', color=GUI_DARK_THEME['fg'])
+
+        for ax in [self.network_ax1, self.network_ax2, self.network_ax3, self.network_ax4]:
+            ax.tick_params(colors=GUI_DARK_THEME['fg'])
+            for spine in ax.spines.values():
+                spine.set_color(GUI_DARK_THEME['fg'])
+
+        self.network_fig.tight_layout()
+        self.network_canvas.draw()
+
+    def _update_all_visualizations(self):
+        """Update all visualization tabs."""
+        self._update_trends_chart()
+        self._update_timeline_charts()
+        self._update_risk_charts()
+        self._update_opdir_charts()
+        self._update_efficiency_charts()
+        self._update_network_charts()
 
     # Export methods
     def _export_excel(self):
