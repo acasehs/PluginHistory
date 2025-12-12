@@ -6,7 +6,17 @@ from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
 
+# Application version
+VERSION = "2.0"
+
 # Severity mappings
+SEVERITY_MAPPING = {
+    0: 'Info',
+    1: 'Low',
+    2: 'Medium',
+    3: 'High',
+    4: 'Critical'
+}
 SEVERITY_ORDER = ['Critical', 'High', 'Medium', 'Low', 'Info']
 
 SEVERITY_COLORS = {
