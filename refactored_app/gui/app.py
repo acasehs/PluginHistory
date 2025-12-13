@@ -740,6 +740,12 @@ class NessusHistoryTrackerApp:
 
             self.efficiency_canvas = FigureCanvasTkAgg(self.efficiency_fig, master=efficiency_frame)
             self.efficiency_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+            # Bind double-click for pop-out
+            hint = ttk.Label(efficiency_frame, text="Double-click chart to pop-out",
+                            font=('Arial', 8), foreground='gray')
+            hint.pack(anchor=tk.SE, padx=5)
+            self._bind_chart_popouts_efficiency()
         else:
             ttk.Label(efficiency_frame, text="Install matplotlib for visualizations").pack(pady=50)
 
@@ -776,6 +782,12 @@ class NessusHistoryTrackerApp:
 
             self.network_canvas = FigureCanvasTkAgg(self.network_fig, master=network_frame)
             self.network_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+            # Bind double-click for pop-out
+            hint = ttk.Label(network_frame, text="Double-click chart to pop-out",
+                            font=('Arial', 8), foreground='gray')
+            hint.pack(anchor=tk.SE, padx=5)
+            self._bind_chart_popouts_network()
         else:
             ttk.Label(network_frame, text="Install matplotlib for visualizations").pack(pady=50)
 
@@ -812,6 +824,12 @@ class NessusHistoryTrackerApp:
 
             self.plugin_canvas = FigureCanvasTkAgg(self.plugin_fig, master=plugin_frame)
             self.plugin_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+            # Bind double-click for pop-out
+            hint = ttk.Label(plugin_frame, text="Double-click chart to pop-out",
+                            font=('Arial', 8), foreground='gray')
+            hint.pack(anchor=tk.SE, padx=5)
+            self._bind_chart_popouts_plugin()
         else:
             ttk.Label(plugin_frame, text="Install matplotlib for visualizations").pack(pady=50)
 
@@ -848,6 +866,12 @@ class NessusHistoryTrackerApp:
 
             self.priority_canvas = FigureCanvasTkAgg(self.priority_fig, master=priority_frame)
             self.priority_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+            # Bind double-click for pop-out
+            hint = ttk.Label(priority_frame, text="Double-click chart to pop-out",
+                            font=('Arial', 8), foreground='gray')
+            hint.pack(anchor=tk.SE, padx=5)
+            self._bind_chart_popouts_priority()
         else:
             ttk.Label(priority_frame, text="Install matplotlib for visualizations").pack(pady=50)
 
@@ -1009,6 +1033,12 @@ class NessusHistoryTrackerApp:
 
             self.host_tracking_canvas = FigureCanvasTkAgg(self.host_tracking_fig, master=host_tracking_frame)
             self.host_tracking_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+            # Bind double-click for pop-out
+            hint = ttk.Label(host_tracking_frame, text="Double-click chart to pop-out",
+                            font=('Arial', 8), foreground='gray')
+            hint.pack(anchor=tk.SE, padx=5)
+            self._bind_chart_popouts_host_tracking()
         else:
             ttk.Label(host_tracking_frame, text="Install matplotlib for visualizations").pack(pady=50)
 
@@ -3174,6 +3204,932 @@ class NessusHistoryTrackerApp:
             ax.text(0.02, 0.98, f'Overdue: {overdue}/{total} ({pct:.1f}%)',
                    transform=ax.transAxes, fontsize=10, va='top',
                    color='#dc3545' if pct > 20 else '#28a745')
+
+    # ==================== Efficiency Tab Pop-outs ====================
+
+    def _bind_chart_popouts_efficiency(self):
+        """Bind double-click pop-out for Efficiency tab charts."""
+        if not hasattr(self, 'efficiency_canvas'):
+            return
+
+        def get_click_quadrant(event):
+            widget = event.widget
+            w, h = widget.winfo_width(), widget.winfo_height()
+            x, y = event.x, event.y
+            col = 0 if x < w / 2 else 1
+            row = 0 if y < h / 2 else 1
+            return row * 2 + col
+
+        def on_double_click(event):
+            quadrant = get_click_quadrant(event)
+            chart_info = [
+                ('Scan Coverage Consistency', self._draw_scan_coverage_popout),
+                ('Reappearance Analysis', self._draw_reappearance_popout),
+                ('Host Vulnerability Burden', self._draw_host_burden_popout),
+                ('Resolution Velocity', self._draw_resolution_velocity_popout),
+            ]
+            title, redraw_func = chart_info[quadrant]
+            ChartPopoutModal(self.window, title, redraw_func)
+
+        self.efficiency_canvas.get_tk_widget().bind('<Double-Button-1>', on_double_click)
+
+    def _draw_scan_coverage_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw scan coverage consistency histogram for pop-out."""
+        host_df = self.filtered_host_df if not self.filtered_host_df.empty else self.host_presence_df
+
+        if host_df.empty or 'presence_percentage' not in host_df.columns:
+            ax.text(0.5, 0.5, 'No host presence data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        presence = host_df['presence_percentage'].values
+        bins = 20 if enlarged else 10
+        n, bin_edges, patches = ax.hist(presence, bins=bins, color='#17a2b8', edgecolor='white', alpha=0.8)
+
+        # Color code by coverage
+        for i, patch in enumerate(patches):
+            bin_center = (bin_edges[i] + bin_edges[i+1]) / 2
+            if bin_center >= 80:
+                patch.set_facecolor('#28a745')
+            elif bin_center >= 50:
+                patch.set_facecolor('#ffc107')
+            else:
+                patch.set_facecolor('#dc3545')
+
+        ax.set_title('Scan Coverage Consistency')
+        ax.set_xlabel('Presence Percentage')
+        ax.set_ylabel('Host Count')
+
+        if enlarged:
+            avg = presence.mean()
+            median = np.median(presence)
+            ax.axvline(x=avg, color='white', linestyle='--', linewidth=1, alpha=0.7)
+            ax.text(0.02, 0.98, f'Avg: {avg:.1f}% | Median: {median:.1f}%',
+                   transform=ax.transAxes, fontsize=10, va='top', color='#17a2b8')
+
+    def _draw_reappearance_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw reappearance analysis for pop-out."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+
+        if df.empty or 'appearance_count' not in df.columns:
+            ax.text(0.5, 0.5, 'No reappearance data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Group by appearance count
+        reappear_counts = df['appearance_count'].value_counts().sort_index()
+
+        if len(reappear_counts) == 0:
+            ax.text(0.5, 0.5, 'No reappearance data', ha='center', va='center', color='white', fontsize=12)
+            return
+
+        # Limit to first 10 for readability
+        if len(reappear_counts) > 10:
+            reappear_counts = reappear_counts.head(10)
+
+        bars = ax.bar(range(len(reappear_counts)), reappear_counts.values, color='#fd7e14')
+        ax.set_xticks(range(len(reappear_counts)))
+        ax.set_xticklabels([int(x) for x in reappear_counts.index], fontsize=9)
+
+        if show_labels:
+            for bar, val in zip(bars, reappear_counts.values):
+                ax.annotate(f'{int(val)}', xy=(bar.get_x() + bar.get_width()/2, val),
+                           xytext=(0, 3), textcoords='offset points',
+                           ha='center', va='bottom', fontsize=8, color='white')
+
+        ax.set_title('Finding Reappearance Analysis')
+        ax.set_xlabel('Times Appeared in Scans')
+        ax.set_ylabel('Finding Count')
+
+        if enlarged:
+            total = reappear_counts.sum()
+            recurring = reappear_counts[reappear_counts.index > 1].sum() if len(reappear_counts) > 1 else 0
+            pct = recurring / total * 100 if total > 0 else 0
+            ax.text(0.98, 0.98, f'Recurring: {pct:.1f}%', transform=ax.transAxes,
+                   fontsize=10, va='top', ha='right', color='#fd7e14')
+
+    def _draw_host_burden_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw host vulnerability burden for pop-out."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+
+        if df.empty or 'hostname' not in df.columns:
+            ax.text(0.5, 0.5, 'No host data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Count vulnerabilities per host
+        vuln_per_host = df.groupby('hostname').size()
+
+        if len(vuln_per_host) == 0:
+            ax.text(0.5, 0.5, 'No host data', ha='center', va='center', color='white', fontsize=12)
+            return
+
+        # Histogram of vulnerability count per host
+        bins = 20 if enlarged else 10
+        n, bin_edges, patches = ax.hist(vuln_per_host.values, bins=bins, color='#6c757d', edgecolor='white')
+
+        ax.set_title('Host Vulnerability Burden Distribution')
+        ax.set_xlabel('Vulnerabilities per Host')
+        ax.set_ylabel('Host Count')
+
+        if enlarged:
+            avg = vuln_per_host.mean()
+            max_vulns = vuln_per_host.max()
+            ax.text(0.02, 0.98, f'Avg: {avg:.1f} vulns/host | Max: {max_vulns}',
+                   transform=ax.transAxes, fontsize=10, va='top', color='#17a2b8')
+
+    def _draw_resolution_velocity_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw resolution velocity for pop-out."""
+        df = self.lifecycle_df
+
+        if df.empty or 'status' not in df.columns or 'days_to_remediation' not in df.columns:
+            ax.text(0.5, 0.5, 'No resolution data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        resolved = df[df['status'] == 'resolved']
+        if resolved.empty or resolved['days_to_remediation'].isna().all():
+            ax.text(0.5, 0.5, 'No resolved findings with\nremediation time data',
+                   ha='center', va='center', color='white', fontsize=12)
+            return
+
+        days = resolved['days_to_remediation'].dropna().values
+
+        # Histogram
+        bins = [0, 7, 14, 30, 60, 90, max(days.max() + 1, 91)]
+        bin_labels = ['0-7', '8-14', '15-30', '31-60', '61-90', '90+']
+        hist, _ = np.histogram(days, bins=bins)
+
+        colors = ['#28a745', '#28a745', '#ffc107', '#ffc107', '#fd7e14', '#dc3545']
+        bars = ax.bar(range(len(hist)), hist, color=colors[:len(hist)])
+        ax.set_xticks(range(len(hist)))
+        ax.set_xticklabels(bin_labels[:len(hist)], fontsize=9)
+
+        if show_labels:
+            for bar, val in zip(bars, hist):
+                if val > 0:
+                    ax.annotate(f'{int(val)}', xy=(bar.get_x() + bar.get_width()/2, val),
+                               xytext=(0, 3), textcoords='offset points',
+                               ha='center', va='bottom', fontsize=8, color='white')
+
+        ax.set_title('Resolution Velocity (Days to Remediate)')
+        ax.set_xlabel('Days')
+        ax.set_ylabel('Finding Count')
+
+        if enlarged:
+            avg = days.mean()
+            median = np.median(days)
+            ax.text(0.98, 0.98, f'Avg: {avg:.0f}d | Median: {median:.0f}d',
+                   transform=ax.transAxes, fontsize=10, va='top', ha='right', color='#28a745')
+
+    # ==================== Network Tab Pop-outs ====================
+
+    def _bind_chart_popouts_network(self):
+        """Bind double-click pop-out for Network tab charts."""
+        if not hasattr(self, 'network_canvas'):
+            return
+
+        def get_click_quadrant(event):
+            widget = event.widget
+            w, h = widget.winfo_width(), widget.winfo_height()
+            x, y = event.x, event.y
+            col = 0 if x < w / 2 else 1
+            row = 0 if y < h / 2 else 1
+            return row * 2 + col
+
+        def on_double_click(event):
+            quadrant = get_click_quadrant(event)
+            chart_info = [
+                ('Top Subnets by Vulnerability', self._draw_top_subnets_popout),
+                ('Subnet Risk Scores', self._draw_subnet_risk_popout),
+                ('Host Criticality Distribution', self._draw_host_criticality_popout),
+                ('Network Segment Analysis', self._draw_network_segment_popout),
+            ]
+            title, redraw_func = chart_info[quadrant]
+            ChartPopoutModal(self.window, title, redraw_func)
+
+        self.network_canvas.get_tk_widget().bind('<Double-Button-1>', on_double_click)
+
+    def _draw_top_subnets_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw top subnets by vulnerability count for pop-out."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+
+        if df.empty or 'ip' not in df.columns:
+            ax.text(0.5, 0.5, 'No IP data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Extract subnet from IP
+        def get_subnet(ip):
+            try:
+                parts = str(ip).split('.')
+                if len(parts) >= 3:
+                    return '.'.join(parts[:3]) + '.0/24'
+            except:
+                pass
+            return 'Unknown'
+
+        df_copy = df.copy()
+        df_copy['subnet'] = df_copy['ip'].apply(get_subnet)
+        subnet_counts = df_copy['subnet'].value_counts().head(15 if enlarged else 10)
+
+        if len(subnet_counts) == 0:
+            ax.text(0.5, 0.5, 'No subnet data', ha='center', va='center', color='white', fontsize=12)
+            return
+
+        bars = ax.barh(range(len(subnet_counts)), subnet_counts.values, color='#007bff')
+        ax.set_yticks(range(len(subnet_counts)))
+        ax.set_yticklabels(subnet_counts.index, fontsize=8)
+
+        if show_labels:
+            for bar, val in zip(bars, subnet_counts.values):
+                ax.annotate(f'{int(val)}', xy=(val, bar.get_y() + bar.get_height()/2),
+                           xytext=(3, 0), textcoords='offset points',
+                           ha='left', va='center', fontsize=8, color='white')
+
+        ax.set_title('Top Subnets by Vulnerability Count')
+        ax.set_xlabel('Vulnerability Count')
+        ax.invert_yaxis()
+
+    def _draw_subnet_risk_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw subnet risk scores for pop-out."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+
+        if df.empty or 'ip' not in df.columns or 'severity_value' not in df.columns:
+            ax.text(0.5, 0.5, 'No IP/severity data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        def get_subnet(ip):
+            try:
+                parts = str(ip).split('.')
+                if len(parts) >= 3:
+                    return '.'.join(parts[:3]) + '.0/24'
+            except:
+                pass
+            return 'Unknown'
+
+        df_copy = df.copy()
+        df_copy['subnet'] = df_copy['ip'].apply(get_subnet)
+        subnet_risk = df_copy.groupby('subnet')['severity_value'].sum().nlargest(10)
+
+        if len(subnet_risk) == 0:
+            ax.text(0.5, 0.5, 'No risk data', ha='center', va='center', color='white', fontsize=12)
+            return
+
+        # Color gradient by risk
+        max_risk = subnet_risk.max()
+        colors = ['#dc3545' if r > max_risk * 0.7 else '#ffc107' if r > max_risk * 0.4 else '#28a745'
+                 for r in subnet_risk.values]
+
+        bars = ax.barh(range(len(subnet_risk)), subnet_risk.values, color=colors)
+        ax.set_yticks(range(len(subnet_risk)))
+        ax.set_yticklabels(subnet_risk.index, fontsize=8)
+
+        if show_labels:
+            for bar, val in zip(bars, subnet_risk.values):
+                ax.annotate(f'{int(val)}', xy=(val, bar.get_y() + bar.get_height()/2),
+                           xytext=(3, 0), textcoords='offset points',
+                           ha='left', va='center', fontsize=8, color='white')
+
+        ax.set_title('Subnet Risk Scores')
+        ax.set_xlabel('Total Risk Score')
+        ax.invert_yaxis()
+
+    def _draw_host_criticality_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw host criticality distribution for pop-out."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+
+        if df.empty or 'hostname' not in df.columns or 'severity_value' not in df.columns:
+            ax.text(0.5, 0.5, 'No host severity data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Calculate host risk scores
+        host_risk = df.groupby('hostname')['severity_value'].sum()
+
+        if len(host_risk) == 0:
+            ax.text(0.5, 0.5, 'No host data', ha='center', va='center', color='white', fontsize=12)
+            return
+
+        # Histogram of host risk scores
+        bins = 20 if enlarged else 10
+        n, bin_edges, patches = ax.hist(host_risk.values, bins=bins, color='#6c757d', edgecolor='white')
+
+        ax.set_title('Host Criticality Distribution')
+        ax.set_xlabel('Total Risk Score per Host')
+        ax.set_ylabel('Host Count')
+
+        if enlarged:
+            avg = host_risk.mean()
+            high_risk = (host_risk > host_risk.quantile(0.9)).sum()
+            ax.text(0.02, 0.98, f'Avg Risk: {avg:.0f} | High Risk Hosts: {high_risk}',
+                   transform=ax.transAxes, fontsize=10, va='top', color='#dc3545')
+
+    def _draw_network_segment_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw network segment analysis for pop-out."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+
+        if df.empty or 'ip' not in df.columns or 'severity' not in df.columns:
+            ax.text(0.5, 0.5, 'No network segment data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        def get_class_b(ip):
+            try:
+                parts = str(ip).split('.')
+                if len(parts) >= 2:
+                    return f'{parts[0]}.{parts[1]}.x.x'
+            except:
+                pass
+            return 'Unknown'
+
+        df_copy = df.copy()
+        df_copy['segment'] = df_copy['ip'].apply(get_class_b)
+
+        # Group by segment and severity
+        segment_sev = df_copy.groupby(['segment', 'severity']).size().unstack(fill_value=0)
+        segment_sev = segment_sev.head(10)
+
+        if segment_sev.empty:
+            ax.text(0.5, 0.5, 'No segment data', ha='center', va='center', color='white', fontsize=12)
+            return
+
+        x = range(len(segment_sev))
+        severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff'}
+
+        bottom = np.zeros(len(segment_sev))
+        for sev in ['Low', 'Medium', 'High', 'Critical']:
+            if sev in segment_sev.columns:
+                values = segment_sev[sev].values
+                ax.bar(x, values, bottom=bottom, label=sev, color=severity_colors.get(sev, '#6c757d'))
+                bottom += values
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(segment_sev.index, fontsize=7, rotation=45, ha='right')
+        ax.legend(loc='upper right', fontsize=7)
+        ax.set_title('Network Segment Analysis')
+        ax.set_ylabel('Vulnerability Count')
+
+    # ==================== Plugin Tab Pop-outs ====================
+
+    def _bind_chart_popouts_plugin(self):
+        """Bind double-click pop-out for Plugin tab charts."""
+        if not hasattr(self, 'plugin_canvas'):
+            return
+
+        def get_click_quadrant(event):
+            widget = event.widget
+            w, h = widget.winfo_width(), widget.winfo_height()
+            x, y = event.x, event.y
+            col = 0 if x < w / 2 else 1
+            row = 0 if y < h / 2 else 1
+            return row * 2 + col
+
+        def on_double_click(event):
+            quadrant = get_click_quadrant(event)
+            chart_info = [
+                ('Top Most Common Plugins', self._draw_top_plugins_popout),
+                ('Plugin Severity Distribution', self._draw_plugin_severity_popout),
+                ('Plugins Affecting Most Hosts', self._draw_plugins_by_hosts_popout),
+                ('Plugin Average Age', self._draw_plugin_age_popout),
+            ]
+            title, redraw_func = chart_info[quadrant]
+            ChartPopoutModal(self.window, title, redraw_func)
+
+        self.plugin_canvas.get_tk_widget().bind('<Double-Button-1>', on_double_click)
+
+    def _draw_top_plugins_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw top most common plugins for pop-out."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+
+        if df.empty or 'plugin_id' not in df.columns:
+            ax.text(0.5, 0.5, 'No plugin data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        num_plugins = 20 if enlarged else 15
+        plugin_counts = df['plugin_id'].value_counts().head(num_plugins)
+
+        if len(plugin_counts) == 0:
+            ax.text(0.5, 0.5, 'No plugin data', ha='center', va='center', color='white', fontsize=12)
+            return
+
+        bars = ax.barh(range(len(plugin_counts)), plugin_counts.values, color='#17a2b8')
+        ax.set_yticks(range(len(plugin_counts)))
+
+        # Try to get plugin names if available
+        if 'plugin_name' in df.columns:
+            plugin_names = df.groupby('plugin_id')['plugin_name'].first()
+            labels = [str(plugin_names.get(pid, pid))[:30] for pid in plugin_counts.index]
+        else:
+            labels = [str(pid) for pid in plugin_counts.index]
+
+        ax.set_yticklabels(labels, fontsize=7)
+
+        if show_labels:
+            for bar, val in zip(bars, plugin_counts.values):
+                ax.annotate(f'{int(val)}', xy=(val, bar.get_y() + bar.get_height()/2),
+                           xytext=(3, 0), textcoords='offset points',
+                           ha='left', va='center', fontsize=7, color='white')
+
+        ax.set_title(f'Top {num_plugins} Most Common Plugins')
+        ax.set_xlabel('Finding Count')
+        ax.invert_yaxis()
+
+    def _draw_plugin_severity_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw plugin severity distribution for pop-out."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+
+        if df.empty or 'plugin_id' not in df.columns or 'severity' not in df.columns:
+            ax.text(0.5, 0.5, 'No plugin severity data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Count unique plugins per severity
+        plugin_sev = df.groupby('severity')['plugin_id'].nunique()
+        severity_order = ['Critical', 'High', 'Medium', 'Low', 'Info']
+        plugin_sev = plugin_sev.reindex([s for s in severity_order if s in plugin_sev.index])
+
+        if len(plugin_sev) == 0:
+            ax.text(0.5, 0.5, 'No severity data', ha='center', va='center', color='white', fontsize=12)
+            return
+
+        severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107',
+                          'Low': '#007bff', 'Info': '#6c757d'}
+        colors = [severity_colors.get(s, '#6c757d') for s in plugin_sev.index]
+
+        bars = ax.bar(range(len(plugin_sev)), plugin_sev.values, color=colors)
+        ax.set_xticks(range(len(plugin_sev)))
+        ax.set_xticklabels(plugin_sev.index, fontsize=10)
+
+        if show_labels:
+            for bar, val in zip(bars, plugin_sev.values):
+                ax.annotate(f'{int(val)}', xy=(bar.get_x() + bar.get_width()/2, val),
+                           xytext=(0, 3), textcoords='offset points',
+                           ha='center', va='bottom', fontsize=9, color='white')
+
+        ax.set_title('Unique Plugins by Severity')
+        ax.set_ylabel('Plugin Count')
+
+    def _draw_plugins_by_hosts_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw plugins affecting most hosts for pop-out."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+
+        if df.empty or 'plugin_id' not in df.columns or 'hostname' not in df.columns:
+            ax.text(0.5, 0.5, 'No plugin/host data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        num_plugins = 15 if enlarged else 10
+        hosts_per_plugin = df.groupby('plugin_id')['hostname'].nunique().nlargest(num_plugins)
+
+        if len(hosts_per_plugin) == 0:
+            ax.text(0.5, 0.5, 'No data', ha='center', va='center', color='white', fontsize=12)
+            return
+
+        bars = ax.barh(range(len(hosts_per_plugin)), hosts_per_plugin.values, color='#fd7e14')
+        ax.set_yticks(range(len(hosts_per_plugin)))
+
+        if 'plugin_name' in df.columns:
+            plugin_names = df.groupby('plugin_id')['plugin_name'].first()
+            labels = [str(plugin_names.get(pid, pid))[:25] for pid in hosts_per_plugin.index]
+        else:
+            labels = [str(pid) for pid in hosts_per_plugin.index]
+
+        ax.set_yticklabels(labels, fontsize=7)
+
+        if show_labels:
+            for bar, val in zip(bars, hosts_per_plugin.values):
+                ax.annotate(f'{int(val)}', xy=(val, bar.get_y() + bar.get_height()/2),
+                           xytext=(3, 0), textcoords='offset points',
+                           ha='left', va='center', fontsize=7, color='white')
+
+        ax.set_title(f'Plugins Affecting Most Hosts')
+        ax.set_xlabel('Host Count')
+        ax.invert_yaxis()
+
+    def _draw_plugin_age_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw plugin average age for pop-out."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+
+        if df.empty or 'plugin_id' not in df.columns or 'days_open' not in df.columns:
+            ax.text(0.5, 0.5, 'No plugin age data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        num_plugins = 15 if enlarged else 10
+        avg_age = df.groupby('plugin_id')['days_open'].mean().nlargest(num_plugins)
+
+        if len(avg_age) == 0:
+            ax.text(0.5, 0.5, 'No age data', ha='center', va='center', color='white', fontsize=12)
+            return
+
+        # Color by age
+        colors = ['#dc3545' if a > 90 else '#ffc107' if a > 30 else '#28a745' for a in avg_age.values]
+
+        bars = ax.barh(range(len(avg_age)), avg_age.values, color=colors)
+        ax.set_yticks(range(len(avg_age)))
+
+        if 'plugin_name' in df.columns:
+            plugin_names = df.groupby('plugin_id')['plugin_name'].first()
+            labels = [str(plugin_names.get(pid, pid))[:25] for pid in avg_age.index]
+        else:
+            labels = [str(pid) for pid in avg_age.index]
+
+        ax.set_yticklabels(labels, fontsize=7)
+
+        if show_labels:
+            for bar, val in zip(bars, avg_age.values):
+                ax.annotate(f'{int(val)}d', xy=(val, bar.get_y() + bar.get_height()/2),
+                           xytext=(3, 0), textcoords='offset points',
+                           ha='left', va='center', fontsize=7, color='white')
+
+        ax.set_title('Plugins with Longest Average Age')
+        ax.set_xlabel('Average Days Open')
+        ax.invert_yaxis()
+
+    # ==================== Priority Tab Pop-outs ====================
+
+    def _bind_chart_popouts_priority(self):
+        """Bind double-click pop-out for Priority tab charts."""
+        if not hasattr(self, 'priority_canvas'):
+            return
+
+        def get_click_quadrant(event):
+            widget = event.widget
+            w, h = widget.winfo_width(), widget.winfo_height()
+            x, y = event.x, event.y
+            col = 0 if x < w / 2 else 1
+            row = 0 if y < h / 2 else 1
+            return row * 2 + col
+
+        def on_double_click(event):
+            quadrant = get_click_quadrant(event)
+            chart_info = [
+                ('Remediation Priority Matrix', self._draw_priority_matrix_popout),
+                ('Priority Distribution', self._draw_priority_distribution_popout),
+                ('Top Priority Findings', self._draw_top_priority_popout),
+                ('Priority Score by Severity', self._draw_priority_by_severity_popout),
+            ]
+            title, redraw_func = chart_info[quadrant]
+            ChartPopoutModal(self.window, title, redraw_func)
+
+        self.priority_canvas.get_tk_widget().bind('<Double-Button-1>', on_double_click)
+
+    def _draw_priority_matrix_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw remediation priority matrix (CVSS vs Age) for pop-out."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+
+        if df.empty or 'cvss' not in df.columns or 'days_open' not in df.columns:
+            ax.text(0.5, 0.5, 'No CVSS/age data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        plot_df = df[df['cvss'].notna() & df['days_open'].notna()].copy()
+        if plot_df.empty:
+            ax.text(0.5, 0.5, 'No data with CVSS and age', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Limit sample size for performance
+        if len(plot_df) > 500:
+            plot_df = plot_df.sample(500, random_state=42)
+
+        # Calculate priority score
+        plot_df['priority_score'] = plot_df['cvss'] * np.log1p(plot_df['days_open'])
+
+        # Color by priority
+        scatter = ax.scatter(plot_df['days_open'], plot_df['cvss'],
+                           c=plot_df['priority_score'], cmap='RdYlGn_r',
+                           s=30 if enlarged else 15, alpha=0.6)
+
+        # Add quadrant lines
+        ax.axhline(y=7.0, color='white', linestyle='--', linewidth=1, alpha=0.5)
+        ax.axvline(x=30, color='white', linestyle='--', linewidth=1, alpha=0.5)
+
+        # Label quadrants
+        if enlarged:
+            ax.text(0.75, 0.95, 'URGENT', transform=ax.transAxes, fontsize=10,
+                   color='#dc3545', fontweight='bold', ha='center')
+            ax.text(0.25, 0.95, 'HIGH PRIORITY', transform=ax.transAxes, fontsize=10,
+                   color='#fd7e14', fontweight='bold', ha='center')
+            ax.text(0.75, 0.05, 'MONITOR', transform=ax.transAxes, fontsize=10,
+                   color='#ffc107', fontweight='bold', ha='center')
+            ax.text(0.25, 0.05, 'LOW PRIORITY', transform=ax.transAxes, fontsize=10,
+                   color='#28a745', fontweight='bold', ha='center')
+
+        ax.set_title('Remediation Priority Matrix')
+        ax.set_xlabel('Days Open')
+        ax.set_ylabel('CVSS Score')
+
+        if enlarged:
+            fig.colorbar(scatter, ax=ax, label='Priority Score')
+
+    def _draw_priority_distribution_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw priority distribution pie for pop-out."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+
+        if df.empty or 'cvss' not in df.columns or 'days_open' not in df.columns:
+            ax.text(0.5, 0.5, 'No priority data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Categorize by priority
+        def get_priority(row):
+            cvss = row.get('cvss', 0) or 0
+            days = row.get('days_open', 0) or 0
+            if cvss >= 7 and days > 30:
+                return 'Urgent'
+            elif cvss >= 7 or days > 60:
+                return 'High'
+            elif cvss >= 4 or days > 30:
+                return 'Medium'
+            else:
+                return 'Low'
+
+        df_copy = df.copy()
+        df_copy['priority'] = df_copy.apply(get_priority, axis=1)
+        priority_counts = df_copy['priority'].value_counts()
+
+        priority_order = ['Urgent', 'High', 'Medium', 'Low']
+        priority_counts = priority_counts.reindex([p for p in priority_order if p in priority_counts.index])
+
+        if len(priority_counts) == 0:
+            ax.text(0.5, 0.5, 'No data', ha='center', va='center', color='white', fontsize=12)
+            return
+
+        colors = {'Urgent': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#28a745'}
+        pie_colors = [colors.get(p, '#6c757d') for p in priority_counts.index]
+
+        labels = [f'{p}\n({c})' for p, c in zip(priority_counts.index, priority_counts.values)]
+        ax.pie(priority_counts.values, labels=labels, colors=pie_colors, autopct='%1.1f%%',
+              textprops={'color': 'white', 'fontsize': 9})
+
+        ax.set_title('Priority Distribution')
+
+    def _draw_top_priority_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw top priority findings for pop-out."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+
+        if df.empty or 'cvss' not in df.columns or 'days_open' not in df.columns:
+            ax.text(0.5, 0.5, 'No priority data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        df_copy = df.copy()
+        df_copy['priority_score'] = df_copy['cvss'].fillna(0) * np.log1p(df_copy['days_open'].fillna(0))
+
+        num_findings = 15 if enlarged else 10
+        top_priority = df_copy.nlargest(num_findings, 'priority_score')
+
+        if len(top_priority) == 0:
+            ax.text(0.5, 0.5, 'No data', ha='center', va='center', color='white', fontsize=12)
+            return
+
+        bars = ax.barh(range(len(top_priority)), top_priority['priority_score'].values, color='#dc3545')
+        ax.set_yticks(range(len(top_priority)))
+
+        if 'plugin_name' in top_priority.columns:
+            labels = [f"{str(row['plugin_name'])[:20]} ({row['hostname'][:10]})"
+                     for _, row in top_priority.iterrows()]
+        else:
+            labels = [f"Plugin {row['plugin_id']} ({row['hostname'][:10]})"
+                     for _, row in top_priority.iterrows()]
+
+        ax.set_yticklabels(labels, fontsize=7)
+
+        ax.set_title(f'Top {num_findings} Priority Findings')
+        ax.set_xlabel('Priority Score (CVSS × log(days+1))')
+        ax.invert_yaxis()
+
+    def _draw_priority_by_severity_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw priority score by severity for pop-out."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+
+        if df.empty or 'severity' not in df.columns or 'cvss' not in df.columns or 'days_open' not in df.columns:
+            ax.text(0.5, 0.5, 'No priority data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        df_copy = df.copy()
+        df_copy['priority_score'] = df_copy['cvss'].fillna(0) * np.log1p(df_copy['days_open'].fillna(0))
+
+        avg_priority = df_copy.groupby('severity')['priority_score'].mean()
+        severity_order = ['Critical', 'High', 'Medium', 'Low']
+        avg_priority = avg_priority.reindex([s for s in severity_order if s in avg_priority.index])
+
+        if len(avg_priority) == 0:
+            ax.text(0.5, 0.5, 'No data', ha='center', va='center', color='white', fontsize=12)
+            return
+
+        severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff'}
+        colors = [severity_colors.get(s, '#6c757d') for s in avg_priority.index]
+
+        bars = ax.bar(range(len(avg_priority)), avg_priority.values, color=colors)
+        ax.set_xticks(range(len(avg_priority)))
+        ax.set_xticklabels(avg_priority.index, fontsize=10)
+
+        if show_labels:
+            for bar, val in zip(bars, avg_priority.values):
+                ax.annotate(f'{val:.1f}', xy=(bar.get_x() + bar.get_width()/2, val),
+                           xytext=(0, 3), textcoords='offset points',
+                           ha='center', va='bottom', fontsize=9, color='white')
+
+        ax.set_title('Average Priority Score by Severity')
+        ax.set_ylabel('Avg Priority Score')
+
+    # ==================== Host Tracking Tab Pop-outs ====================
+
+    def _bind_chart_popouts_host_tracking(self):
+        """Bind double-click pop-out for Host Tracking tab charts."""
+        if not hasattr(self, 'host_tracking_canvas'):
+            return
+
+        def get_click_quadrant(event):
+            widget = event.widget
+            w, h = widget.winfo_width(), widget.winfo_height()
+            x, y = event.x, event.y
+            col = 0 if x < w / 2 else 1
+            row = 0 if y < h / 2 else 1
+            return row * 2 + col
+
+        def on_double_click(event):
+            quadrant = get_click_quadrant(event)
+            chart_info = [
+                ('Hosts Missing from Recent Scans', self._draw_missing_hosts_popout),
+                ('Host Presence Over Time', self._draw_host_presence_popout),
+                ('Hosts with Declining Presence', self._draw_declining_hosts_popout),
+                ('Host Status Distribution', self._draw_host_status_popout),
+            ]
+            title, redraw_func = chart_info[quadrant]
+            ChartPopoutModal(self.window, title, redraw_func)
+
+        self.host_tracking_canvas.get_tk_widget().bind('<Double-Button-1>', on_double_click)
+
+    def _draw_missing_hosts_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw hosts missing from recent scans for pop-out."""
+        host_df = self.filtered_host_df if not self.filtered_host_df.empty else self.host_presence_df
+
+        if host_df.empty:
+            ax.text(0.5, 0.5, 'No host tracking data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Find hosts not in recent scans
+        if 'last_seen' in host_df.columns and 'scans_missed' in host_df.columns:
+            missing = host_df[host_df['scans_missed'] > 0].nlargest(15 if enlarged else 10, 'scans_missed')
+        else:
+            ax.text(0.5, 0.5, 'Missing scan data not available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        if missing.empty:
+            ax.text(0.5, 0.5, 'No missing hosts detected', ha='center', va='center',
+                   color='#28a745', fontsize=12)
+            return
+
+        bars = ax.barh(range(len(missing)), missing['scans_missed'].values, color='#dc3545')
+        ax.set_yticks(range(len(missing)))
+        ax.set_yticklabels([str(h)[:20] for h in missing['hostname']], fontsize=8)
+
+        if show_labels:
+            for bar, val in zip(bars, missing['scans_missed'].values):
+                ax.annotate(f'{int(val)}', xy=(val, bar.get_y() + bar.get_height()/2),
+                           xytext=(3, 0), textcoords='offset points',
+                           ha='left', va='center', fontsize=8, color='white')
+
+        ax.set_title('Hosts Missing from Recent Scans')
+        ax.set_xlabel('Scans Missed')
+        ax.invert_yaxis()
+
+    def _draw_host_presence_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw host presence over time for pop-out."""
+        hist_df = self.historical_df
+
+        if hist_df.empty or 'scan_date' not in hist_df.columns or 'hostname' not in hist_df.columns:
+            ax.text(0.5, 0.5, 'No historical host data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Count unique hosts per scan date
+        hosts_per_scan = hist_df.groupby('scan_date')['hostname'].nunique().reset_index()
+        hosts_per_scan = hosts_per_scan.sort_values('scan_date')
+
+        if len(hosts_per_scan) < 2:
+            ax.text(0.5, 0.5, 'Need 2+ scans for trend', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        dates = hosts_per_scan['scan_date']
+        counts = hosts_per_scan['hostname']
+
+        ax.plot(range(len(dates)), counts, marker='o', color='#17a2b8',
+               linewidth=2, markersize=6 if enlarged else 4)
+        ax.fill_between(range(len(dates)), counts, alpha=0.3, color='#17a2b8')
+
+        if show_labels:
+            for i, (x, y) in enumerate(zip(range(len(dates)), counts)):
+                if not enlarged and len(dates) > 8 and i % 2 != 0:
+                    continue
+                ax.annotate(f'{int(y)}', xy=(x, y), xytext=(0, 8), textcoords='offset points',
+                           ha='center', va='bottom', fontsize=8, color='white')
+
+        # Format x-axis
+        if len(dates) > 8:
+            step = max(1, len(dates) // 8)
+            tick_positions = list(range(0, len(dates), step))
+            ax.set_xticks(tick_positions)
+            tick_labels = [str(dates.iloc[i])[:10] for i in tick_positions]
+            ax.set_xticklabels(tick_labels, fontsize=8, rotation=45, ha='right')
+        else:
+            ax.set_xticks(range(len(dates)))
+            ax.set_xticklabels([str(d)[:10] for d in dates], fontsize=8, rotation=45, ha='right')
+
+        ax.set_title('Host Count Over Time')
+        ax.set_ylabel('Unique Hosts')
+        ax.set_xlabel('Scan Date')
+
+    def _draw_declining_hosts_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw hosts with declining presence for pop-out."""
+        host_df = self.filtered_host_df if not self.filtered_host_df.empty else self.host_presence_df
+
+        if host_df.empty or 'presence_percentage' not in host_df.columns:
+            ax.text(0.5, 0.5, 'No host presence data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Find hosts with low presence
+        declining = host_df[host_df['presence_percentage'] < 50].nsmallest(
+            15 if enlarged else 10, 'presence_percentage')
+
+        if declining.empty:
+            ax.text(0.5, 0.5, 'No hosts with declining presence\n(<50% scan coverage)',
+                   ha='center', va='center', color='#28a745', fontsize=12)
+            return
+
+        bars = ax.barh(range(len(declining)), declining['presence_percentage'].values, color='#ffc107')
+        ax.set_yticks(range(len(declining)))
+        ax.set_yticklabels([str(h)[:20] for h in declining['hostname']], fontsize=8)
+
+        if show_labels:
+            for bar, val in zip(bars, declining['presence_percentage'].values):
+                ax.annotate(f'{val:.1f}%', xy=(val, bar.get_y() + bar.get_height()/2),
+                           xytext=(3, 0), textcoords='offset points',
+                           ha='left', va='center', fontsize=8, color='white')
+
+        ax.set_title('Hosts with Declining Presence')
+        ax.set_xlabel('Presence Percentage')
+        ax.set_xlim(0, 100)
+        ax.invert_yaxis()
+
+    def _draw_host_status_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw host status distribution for pop-out."""
+        host_df = self.filtered_host_df if not self.filtered_host_df.empty else self.host_presence_df
+
+        if host_df.empty or 'presence_percentage' not in host_df.columns:
+            ax.text(0.5, 0.5, 'No host status data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Categorize hosts by presence
+        def categorize(pct):
+            if pct >= 90:
+                return 'Consistent (90%+)'
+            elif pct >= 70:
+                return 'Moderate (70-90%)'
+            elif pct >= 50:
+                return 'Intermittent (50-70%)'
+            else:
+                return 'Rare (<50%)'
+
+        host_df_copy = host_df.copy()
+        host_df_copy['status'] = host_df_copy['presence_percentage'].apply(categorize)
+        status_counts = host_df_copy['status'].value_counts()
+
+        status_order = ['Consistent (90%+)', 'Moderate (70-90%)', 'Intermittent (50-70%)', 'Rare (<50%)']
+        status_counts = status_counts.reindex([s for s in status_order if s in status_counts.index])
+
+        if len(status_counts) == 0:
+            ax.text(0.5, 0.5, 'No status data', ha='center', va='center', color='white', fontsize=12)
+            return
+
+        colors = {'Consistent (90%+)': '#28a745', 'Moderate (70-90%)': '#17a2b8',
+                 'Intermittent (50-70%)': '#ffc107', 'Rare (<50%)': '#dc3545'}
+        pie_colors = [colors.get(s, '#6c757d') for s in status_counts.index]
+
+        labels = [f'{s.split(" ")[0]}\n({c})' for s, c in zip(status_counts.index, status_counts.values)]
+        ax.pie(status_counts.values, labels=labels, colors=pie_colors, autopct='%1.1f%%',
+              textprops={'color': 'white', 'fontsize': 8})
+
+        ax.set_title('Host Status Distribution')
+
+        if enlarged:
+            total = status_counts.sum()
+            consistent = status_counts.get('Consistent (90%+)', 0)
+            pct = consistent / total * 100 if total > 0 else 0
+            ax.text(0.5, -0.1, f'Consistent Coverage: {pct:.1f}%', transform=ax.transAxes,
+                   ha='center', fontsize=10, color='#28a745' if pct >= 70 else '#dc3545')
 
     def _update_opdir_charts(self):
         """Update OPDIR compliance visualizations."""
