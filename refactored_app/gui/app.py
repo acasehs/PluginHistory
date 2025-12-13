@@ -2011,6 +2011,7 @@ class NessusHistoryTrackerApp:
 
         df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
         hist_df = self.historical_df
+        show_labels = self.settings_manager.settings.show_data_labels
 
         # Clear all axes
         for ax in [self.timeline_ax1, self.timeline_ax2, self.timeline_ax3, self.timeline_ax4]:
@@ -2024,43 +2025,76 @@ class NessusHistoryTrackerApp:
         hist_df = hist_df.copy()
         hist_df['scan_date'] = pd.to_datetime(hist_df['scan_date'])
 
-        # Chart 1: Total findings over time
+        # Chart 1: Total findings over time with data labels
         counts = hist_df.groupby(hist_df['scan_date'].dt.date).size()
-        self.timeline_ax1.plot(range(len(counts)), counts.values, 'c-', marker='o', markersize=4)
+        line, = self.timeline_ax1.plot(range(len(counts)), counts.values, 'c-', marker='o', markersize=5)
+        self.timeline_ax1.fill_between(range(len(counts)), counts.values, alpha=0.2, color='cyan')
+        if show_labels and len(counts) <= 15:
+            for i, (x, y) in enumerate(zip(range(len(counts)), counts.values)):
+                self.timeline_ax1.annotate(f'{int(y)}', xy=(x, y), xytext=(0, 5),
+                                          textcoords='offset points', ha='center', va='bottom',
+                                          fontsize=7, color='white')
+        # Add trend indicator
+        if len(counts) >= 2:
+            change = counts.iloc[-1] - counts.iloc[0]
+            pct = change / counts.iloc[0] * 100 if counts.iloc[0] > 0 else 0
+            color = '#28a745' if change < 0 else '#dc3545'
+            symbol = '↓' if change < 0 else '↑'
+            self.timeline_ax1.text(0.98, 0.98, f'{symbol}{abs(pct):.0f}%', transform=self.timeline_ax1.transAxes,
+                                  fontsize=9, va='top', ha='right', color=color, fontweight='bold')
         self.timeline_ax1.set_title('Total Findings Over Time', color=GUI_DARK_THEME['fg'])
         self.timeline_ax1.set_ylabel('Count', color=GUI_DARK_THEME['fg'])
 
-        # Chart 2: Severity breakdown over time
+        # Chart 2: Severity breakdown over time with markers
         if 'severity_text' in hist_df.columns:
             severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff', 'Info': '#6c757d'}
             for sev in ['Critical', 'High', 'Medium', 'Low']:
                 sev_df = hist_df[hist_df['severity_text'] == sev]
                 if not sev_df.empty:
-                    counts = sev_df.groupby(sev_df['scan_date'].dt.date).size()
-                    self.timeline_ax2.plot(range(len(counts)), counts.values, color=severity_colors.get(sev, 'gray'),
-                                          label=sev, marker='.', markersize=3)
-            self.timeline_ax2.legend(fontsize=8, facecolor=GUI_DARK_THEME['bg'], labelcolor=GUI_DARK_THEME['fg'])
+                    sev_counts = sev_df.groupby(sev_df['scan_date'].dt.date).size()
+                    self.timeline_ax2.plot(range(len(sev_counts)), sev_counts.values, color=severity_colors.get(sev, 'gray'),
+                                          label=f'{sev} ({sev_counts.iloc[-1] if len(sev_counts) > 0 else 0})',
+                                          marker='o', markersize=4, linewidth=2)
+            self.timeline_ax2.legend(fontsize=7, facecolor=GUI_DARK_THEME['bg'], labelcolor=GUI_DARK_THEME['fg'])
         self.timeline_ax2.set_title('Findings by Severity', color=GUI_DARK_THEME['fg'])
 
-        # Chart 3: New vs Resolved
+        # Chart 3: New vs Resolved with data labels
         if not self.scan_changes_df.empty and 'change_type' in self.scan_changes_df.columns:
             changes = self.scan_changes_df.copy()
             changes['scan_date'] = pd.to_datetime(changes['scan_date'])
             new_counts = changes[changes['change_type'] == 'New'].groupby(changes['scan_date'].dt.to_period('M')).size()
             resolved_counts = changes[changes['change_type'] == 'Resolved'].groupby(changes['scan_date'].dt.to_period('M')).size()
-            x = range(max(len(new_counts), len(resolved_counts)))
             if len(new_counts) > 0:
-                self.timeline_ax3.bar([i - 0.2 for i in range(len(new_counts))], new_counts.values, 0.4, label='New', color='#dc3545')
+                bars1 = self.timeline_ax3.bar([i - 0.2 for i in range(len(new_counts))], new_counts.values, 0.4, label='New', color='#dc3545')
+                if show_labels:
+                    for bar, val in zip(bars1, new_counts.values):
+                        self.timeline_ax3.annotate(f'{int(val)}', xy=(bar.get_x() + bar.get_width()/2, val),
+                                                  xytext=(0, 2), textcoords='offset points',
+                                                  ha='center', va='bottom', fontsize=6, color='white')
             if len(resolved_counts) > 0:
-                self.timeline_ax3.bar([i + 0.2 for i in range(len(resolved_counts))], resolved_counts.values, 0.4, label='Resolved', color='#28a745')
-            self.timeline_ax3.legend(fontsize=8, facecolor=GUI_DARK_THEME['bg'], labelcolor=GUI_DARK_THEME['fg'])
+                bars2 = self.timeline_ax3.bar([i + 0.2 for i in range(len(resolved_counts))], resolved_counts.values, 0.4, label='Resolved', color='#28a745')
+                if show_labels:
+                    for bar, val in zip(bars2, resolved_counts.values):
+                        self.timeline_ax3.annotate(f'{int(val)}', xy=(bar.get_x() + bar.get_width()/2, val),
+                                                  xytext=(0, 2), textcoords='offset points',
+                                                  ha='center', va='bottom', fontsize=6, color='white')
+            self.timeline_ax3.legend(fontsize=7, facecolor=GUI_DARK_THEME['bg'], labelcolor=GUI_DARK_THEME['fg'])
         self.timeline_ax3.set_title('New vs Resolved', color=GUI_DARK_THEME['fg'])
 
-        # Chart 4: Cumulative risk
+        # Chart 4: Cumulative risk with current value label
         if 'severity_value' in hist_df.columns:
             risk = hist_df.groupby(hist_df['scan_date'].dt.date)['severity_value'].sum().cumsum()
             self.timeline_ax4.fill_between(range(len(risk)), risk.values, alpha=0.5, color='#dc3545')
-            self.timeline_ax4.plot(range(len(risk)), risk.values, 'r-')
+            self.timeline_ax4.plot(range(len(risk)), risk.values, 'r-', linewidth=2, marker='o', markersize=4)
+            if len(risk) > 0:
+                # Show current and peak values
+                current = risk.iloc[-1]
+                peak = risk.max()
+                self.timeline_ax4.text(0.02, 0.98, f'Current: {int(current):,}', transform=self.timeline_ax4.transAxes,
+                                      fontsize=8, va='top', color='white')
+                if peak != current:
+                    self.timeline_ax4.text(0.02, 0.88, f'Peak: {int(peak):,}', transform=self.timeline_ax4.transAxes,
+                                          fontsize=8, va='top', color='#ffc107')
         self.timeline_ax4.set_title('Cumulative Risk Exposure', color=GUI_DARK_THEME['fg'])
 
         for ax in [self.timeline_ax1, self.timeline_ax2, self.timeline_ax3, self.timeline_ax4]:
@@ -2086,54 +2120,103 @@ class NessusHistoryTrackerApp:
             self.risk_canvas.draw()
             return
 
-        # Chart 1: CVSS distribution
-        if 'cvss3_base_score' in df.columns:
-            cvss_scores = df['cvss3_base_score'].dropna()
-            if len(cvss_scores) > 0:
-                self.risk_ax1.hist(cvss_scores, bins=20, color='#007bff', edgecolor='white', alpha=0.7)
-        self.risk_ax1.set_title('CVSS Score Distribution', color=GUI_DARK_THEME['fg'])
-        self.risk_ax1.set_xlabel('CVSS Score', color=GUI_DARK_THEME['fg'])
-
         # Check if data labels are enabled
         show_labels = self.settings_manager.settings.show_data_labels
 
-        # Chart 2: MTTR by severity
+        # Chart 1: CVSS distribution with severity-based coloring
+        if 'cvss3_base_score' in df.columns:
+            cvss_scores = df['cvss3_base_score'].dropna()
+            if len(cvss_scores) > 0:
+                # Create histogram with color-coded bins
+                n, bins, patches = self.risk_ax1.hist(cvss_scores, bins=10, edgecolor='white', alpha=0.8)
+                # Color by severity range
+                for i, patch in enumerate(patches):
+                    bin_center = (bins[i] + bins[i+1]) / 2
+                    if bin_center >= 9:
+                        patch.set_facecolor('#dc3545')  # Critical
+                    elif bin_center >= 7:
+                        patch.set_facecolor('#fd7e14')  # High
+                    elif bin_center >= 4:
+                        patch.set_facecolor('#ffc107')  # Medium
+                    else:
+                        patch.set_facecolor('#007bff')  # Low
+                # Add summary stats
+                avg_cvss = cvss_scores.mean()
+                max_cvss = cvss_scores.max()
+                self.risk_ax1.text(0.98, 0.98, f'Avg: {avg_cvss:.1f} | Max: {max_cvss:.1f}',
+                                  transform=self.risk_ax1.transAxes, fontsize=8, va='top', ha='right', color='white')
+        self.risk_ax1.set_title('CVSS Score Distribution', color=GUI_DARK_THEME['fg'])
+        self.risk_ax1.set_xlabel('CVSS Score', color=GUI_DARK_THEME['fg'])
+        self.risk_ax1.set_ylabel('Count', color=GUI_DARK_THEME['fg'])
+
+        # Chart 2: MTTR by severity with severity-colored bars
         if 'severity_text' in df.columns and 'days_open' in df.columns:
             resolved = df[df['status'] == 'Resolved']
             if not resolved.empty:
                 mttr = resolved.groupby('severity_text')['days_open'].mean()
-                colors = ['#dc3545', '#fd7e14', '#ffc107', '#007bff', '#6c757d']
-                bars = self.risk_ax2.bar(range(len(mttr)), mttr.values, color=colors[:len(mttr)])
+                severity_order = ['Critical', 'High', 'Medium', 'Low']
+                mttr = mttr.reindex([s for s in severity_order if s in mttr.index])
+                severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff'}
+                colors = [severity_colors.get(s, '#6c757d') for s in mttr.index]
+                bars = self.risk_ax2.bar(range(len(mttr)), mttr.values, color=colors)
                 self.risk_ax2.set_xticks(range(len(mttr)))
                 self.risk_ax2.set_xticklabels(mttr.index, fontsize=8)
                 if show_labels:
-                    add_data_labels(self.risk_ax2, bars, fmt='{:.1f}', fontsize=6)
+                    for bar, val in zip(bars, mttr.values):
+                        self.risk_ax2.annotate(f'{val:.0f}d', xy=(bar.get_x() + bar.get_width()/2, val),
+                                              xytext=(0, 3), textcoords='offset points',
+                                              ha='center', va='bottom', fontsize=7, color='white')
+                # Overall MTTR
+                overall_mttr = resolved['days_open'].mean()
+                self.risk_ax2.axhline(y=overall_mttr, color='white', linestyle='--', linewidth=1, alpha=0.5)
+                self.risk_ax2.text(0.02, 0.98, f'Overall: {overall_mttr:.0f}d', transform=self.risk_ax2.transAxes,
+                                  fontsize=7, va='top', color='white')
         self.risk_ax2.set_title('Mean Time to Remediation', color=GUI_DARK_THEME['fg'])
         self.risk_ax2.set_ylabel('Days', color=GUI_DARK_THEME['fg'])
 
-        # Chart 3: Findings by age
+        # Chart 3: Findings by age with urgency coloring
         if 'days_open' in df.columns:
             active = df[df['status'] == 'Active']
-            buckets = [0, 30, 60, 90, 120, float('inf')]
-            labels = ['0-30', '31-60', '61-90', '91-120', '121+']
-            age_counts = pd.cut(active['days_open'], bins=buckets, labels=labels).value_counts().sort_index()
-            bars = self.risk_ax3.bar(range(len(age_counts)), age_counts.values, color='#fd7e14')
-            self.risk_ax3.set_xticks(range(len(age_counts)))
-            self.risk_ax3.set_xticklabels(labels, fontsize=8)
-            if show_labels:
-                add_data_labels(self.risk_ax3, bars, fontsize=6)
-        self.risk_ax3.set_title('Findings by Age (Days)', color=GUI_DARK_THEME['fg'])
+            if not active.empty:
+                buckets = [0, 30, 60, 90, 120, float('inf')]
+                labels = ['0-30', '31-60', '61-90', '91-120', '121+']
+                age_counts = pd.cut(active['days_open'], bins=buckets, labels=labels).value_counts().sort_index()
+                colors = ['#28a745', '#ffc107', '#fd7e14', '#dc3545', '#dc3545']
+                bars = self.risk_ax3.bar(range(len(age_counts)), age_counts.values, color=colors)
+                self.risk_ax3.set_xticks(range(len(age_counts)))
+                self.risk_ax3.set_xticklabels(labels, fontsize=8)
+                if show_labels:
+                    for bar, val in zip(bars, age_counts.values):
+                        if val > 0:
+                            self.risk_ax3.annotate(f'{int(val)}', xy=(bar.get_x() + bar.get_width()/2, val),
+                                                  xytext=(0, 3), textcoords='offset points',
+                                                  ha='center', va='bottom', fontsize=7, color='white')
+                # Average age
+                avg_age = active['days_open'].mean()
+                self.risk_ax3.text(0.98, 0.98, f'Avg: {avg_age:.0f}d', transform=self.risk_ax3.transAxes,
+                                  fontsize=8, va='top', ha='right', color='white')
+        self.risk_ax3.set_title('Active Findings by Age', color=GUI_DARK_THEME['fg'])
+        self.risk_ax3.set_xlabel('Days Open', color=GUI_DARK_THEME['fg'])
 
-        # Chart 4: Top risky hosts
+        # Chart 4: Top risky hosts with risk gradient
         if 'hostname' in df.columns and 'severity_value' in df.columns:
             host_risk = df.groupby('hostname')['severity_value'].sum().nlargest(10)
             if len(host_risk) > 0:
-                bars = self.risk_ax4.barh(range(len(host_risk)), host_risk.values, color='#dc3545')
+                # Color gradient based on risk
+                max_risk = host_risk.max()
+                colors = ['#dc3545' if r > max_risk * 0.7 else '#fd7e14' if r > max_risk * 0.4 else '#ffc107'
+                         for r in host_risk.values]
+                bars = self.risk_ax4.barh(range(len(host_risk)), host_risk.values, color=colors)
                 self.risk_ax4.set_yticks(range(len(host_risk)))
                 self.risk_ax4.set_yticklabels([h[:15] for h in host_risk.index], fontsize=7)
                 if show_labels:
-                    add_horizontal_data_labels(self.risk_ax4, bars, fontsize=6)
+                    for bar, val in zip(bars, host_risk.values):
+                        self.risk_ax4.annotate(f'{int(val)}', xy=(val, bar.get_y() + bar.get_height()/2),
+                                              xytext=(3, 0), textcoords='offset points',
+                                              ha='left', va='center', fontsize=6, color='white')
+                self.risk_ax4.invert_yaxis()
         self.risk_ax4.set_title('Top 10 Risky Hosts', color=GUI_DARK_THEME['fg'])
+        self.risk_ax4.set_xlabel('Risk Score', color=GUI_DARK_THEME['fg'])
 
         for ax in [self.risk_ax1, self.risk_ax2, self.risk_ax3, self.risk_ax4]:
             ax.tick_params(colors=GUI_DARK_THEME['fg'])
@@ -4262,6 +4345,7 @@ class NessusHistoryTrackerApp:
 
         df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
         host_df = self.filtered_host_df if not self.filtered_host_df.empty else self.host_presence_df
+        show_labels = self.settings_manager.settings.show_data_labels
 
         for ax in [self.efficiency_ax1, self.efficiency_ax2, self.efficiency_ax3, self.efficiency_ax4]:
             ax.clear()
@@ -4271,34 +4355,92 @@ class NessusHistoryTrackerApp:
             self.efficiency_canvas.draw()
             return
 
-        # Chart 1: Scan coverage (host presence distribution)
+        # Chart 1: Scan coverage with color-coded bins
         if not host_df.empty and 'presence_percentage' in host_df.columns:
-            self.efficiency_ax1.hist(host_df['presence_percentage'], bins=20, color='#17a2b8', edgecolor='white')
+            presence = host_df['presence_percentage'].values
+            n, bins, patches = self.efficiency_ax1.hist(presence, bins=10, edgecolor='white', alpha=0.8)
+            # Color by coverage quality
+            for i, patch in enumerate(patches):
+                bin_center = (bins[i] + bins[i+1]) / 2
+                if bin_center >= 80:
+                    patch.set_facecolor('#28a745')
+                elif bin_center >= 50:
+                    patch.set_facecolor('#ffc107')
+                else:
+                    patch.set_facecolor('#dc3545')
+            # Summary stats
+            avg_presence = presence.mean()
+            self.efficiency_ax1.axvline(x=avg_presence, color='white', linestyle='--', linewidth=1, alpha=0.7)
+            self.efficiency_ax1.text(0.98, 0.98, f'Avg: {avg_presence:.1f}%', transform=self.efficiency_ax1.transAxes,
+                                    fontsize=8, va='top', ha='right', color='white')
         self.efficiency_ax1.set_title('Scan Coverage Consistency', color=GUI_DARK_THEME['fg'])
         self.efficiency_ax1.set_xlabel('Presence %', color=GUI_DARK_THEME['fg'])
+        self.efficiency_ax1.set_ylabel('Host Count', color=GUI_DARK_THEME['fg'])
 
-        # Chart 2: Reappearance analysis
-        if 'reappearances' in df.columns:
-            reapp_counts = df['reappearances'].value_counts().sort_index()
+        # Chart 2: Reappearance analysis with data labels
+        reapp_col = 'reappearances' if 'reappearances' in df.columns else 'appearance_count' if 'appearance_count' in df.columns else None
+        if reapp_col:
+            reapp_counts = df[reapp_col].value_counts().sort_index().head(8)
             if len(reapp_counts) > 0:
-                self.efficiency_ax2.bar(reapp_counts.index[:10], reapp_counts.values[:10], color='#fd7e14')
+                bars = self.efficiency_ax2.bar(range(len(reapp_counts)), reapp_counts.values, color='#fd7e14')
+                self.efficiency_ax2.set_xticks(range(len(reapp_counts)))
+                self.efficiency_ax2.set_xticklabels([int(x) for x in reapp_counts.index], fontsize=8)
+                if show_labels:
+                    for bar, val in zip(bars, reapp_counts.values):
+                        self.efficiency_ax2.annotate(f'{int(val)}', xy=(bar.get_x() + bar.get_width()/2, val),
+                                                    xytext=(0, 2), textcoords='offset points',
+                                                    ha='center', va='bottom', fontsize=7, color='white')
+                # Recurring percentage
+                total = reapp_counts.sum()
+                recurring = reapp_counts[reapp_counts.index > 1].sum() if len(reapp_counts) > 1 else 0
+                pct = recurring / total * 100 if total > 0 else 0
+                self.efficiency_ax2.text(0.98, 0.98, f'Recurring: {pct:.1f}%', transform=self.efficiency_ax2.transAxes,
+                                        fontsize=8, va='top', ha='right', color='#fd7e14')
         self.efficiency_ax2.set_title('Reappearance Analysis', color=GUI_DARK_THEME['fg'])
-        self.efficiency_ax2.set_xlabel('Reappearance Count', color=GUI_DARK_THEME['fg'])
+        self.efficiency_ax2.set_xlabel('Times Seen', color=GUI_DARK_THEME['fg'])
+        self.efficiency_ax2.set_ylabel('Finding Count', color=GUI_DARK_THEME['fg'])
 
-        # Chart 3: Host vulnerability burden
+        # Chart 3: Host vulnerability burden with stats
         if 'hostname' in df.columns:
             host_burden = df.groupby('hostname').size()
-            self.efficiency_ax3.hist(host_burden, bins=30, color='#6f42c1', edgecolor='white')
+            if len(host_burden) > 0:
+                n, bins, patches = self.efficiency_ax3.hist(host_burden, bins=15, color='#6f42c1', edgecolor='white', alpha=0.8)
+                # Summary stats
+                avg_burden = host_burden.mean()
+                max_burden = host_burden.max()
+                self.efficiency_ax3.axvline(x=avg_burden, color='white', linestyle='--', linewidth=1, alpha=0.7)
+                self.efficiency_ax3.text(0.98, 0.98, f'Avg: {avg_burden:.1f} | Max: {max_burden}',
+                                        transform=self.efficiency_ax3.transAxes, fontsize=8, va='top', ha='right', color='white')
         self.efficiency_ax3.set_title('Host Vulnerability Burden', color=GUI_DARK_THEME['fg'])
         self.efficiency_ax3.set_xlabel('Findings per Host', color=GUI_DARK_THEME['fg'])
+        self.efficiency_ax3.set_ylabel('Host Count', color=GUI_DARK_THEME['fg'])
 
-        # Chart 4: Resolution velocity
+        # Chart 4: Resolution velocity with bucketed bars
         if 'status' in df.columns and 'days_open' in df.columns:
             resolved = df[df['status'] == 'Resolved']
             if not resolved.empty:
-                self.efficiency_ax4.hist(resolved['days_open'], bins=30, color='#28a745', edgecolor='white')
+                days = resolved['days_open'].dropna()
+                if len(days) > 0:
+                    bins = [0, 7, 14, 30, 60, 90, max(days.max() + 1, 91)]
+                    bin_labels = ['0-7d', '8-14d', '15-30d', '31-60d', '61-90d', '90+d']
+                    hist, _ = np.histogram(days, bins=bins)
+                    colors = ['#28a745', '#28a745', '#ffc107', '#ffc107', '#fd7e14', '#dc3545']
+                    bars = self.efficiency_ax4.bar(range(len(hist)), hist, color=colors[:len(hist)])
+                    self.efficiency_ax4.set_xticks(range(len(hist)))
+                    self.efficiency_ax4.set_xticklabels(bin_labels[:len(hist)], fontsize=7)
+                    if show_labels:
+                        for bar, val in zip(bars, hist):
+                            if val > 0:
+                                self.efficiency_ax4.annotate(f'{int(val)}', xy=(bar.get_x() + bar.get_width()/2, val),
+                                                            xytext=(0, 2), textcoords='offset points',
+                                                            ha='center', va='bottom', fontsize=7, color='white')
+                    # Average resolution time
+                    avg_days = days.mean()
+                    self.efficiency_ax4.text(0.98, 0.98, f'Avg: {avg_days:.0f}d', transform=self.efficiency_ax4.transAxes,
+                                            fontsize=8, va='top', ha='right', color='white')
         self.efficiency_ax4.set_title('Resolution Velocity', color=GUI_DARK_THEME['fg'])
-        self.efficiency_ax4.set_xlabel('Days to Resolve', color=GUI_DARK_THEME['fg'])
+        self.efficiency_ax4.set_xlabel('Time to Resolve', color=GUI_DARK_THEME['fg'])
+        self.efficiency_ax4.set_ylabel('Finding Count', color=GUI_DARK_THEME['fg'])
 
         for ax in [self.efficiency_ax1, self.efficiency_ax2, self.efficiency_ax3, self.efficiency_ax4]:
             ax.tick_params(colors=GUI_DARK_THEME['fg'])
@@ -4314,12 +4456,15 @@ class NessusHistoryTrackerApp:
             return
 
         df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        show_labels = self.settings_manager.settings.show_data_labels
 
         for ax in [self.network_ax1, self.network_ax2, self.network_ax3, self.network_ax4]:
             ax.clear()
             ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
 
-        if df.empty or 'ip_address' not in df.columns:
+        # Try ip_address or ip column
+        ip_col = 'ip_address' if 'ip_address' in df.columns else 'ip' if 'ip' in df.columns else None
+        if df.empty or ip_col is None:
             self.network_canvas.draw()
             return
 
@@ -4333,34 +4478,57 @@ class NessusHistoryTrackerApp:
             return 'Unknown'
 
         df = df.copy()
-        df['subnet'] = df['ip_address'].apply(get_subnet)
+        df['subnet'] = df[ip_col].apply(get_subnet)
 
-        # Chart 1: Top subnets
+        # Chart 1: Top subnets with data labels
         subnet_counts = df.groupby('subnet').size().nlargest(10)
         if len(subnet_counts) > 0:
-            self.network_ax1.barh(range(len(subnet_counts)), subnet_counts.values, color='#007bff')
+            bars = self.network_ax1.barh(range(len(subnet_counts)), subnet_counts.values, color='#007bff')
             self.network_ax1.set_yticks(range(len(subnet_counts)))
             self.network_ax1.set_yticklabels([s[:18] for s in subnet_counts.index], fontsize=7)
+            self.network_ax1.invert_yaxis()
+            if show_labels:
+                for bar, val in zip(bars, subnet_counts.values):
+                    self.network_ax1.annotate(f'{int(val)}', xy=(val, bar.get_y() + bar.get_height()/2),
+                                             xytext=(3, 0), textcoords='offset points',
+                                             ha='left', va='center', fontsize=6, color='white')
         self.network_ax1.set_title('Top Subnets by Vulnerability', color=GUI_DARK_THEME['fg'])
+        self.network_ax1.set_xlabel('Vuln Count', color=GUI_DARK_THEME['fg'])
 
-        # Chart 2: Subnet risk scores
+        # Chart 2: Subnet risk scores with gradient colors
         if 'severity_value' in df.columns:
             subnet_risk = df.groupby('subnet')['severity_value'].sum().nlargest(10)
             if len(subnet_risk) > 0:
-                colors = ['#dc3545' if v > subnet_risk.median() else '#ffc107' for v in subnet_risk.values]
-                self.network_ax2.barh(range(len(subnet_risk)), subnet_risk.values, color=colors)
+                max_risk = subnet_risk.max()
+                colors = ['#dc3545' if v > max_risk * 0.7 else '#fd7e14' if v > max_risk * 0.4 else '#ffc107'
+                         for v in subnet_risk.values]
+                bars = self.network_ax2.barh(range(len(subnet_risk)), subnet_risk.values, color=colors)
                 self.network_ax2.set_yticks(range(len(subnet_risk)))
                 self.network_ax2.set_yticklabels([s[:18] for s in subnet_risk.index], fontsize=7)
+                self.network_ax2.invert_yaxis()
+                if show_labels:
+                    for bar, val in zip(bars, subnet_risk.values):
+                        self.network_ax2.annotate(f'{int(val)}', xy=(val, bar.get_y() + bar.get_height()/2),
+                                                 xytext=(3, 0), textcoords='offset points',
+                                                 ha='left', va='center', fontsize=6, color='white')
         self.network_ax2.set_title('Subnet Risk Scores', color=GUI_DARK_THEME['fg'])
+        self.network_ax2.set_xlabel('Risk Score', color=GUI_DARK_THEME['fg'])
 
-        # Chart 3: Host criticality distribution
+        # Chart 3: Host criticality distribution with stats
         if 'hostname' in df.columns and 'severity_value' in df.columns:
             host_crit = df.groupby('hostname')['severity_value'].sum()
-            self.network_ax3.hist(host_crit, bins=30, color='#17a2b8', edgecolor='white')
+            if len(host_crit) > 0:
+                n, bins, patches = self.network_ax3.hist(host_crit, bins=15, color='#17a2b8', edgecolor='white', alpha=0.8)
+                avg_risk = host_crit.mean()
+                high_risk = (host_crit > host_crit.quantile(0.9)).sum()
+                self.network_ax3.axvline(x=avg_risk, color='white', linestyle='--', linewidth=1, alpha=0.7)
+                self.network_ax3.text(0.98, 0.98, f'Avg: {avg_risk:.0f} | High Risk: {high_risk}',
+                                     transform=self.network_ax3.transAxes, fontsize=7, va='top', ha='right', color='white')
         self.network_ax3.set_title('Host Criticality Distribution', color=GUI_DARK_THEME['fg'])
         self.network_ax3.set_xlabel('Risk Score', color=GUI_DARK_THEME['fg'])
+        self.network_ax3.set_ylabel('Host Count', color=GUI_DARK_THEME['fg'])
 
-        # Chart 4: Network class distribution
+        # Chart 4: Network class distribution with counts in labels
         def get_class(ip):
             if pd.isna(ip) or not isinstance(ip, str):
                 return 'Unknown'
@@ -4375,10 +4543,12 @@ class NessusHistoryTrackerApp:
                     return 'Class C'
             return 'Other'
 
-        class_counts = df['ip_address'].apply(get_class).value_counts()
+        class_counts = df[ip_col].apply(get_class).value_counts()
         if len(class_counts) > 0:
-            self.network_ax4.pie(class_counts.values, labels=class_counts.index,
-                                autopct='%1.1f%%', textprops={'color': GUI_DARK_THEME['fg']})
+            colors = ['#007bff', '#28a745', '#ffc107', '#dc3545'][:len(class_counts)]
+            labels = [f'{idx}\n({val})' for idx, val in zip(class_counts.index, class_counts.values)]
+            self.network_ax4.pie(class_counts.values, labels=labels, colors=colors,
+                                autopct='%1.1f%%', textprops={'color': 'white', 'fontsize': 8})
         self.network_ax4.set_title('Network Segment Analysis', color=GUI_DARK_THEME['fg'])
 
         for ax in [self.network_ax1, self.network_ax2, self.network_ax3, self.network_ax4]:
@@ -4395,6 +4565,7 @@ class NessusHistoryTrackerApp:
             return
 
         df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        show_labels = self.settings_manager.settings.show_data_labels
 
         for ax in [self.plugin_ax1, self.plugin_ax2, self.plugin_ax3, self.plugin_ax4]:
             ax.clear()
@@ -4404,65 +4575,98 @@ class NessusHistoryTrackerApp:
             self.plugin_canvas.draw()
             return
 
-        # Chart 1: Top 15 most common plugins
+        # Chart 1: Top 15 most common plugins with data labels
         if 'plugin_id' in df.columns:
             plugin_counts = df.groupby('plugin_id').size().nlargest(15)
             if len(plugin_counts) > 0:
                 # Get plugin names if available
                 if 'plugin_name' in df.columns:
                     names = df.groupby('plugin_id')['plugin_name'].first()
-                    labels = [str(names.get(pid, pid))[:25] for pid in plugin_counts.index]
+                    labels = [str(names.get(pid, pid))[:22] for pid in plugin_counts.index]
                 else:
                     labels = [str(pid) for pid in plugin_counts.index]
-                self.plugin_ax1.barh(range(len(plugin_counts)), plugin_counts.values, color='#007bff')
+                bars = self.plugin_ax1.barh(range(len(plugin_counts)), plugin_counts.values, color='#007bff')
                 self.plugin_ax1.set_yticks(range(len(plugin_counts)))
                 self.plugin_ax1.set_yticklabels(labels, fontsize=6)
+                self.plugin_ax1.invert_yaxis()
+                if show_labels:
+                    for bar, val in zip(bars, plugin_counts.values):
+                        self.plugin_ax1.annotate(f'{int(val)}', xy=(val, bar.get_y() + bar.get_height()/2),
+                                                xytext=(3, 0), textcoords='offset points',
+                                                ha='left', va='center', fontsize=5, color='white')
+                # Total unique plugins
+                total_plugins = df['plugin_id'].nunique()
+                self.plugin_ax1.text(0.98, 0.98, f'Total: {total_plugins}', transform=self.plugin_ax1.transAxes,
+                                    fontsize=7, va='top', ha='right', color='white')
         self.plugin_ax1.set_title('Top 15 Most Common Plugins', color=GUI_DARK_THEME['fg'])
+        self.plugin_ax1.set_xlabel('Finding Count', color=GUI_DARK_THEME['fg'])
 
-        # Chart 2: Plugin severity distribution
-        if 'plugin_id' in df.columns and 'severity_text' in df.columns:
-            plugin_severity = df.groupby(['plugin_id', 'severity_text']).size().unstack(fill_value=0)
+        # Chart 2: Plugin severity distribution with data labels
+        sev_col = 'severity_text' if 'severity_text' in df.columns else 'severity' if 'severity' in df.columns else None
+        if 'plugin_id' in df.columns and sev_col:
+            plugin_severity = df.groupby(['plugin_id', sev_col]).size().unstack(fill_value=0)
             severity_totals = {}
-            for sev in ['Critical', 'High', 'Medium', 'Low', 'Info']:
+            severity_order = ['Critical', 'High', 'Medium', 'Low', 'Info']
+            for sev in severity_order:
                 if sev in plugin_severity.columns:
                     severity_totals[sev] = plugin_severity[sev].sum()
             if severity_totals:
                 colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff', 'Info': '#6c757d'}
                 bar_colors = [colors.get(s, 'gray') for s in severity_totals.keys()]
-                self.plugin_ax2.bar(range(len(severity_totals)), list(severity_totals.values()), color=bar_colors)
+                bars = self.plugin_ax2.bar(range(len(severity_totals)), list(severity_totals.values()), color=bar_colors)
                 self.plugin_ax2.set_xticks(range(len(severity_totals)))
                 self.plugin_ax2.set_xticklabels(list(severity_totals.keys()), fontsize=8)
-        self.plugin_ax2.set_title('Plugin Severity Distribution', color=GUI_DARK_THEME['fg'])
+                if show_labels:
+                    for bar, val in zip(bars, severity_totals.values()):
+                        self.plugin_ax2.annotate(f'{int(val)}', xy=(bar.get_x() + bar.get_width()/2, val),
+                                                xytext=(0, 3), textcoords='offset points',
+                                                ha='center', va='bottom', fontsize=7, color='white')
+        self.plugin_ax2.set_title('Findings by Severity', color=GUI_DARK_THEME['fg'])
+        self.plugin_ax2.set_ylabel('Count', color=GUI_DARK_THEME['fg'])
 
-        # Chart 3: Plugins affecting most hosts
+        # Chart 3: Plugins affecting most hosts with data labels
         if 'plugin_id' in df.columns and 'hostname' in df.columns:
             plugin_hosts = df.groupby('plugin_id')['hostname'].nunique().nlargest(10)
             if len(plugin_hosts) > 0:
                 if 'plugin_name' in df.columns:
                     names = df.groupby('plugin_id')['plugin_name'].first()
-                    labels = [str(names.get(pid, pid))[:20] for pid in plugin_hosts.index]
+                    labels = [str(names.get(pid, pid))[:18] for pid in plugin_hosts.index]
                 else:
                     labels = [str(pid) for pid in plugin_hosts.index]
-                self.plugin_ax3.barh(range(len(plugin_hosts)), plugin_hosts.values, color='#17a2b8')
+                bars = self.plugin_ax3.barh(range(len(plugin_hosts)), plugin_hosts.values, color='#17a2b8')
                 self.plugin_ax3.set_yticks(range(len(plugin_hosts)))
-                self.plugin_ax3.set_yticklabels(labels, fontsize=7)
+                self.plugin_ax3.set_yticklabels(labels, fontsize=6)
+                self.plugin_ax3.invert_yaxis()
+                if show_labels:
+                    for bar, val in zip(bars, plugin_hosts.values):
+                        self.plugin_ax3.annotate(f'{int(val)}', xy=(val, bar.get_y() + bar.get_height()/2),
+                                                xytext=(3, 0), textcoords='offset points',
+                                                ha='left', va='center', fontsize=6, color='white')
         self.plugin_ax3.set_title('Plugins Affecting Most Hosts', color=GUI_DARK_THEME['fg'])
         self.plugin_ax3.set_xlabel('Host Count', color=GUI_DARK_THEME['fg'])
 
-        # Chart 4: Plugin average age
+        # Chart 4: Plugin average age with color coding
         if 'plugin_id' in df.columns and 'days_open' in df.columns:
             plugin_age = df.groupby('plugin_id')['days_open'].mean().nlargest(10)
             if len(plugin_age) > 0:
                 if 'plugin_name' in df.columns:
                     names = df.groupby('plugin_id')['plugin_name'].first()
-                    labels = [str(names.get(pid, pid))[:20] for pid in plugin_age.index]
+                    labels = [str(names.get(pid, pid))[:18] for pid in plugin_age.index]
                 else:
                     labels = [str(pid) for pid in plugin_age.index]
-                self.plugin_ax4.barh(range(len(plugin_age)), plugin_age.values, color='#fd7e14')
+                # Color by age severity
+                colors = ['#dc3545' if a > 90 else '#fd7e14' if a > 30 else '#28a745' for a in plugin_age.values]
+                bars = self.plugin_ax4.barh(range(len(plugin_age)), plugin_age.values, color=colors)
                 self.plugin_ax4.set_yticks(range(len(plugin_age)))
-                self.plugin_ax4.set_yticklabels(labels, fontsize=7)
-        self.plugin_ax4.set_title('Plugin Avg Age (Days Open)', color=GUI_DARK_THEME['fg'])
-        self.plugin_ax4.set_xlabel('Days', color=GUI_DARK_THEME['fg'])
+                self.plugin_ax4.set_yticklabels(labels, fontsize=6)
+                self.plugin_ax4.invert_yaxis()
+                if show_labels:
+                    for bar, val in zip(bars, plugin_age.values):
+                        self.plugin_ax4.annotate(f'{int(val)}d', xy=(val, bar.get_y() + bar.get_height()/2),
+                                                xytext=(3, 0), textcoords='offset points',
+                                                ha='left', va='center', fontsize=6, color='white')
+        self.plugin_ax4.set_title('Plugins with Longest Avg Age', color=GUI_DARK_THEME['fg'])
+        self.plugin_ax4.set_xlabel('Days Open', color=GUI_DARK_THEME['fg'])
 
         for ax in [self.plugin_ax1, self.plugin_ax2, self.plugin_ax3, self.plugin_ax4]:
             ax.tick_params(colors=GUI_DARK_THEME['fg'])
@@ -4478,6 +4682,7 @@ class NessusHistoryTrackerApp:
             return
 
         df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        show_labels = self.settings_manager.settings.show_data_labels
 
         for ax in [self.priority_ax1, self.priority_ax2, self.priority_ax3, self.priority_ax4]:
             ax.clear()
@@ -4491,8 +4696,9 @@ class NessusHistoryTrackerApp:
         active_df = df[df['status'] == 'Active'].copy() if 'status' in df.columns else df.copy()
 
         # Calculate priority score (CVSS * days_open normalized)
-        if 'cvss3_base_score' in active_df.columns and 'days_open' in active_df.columns:
-            active_df['cvss'] = pd.to_numeric(active_df['cvss3_base_score'], errors='coerce').fillna(5.0)
+        cvss_col = 'cvss3_base_score' if 'cvss3_base_score' in active_df.columns else 'cvss' if 'cvss' in active_df.columns else None
+        if cvss_col and 'days_open' in active_df.columns:
+            active_df['cvss'] = pd.to_numeric(active_df[cvss_col], errors='coerce').fillna(5.0)
             active_df['priority_score'] = active_df['cvss'] * (1 + active_df['days_open'] / 30)
         elif 'severity_value' in active_df.columns and 'days_open' in active_df.columns:
             active_df['cvss'] = active_df['severity_value'] * 2.5  # Approximate CVSS from severity
@@ -4501,27 +4707,36 @@ class NessusHistoryTrackerApp:
             active_df['cvss'] = 5.0
             active_df['priority_score'] = 5.0
 
-        # Chart 1: CVSS vs Days Open scatter (Priority Matrix)
+        # Chart 1: CVSS vs Days Open scatter (Priority Matrix) with quadrant counts
         if 'days_open' in active_df.columns and len(active_df) > 0:
             sample_df = active_df.head(500)  # Limit for performance
             colors = sample_df['priority_score'].values if 'priority_score' in sample_df.columns else 'red'
             scatter = self.priority_ax1.scatter(
                 sample_df['days_open'], sample_df['cvss'],
-                c=colors, cmap='RdYlGn_r', alpha=0.6, s=20
+                c=colors, cmap='RdYlGn_r', alpha=0.6, s=25
             )
             # Draw quadrant lines
-            self.priority_ax1.axhline(y=7.0, color='gray', linestyle='--', alpha=0.5)
-            self.priority_ax1.axvline(x=30, color='gray', linestyle='--', alpha=0.5)
-            # Label quadrants
-            self.priority_ax1.text(5, 8.5, 'Critical\nPriority', fontsize=8, color='#dc3545')
-            self.priority_ax1.text(60, 8.5, 'Urgent\n(Old+High)', fontsize=8, color='#fd7e14')
-            self.priority_ax1.text(5, 3, 'Monitor', fontsize=8, color='#28a745')
-            self.priority_ax1.text(60, 3, 'Schedule', fontsize=8, color='#ffc107')
-        self.priority_ax1.set_title('Remediation Priority Matrix', color=GUI_DARK_THEME['fg'])
+            self.priority_ax1.axhline(y=7.0, color='white', linestyle='--', alpha=0.5, linewidth=1)
+            self.priority_ax1.axvline(x=30, color='white', linestyle='--', alpha=0.5, linewidth=1)
+            # Count findings in each quadrant
+            urgent = len(active_df[(active_df['cvss'] >= 7) & (active_df['days_open'] > 30)])
+            critical = len(active_df[(active_df['cvss'] >= 7) & (active_df['days_open'] <= 30)])
+            schedule = len(active_df[(active_df['cvss'] < 7) & (active_df['days_open'] > 30)])
+            monitor = len(active_df[(active_df['cvss'] < 7) & (active_df['days_open'] <= 30)])
+            # Label quadrants with counts
+            self.priority_ax1.text(0.02, 0.98, f'HIGH ({critical})', fontsize=8, color='#dc3545',
+                                  transform=self.priority_ax1.transAxes, va='top')
+            self.priority_ax1.text(0.98, 0.98, f'URGENT ({urgent})', fontsize=8, color='#fd7e14',
+                                  transform=self.priority_ax1.transAxes, va='top', ha='right')
+            self.priority_ax1.text(0.02, 0.02, f'Monitor ({monitor})', fontsize=8, color='#28a745',
+                                  transform=self.priority_ax1.transAxes, va='bottom')
+            self.priority_ax1.text(0.98, 0.02, f'Schedule ({schedule})', fontsize=8, color='#ffc107',
+                                  transform=self.priority_ax1.transAxes, va='bottom', ha='right')
+        self.priority_ax1.set_title('Priority Matrix (CVSS vs Age)', color=GUI_DARK_THEME['fg'])
         self.priority_ax1.set_xlabel('Days Open', color=GUI_DARK_THEME['fg'])
         self.priority_ax1.set_ylabel('CVSS Score', color=GUI_DARK_THEME['fg'])
 
-        # Chart 2: Priority distribution pie
+        # Chart 2: Priority distribution pie with counts
         if 'priority_score' in active_df.columns and len(active_df) > 0:
             def categorize_priority(score):
                 if score >= 50:
@@ -4533,37 +4748,52 @@ class NessusHistoryTrackerApp:
                 else:
                     return 'Low'
             priority_cats = active_df['priority_score'].apply(categorize_priority).value_counts()
+            priority_order = ['Critical', 'High', 'Medium', 'Low']
+            priority_cats = priority_cats.reindex([p for p in priority_order if p in priority_cats.index])
             colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#28a745'}
             pie_colors = [colors.get(c, 'gray') for c in priority_cats.index]
-            self.priority_ax2.pie(priority_cats.values, labels=priority_cats.index, colors=pie_colors,
-                                 autopct='%1.1f%%', textprops={'color': GUI_DARK_THEME['fg']})
+            labels = [f'{idx}\n({val})' for idx, val in zip(priority_cats.index, priority_cats.values)]
+            self.priority_ax2.pie(priority_cats.values, labels=labels, colors=pie_colors,
+                                 autopct='%1.1f%%', textprops={'color': 'white', 'fontsize': 8})
         self.priority_ax2.set_title('Priority Distribution', color=GUI_DARK_THEME['fg'])
 
-        # Chart 3: Top 10 priority findings
+        # Chart 3: Top 10 priority findings with data labels
         if 'priority_score' in active_df.columns and len(active_df) > 0:
             top_priority = active_df.nlargest(10, 'priority_score')
             if 'hostname' in top_priority.columns and 'plugin_id' in top_priority.columns:
-                labels = [f"{row['hostname'][:10]}-{row['plugin_id']}" for _, row in top_priority.iterrows()]
+                labels = [f"{row['hostname'][:8]}-{row['plugin_id']}" for _, row in top_priority.iterrows()]
             else:
                 labels = [str(i) for i in range(len(top_priority))]
-            self.priority_ax3.barh(range(len(top_priority)), top_priority['priority_score'].values, color='#dc3545')
+            bars = self.priority_ax3.barh(range(len(top_priority)), top_priority['priority_score'].values, color='#dc3545')
             self.priority_ax3.set_yticks(range(len(top_priority)))
-            self.priority_ax3.set_yticklabels(labels, fontsize=7)
+            self.priority_ax3.set_yticklabels(labels, fontsize=6)
+            self.priority_ax3.invert_yaxis()
+            if show_labels:
+                for bar, val in zip(bars, top_priority['priority_score'].values):
+                    self.priority_ax3.annotate(f'{val:.0f}', xy=(val, bar.get_y() + bar.get_height()/2),
+                                              xytext=(3, 0), textcoords='offset points',
+                                              ha='left', va='center', fontsize=6, color='white')
         self.priority_ax3.set_title('Top 10 Priority Findings', color=GUI_DARK_THEME['fg'])
         self.priority_ax3.set_xlabel('Priority Score', color=GUI_DARK_THEME['fg'])
 
-        # Chart 4: Priority by severity
-        if 'priority_score' in active_df.columns and 'severity_text' in active_df.columns:
-            sev_priority = active_df.groupby('severity_text')['priority_score'].mean()
+        # Chart 4: Priority by severity with data labels
+        sev_col = 'severity_text' if 'severity_text' in active_df.columns else 'severity' if 'severity' in active_df.columns else None
+        if 'priority_score' in active_df.columns and sev_col:
+            sev_priority = active_df.groupby(sev_col)['priority_score'].mean()
             sev_order = ['Critical', 'High', 'Medium', 'Low', 'Info']
             sev_priority = sev_priority.reindex([s for s in sev_order if s in sev_priority.index])
             if len(sev_priority) > 0:
                 colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff', 'Info': '#6c757d'}
                 bar_colors = [colors.get(s, 'gray') for s in sev_priority.index]
-                self.priority_ax4.bar(range(len(sev_priority)), sev_priority.values, color=bar_colors)
+                bars = self.priority_ax4.bar(range(len(sev_priority)), sev_priority.values, color=bar_colors)
                 self.priority_ax4.set_xticks(range(len(sev_priority)))
                 self.priority_ax4.set_xticklabels(sev_priority.index, fontsize=8)
-        self.priority_ax4.set_title('Avg Priority Score by Severity', color=GUI_DARK_THEME['fg'])
+                if show_labels:
+                    for bar, val in zip(bars, sev_priority.values):
+                        self.priority_ax4.annotate(f'{val:.1f}', xy=(bar.get_x() + bar.get_width()/2, val),
+                                                  xytext=(0, 3), textcoords='offset points',
+                                                  ha='center', va='bottom', fontsize=7, color='white')
+        self.priority_ax4.set_title('Avg Priority by Severity', color=GUI_DARK_THEME['fg'])
         self.priority_ax4.set_ylabel('Priority Score', color=GUI_DARK_THEME['fg'])
 
         for ax in [self.priority_ax1, self.priority_ax2, self.priority_ax3, self.priority_ax4]:
@@ -4613,6 +4843,9 @@ class NessusHistoryTrackerApp:
             self.sla_canvas.draw()
             return
 
+        # Check if data labels are enabled
+        show_labels = self.settings_manager.settings.show_data_labels
+
         # Calculate SLA status for each finding
         sla_data = active_df.apply(lambda row: self._calculate_sla_status(row), axis=1)
         active_df['sla_status'] = [x[0] for x in sla_data]
@@ -4623,8 +4856,27 @@ class NessusHistoryTrackerApp:
         status_counts = active_df['sla_status'].value_counts()
         if len(status_counts) > 0:
             colors = [SLA_STATUS_COLORS.get(s, '#6c757d') for s in status_counts.index]
-            self.sla_ax1.pie(status_counts.values, labels=status_counts.index, colors=colors,
-                           autopct='%1.1f%%', textprops={'color': GUI_DARK_THEME['fg']})
+
+            # Create labels with counts if enabled
+            if show_labels:
+                pie_labels = [f'{s}\n({c})' for s, c in zip(status_counts.index, status_counts.values)]
+            else:
+                pie_labels = list(status_counts.index)
+
+            wedges, texts, autotexts = self.sla_ax1.pie(
+                status_counts.values, labels=pie_labels, colors=colors,
+                autopct='%1.1f%%', textprops={'color': GUI_DARK_THEME['fg'], 'fontsize': 8})
+
+            # Style autopct text
+            for autotext in autotexts:
+                autotext.set_fontsize(7)
+                autotext.set_fontweight('bold')
+
+            # Add total count in center
+            total_active = len(active_df)
+            self.sla_ax1.text(0, 0, f'{total_active}\nactive',
+                ha='center', va='center', fontsize=9, fontweight='bold',
+                color=GUI_DARK_THEME['fg'])
         self.sla_ax1.set_title('SLA Compliance Status', color=GUI_DARK_THEME['fg'])
 
         # Chart 2: Overdue by severity
@@ -4636,9 +4888,17 @@ class NessusHistoryTrackerApp:
             if len(overdue_by_sev) > 0:
                 colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff'}
                 bar_colors = [colors.get(s, 'gray') for s in overdue_by_sev.index]
-                self.sla_ax2.bar(range(len(overdue_by_sev)), overdue_by_sev.values, color=bar_colors)
+                bars = self.sla_ax2.bar(range(len(overdue_by_sev)), overdue_by_sev.values, color=bar_colors)
                 self.sla_ax2.set_xticks(range(len(overdue_by_sev)))
                 self.sla_ax2.set_xticklabels(overdue_by_sev.index, fontsize=9)
+
+                # Add data labels
+                if show_labels:
+                    for bar, val in zip(bars, overdue_by_sev.values):
+                        self.sla_ax2.annotate(f'{int(val)}',
+                            xy=(bar.get_x() + bar.get_width()/2, val),
+                            xytext=(0, 3), textcoords='offset points',
+                            ha='center', va='bottom', fontsize=8, color='white', fontweight='bold')
         self.sla_ax2.set_title(f'Overdue Findings ({len(overdue)} total)', color=GUI_DARK_THEME['fg'])
         self.sla_ax2.set_ylabel('Count', color=GUI_DARK_THEME['fg'])
 
@@ -4650,11 +4910,30 @@ class NessusHistoryTrackerApp:
                 labels = [f"{row['hostname'][:12]} ({row['severity_text'][:1]})" for _, row in approaching.iterrows()]
             else:
                 labels = [str(i) for i in range(len(approaching))]
-            colors = ['#ffc107' if d > 0 else '#dc3545' for d in approaching['days_remaining']]
-            self.sla_ax3.barh(range(len(approaching)), approaching['days_remaining'].values, color=colors)
+            days_vals = approaching['days_remaining'].values
+            colors = ['#ffc107' if d > 0 else '#dc3545' for d in days_vals]
+            bars = self.sla_ax3.barh(range(len(approaching)), days_vals, color=colors)
             self.sla_ax3.set_yticks(range(len(approaching)))
             self.sla_ax3.set_yticklabels(labels, fontsize=7)
             self.sla_ax3.axvline(x=0, color='#dc3545', linestyle='-', linewidth=2)
+
+            # Add data labels
+            if show_labels:
+                for bar, val in zip(bars, days_vals):
+                    label_x = val if val >= 0 else val
+                    ha = 'left' if val >= 0 else 'right'
+                    offset = (3, 0) if val >= 0 else (-3, 0)
+                    self.sla_ax3.annotate(f'{int(val)}d',
+                        xy=(val, bar.get_y() + bar.get_height()/2),
+                        xytext=offset, textcoords='offset points',
+                        ha=ha, va='center', fontsize=7, color='white')
+
+            # Add urgency indicator
+            critical_approaching = len(approaching[approaching['days_remaining'] <= 3])
+            if critical_approaching > 0:
+                self.sla_ax3.text(0.98, 0.98, f'⚠ {critical_approaching} due in ≤3 days',
+                    transform=self.sla_ax3.transAxes, fontsize=7, color='#ff6b6b',
+                    ha='right', va='top', fontweight='bold')
         self.sla_ax3.set_title(f'Approaching Deadline ({len(approaching)} findings)', color=GUI_DARK_THEME['fg'])
         self.sla_ax3.set_xlabel('Days Until SLA Breach', color=GUI_DARK_THEME['fg'])
 
@@ -4676,6 +4955,26 @@ class NessusHistoryTrackerApp:
                     else:
                         patch.set_facecolor('#28a745')  # On track - green
                 self.sla_ax4.axvline(x=0, color='white', linestyle='--', linewidth=2)
+
+                # Add data labels on histogram bars
+                if show_labels:
+                    for patch, count in zip(patches, n):
+                        if count > 0:
+                            height = patch.get_height()
+                            x = patch.get_x() + patch.get_width() / 2
+                            self.sla_ax4.annotate(f'{int(count)}',
+                                xy=(x, height), xytext=(0, 2), textcoords='offset points',
+                                ha='center', va='bottom', fontsize=6, color='white')
+
+                # Add summary stats
+                overdue_count = len(days_vals[days_vals < 0])
+                on_track_count = len(days_vals[days_vals >= 0])
+                self.sla_ax4.text(0.02, 0.98, f'Overdue: {overdue_count}',
+                    transform=self.sla_ax4.transAxes, fontsize=7, color='#dc3545',
+                    ha='left', va='top', fontweight='bold')
+                self.sla_ax4.text(0.98, 0.98, f'On track: {on_track_count}',
+                    transform=self.sla_ax4.transAxes, fontsize=7, color='#28a745',
+                    ha='right', va='top', fontweight='bold')
         self.sla_ax4.set_title('Days Until/Past SLA Distribution', color=GUI_DARK_THEME['fg'])
         self.sla_ax4.set_xlabel('Days (negative = overdue)', color=GUI_DARK_THEME['fg'])
         self.sla_ax4.set_ylabel('Finding Count', color=GUI_DARK_THEME['fg'])
@@ -4704,6 +5003,9 @@ class NessusHistoryTrackerApp:
             self.host_tracking_canvas.draw()
             return
 
+        # Check if data labels are enabled
+        show_labels = self.settings_manager.settings.show_data_labels
+
         # Chart 1: Hosts missing from recent scans
         if 'status' in host_df.columns:
             missing = host_df[host_df['status'] != 'Active']
@@ -4715,9 +5017,24 @@ class NessusHistoryTrackerApp:
                     labels = [str(h)[:15] for h in missing['hostname']]
                     # Days since last seen
                     days_missing = (pd.Timestamp.now() - missing['last_seen']).dt.days
-                    self.host_tracking_ax1.barh(range(len(missing)), days_missing.values, color='#dc3545')
+                    bars = self.host_tracking_ax1.barh(range(len(missing)), days_missing.values, color='#dc3545')
                     self.host_tracking_ax1.set_yticks(range(len(missing)))
                     self.host_tracking_ax1.set_yticklabels(labels, fontsize=7)
+
+                    # Add data labels
+                    if show_labels:
+                        for bar, val in zip(bars, days_missing.values):
+                            self.host_tracking_ax1.annotate(f'{int(val)}d',
+                                xy=(val, bar.get_y() + bar.get_height()/2),
+                                xytext=(3, 0), textcoords='offset points',
+                                ha='left', va='center', fontsize=7, color='white')
+
+                    # Add summary stats
+                    total_missing = len(host_df[host_df['status'] != 'Active'])
+                    avg_days = days_missing.mean() if len(days_missing) > 0 else 0
+                    self.host_tracking_ax1.text(0.98, 0.98, f'Total: {total_missing} | Avg: {avg_days:.0f}d',
+                        transform=self.host_tracking_ax1.transAxes, fontsize=7, color='#ff6b6b',
+                        ha='right', va='top')
         self.host_tracking_ax1.set_title('Hosts Missing from Recent Scans', color=GUI_DARK_THEME['fg'])
         self.host_tracking_ax1.set_xlabel('Days Since Last Seen', color=GUI_DARK_THEME['fg'])
 
@@ -4727,8 +5044,33 @@ class NessusHistoryTrackerApp:
             hist_copy['scan_date'] = pd.to_datetime(hist_copy['scan_date'])
             hosts_per_scan = hist_copy.groupby(hist_copy['scan_date'].dt.date)['hostname'].nunique()
             if len(hosts_per_scan) > 0:
-                self.host_tracking_ax2.plot(range(len(hosts_per_scan)), hosts_per_scan.values, 'c-', marker='o', markersize=4)
+                line, = self.host_tracking_ax2.plot(range(len(hosts_per_scan)), hosts_per_scan.values, 'c-', marker='o', markersize=4)
                 self.host_tracking_ax2.fill_between(range(len(hosts_per_scan)), hosts_per_scan.values, alpha=0.3, color='cyan')
+
+                # Add data labels at key points
+                if show_labels and len(hosts_per_scan) > 0:
+                    # Label first, last, min, max
+                    values = hosts_per_scan.values
+                    indices_to_label = {0, len(values)-1}
+                    if len(values) > 2:
+                        indices_to_label.add(int(values.argmax()))
+                        indices_to_label.add(int(values.argmin()))
+                    for idx in indices_to_label:
+                        self.host_tracking_ax2.annotate(f'{int(values[idx])}',
+                            xy=(idx, values[idx]), xytext=(0, 5), textcoords='offset points',
+                            ha='center', va='bottom', fontsize=7, color='cyan')
+
+                # Add trend indicator
+                if len(hosts_per_scan) > 1:
+                    first_val = hosts_per_scan.iloc[0]
+                    last_val = hosts_per_scan.iloc[-1]
+                    if first_val > 0:
+                        change = ((last_val - first_val) / first_val) * 100
+                        arrow = '↑' if change > 0 else '↓' if change < 0 else '→'
+                        color = '#28a745' if change >= 0 else '#dc3545'
+                        self.host_tracking_ax2.text(0.98, 0.98, f'{arrow} {abs(change):.1f}%',
+                            transform=self.host_tracking_ax2.transAxes, fontsize=8, color=color,
+                            ha='right', va='top', fontweight='bold')
         self.host_tracking_ax2.set_title('Host Presence Over Time', color=GUI_DARK_THEME['fg'])
         self.host_tracking_ax2.set_ylabel('Unique Hosts', color=GUI_DARK_THEME['fg'])
 
@@ -4737,10 +5079,29 @@ class NessusHistoryTrackerApp:
             low_presence = host_df[host_df['presence_percentage'] < 50].nsmallest(15, 'presence_percentage')
             if not low_presence.empty and 'hostname' in low_presence.columns:
                 labels = [str(h)[:15] for h in low_presence['hostname']]
-                self.host_tracking_ax3.barh(range(len(low_presence)), low_presence['presence_percentage'].values, color='#ffc107')
+                presence_vals = low_presence['presence_percentage'].values
+
+                # Color gradient based on presence percentage
+                colors = ['#dc3545' if p < 25 else '#ffc107' for p in presence_vals]
+                bars = self.host_tracking_ax3.barh(range(len(low_presence)), presence_vals, color=colors)
                 self.host_tracking_ax3.set_yticks(range(len(low_presence)))
                 self.host_tracking_ax3.set_yticklabels(labels, fontsize=7)
-                self.host_tracking_ax3.axvline(x=50, color='#dc3545', linestyle='--', alpha=0.7)
+                self.host_tracking_ax3.axvline(x=50, color='#dc3545', linestyle='--', alpha=0.7, label='Threshold')
+
+                # Add data labels
+                if show_labels:
+                    for bar, val in zip(bars, presence_vals):
+                        self.host_tracking_ax3.annotate(f'{val:.1f}%',
+                            xy=(val, bar.get_y() + bar.get_height()/2),
+                            xytext=(3, 0), textcoords='offset points',
+                            ha='left', va='center', fontsize=7, color='white')
+
+                # Add summary
+                total_low = len(host_df[host_df['presence_percentage'] < 50])
+                critical_low = len(host_df[host_df['presence_percentage'] < 25])
+                self.host_tracking_ax3.text(0.98, 0.02, f'<50%: {total_low} | <25%: {critical_low}',
+                    transform=self.host_tracking_ax3.transAxes, fontsize=7, color='#ffc107',
+                    ha='right', va='bottom')
         self.host_tracking_ax3.set_title('Hosts with Low Presence (<50%)', color=GUI_DARK_THEME['fg'])
         self.host_tracking_ax3.set_xlabel('Presence %', color=GUI_DARK_THEME['fg'])
 
@@ -4750,8 +5111,27 @@ class NessusHistoryTrackerApp:
             if len(status_counts) > 0:
                 colors = {'Active': '#28a745', 'Inactive': '#dc3545', 'Intermittent': '#ffc107'}
                 pie_colors = [colors.get(s, '#6c757d') for s in status_counts.index]
-                self.host_tracking_ax4.pie(status_counts.values, labels=status_counts.index, colors=pie_colors,
-                                          autopct='%1.1f%%', textprops={'color': GUI_DARK_THEME['fg']})
+
+                # Create labels with counts
+                if show_labels:
+                    pie_labels = [f'{s}\n({c})' for s, c in zip(status_counts.index, status_counts.values)]
+                else:
+                    pie_labels = list(status_counts.index)
+
+                wedges, texts, autotexts = self.host_tracking_ax4.pie(
+                    status_counts.values, labels=pie_labels, colors=pie_colors,
+                    autopct='%1.1f%%', textprops={'color': GUI_DARK_THEME['fg'], 'fontsize': 8})
+
+                # Style autopct text
+                for autotext in autotexts:
+                    autotext.set_fontsize(7)
+                    autotext.set_fontweight('bold')
+
+                # Add total count in center
+                total_hosts = len(host_df)
+                self.host_tracking_ax4.text(0, 0, f'{total_hosts}\nhosts',
+                    ha='center', va='center', fontsize=9, fontweight='bold',
+                    color=GUI_DARK_THEME['fg'])
         self.host_tracking_ax4.set_title('Host Status Distribution', color=GUI_DARK_THEME['fg'])
 
         for ax in [self.host_tracking_ax1, self.host_tracking_ax2, self.host_tracking_ax3, self.host_tracking_ax4]:
