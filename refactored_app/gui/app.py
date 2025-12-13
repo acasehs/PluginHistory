@@ -3190,40 +3190,106 @@ class NessusHistoryTrackerApp:
             self.opdir_canvas.draw()
             return
 
-        # Chart 1: OPDIR coverage pie
+        # Chart 1: OPDIR coverage pie with counts
         if 'opdir_number' in df.columns:
             mapped = df['opdir_number'].notna() & (df['opdir_number'] != '')
-            counts = [mapped.sum(), (~mapped).sum()]
-            labels = ['Mapped', 'Unmapped']
+            mapped_count = mapped.sum()
+            unmapped_count = (~mapped).sum()
+            counts = [mapped_count, unmapped_count]
+            labels = [f'Mapped\n({mapped_count})', f'Unmapped\n({unmapped_count})']
             colors = ['#28a745', '#6c757d']
-            self.opdir_ax1.pie(counts, labels=labels, colors=colors, autopct='%1.1f%%',
-                              textprops={'color': GUI_DARK_THEME['fg']})
+            if sum(counts) > 0:
+                self.opdir_ax1.pie(counts, labels=labels, colors=colors, autopct='%1.1f%%',
+                                  textprops={'color': GUI_DARK_THEME['fg'], 'fontsize': 8})
+            else:
+                self.opdir_ax1.text(0.5, 0.5, 'No data', ha='center', va='center',
+                                   color=GUI_DARK_THEME['fg'])
         self.opdir_ax1.set_title('OPDIR Mapping Coverage', color=GUI_DARK_THEME['fg'])
 
-        # Chart 2: OPDIR status distribution
+        # Chart 2: OPDIR status distribution with data labels
         if 'opdir_status' in df.columns:
-            status_counts = df['opdir_status'].value_counts()
-            if len(status_counts) > 0:
-                colors = {'Overdue': '#dc3545', 'Due Soon': '#ffc107', 'On Track': '#28a745'}
-                bar_colors = [colors.get(s, '#6c757d') for s in status_counts.index]
-                self.opdir_ax2.bar(range(len(status_counts)), status_counts.values, color=bar_colors)
-                self.opdir_ax2.set_xticks(range(len(status_counts)))
-                self.opdir_ax2.set_xticklabels(status_counts.index, fontsize=8)
-        self.opdir_ax2.set_title('OPDIR Status Distribution', color=GUI_DARK_THEME['fg'])
+            # Filter to only rows with status
+            status_df = df[df['opdir_status'] != '']
+            if not status_df.empty:
+                status_counts = status_df['opdir_status'].value_counts()
+                status_order = ['Overdue', 'Due Soon', 'On Track']
+                status_counts = status_counts.reindex([s for s in status_order if s in status_counts.index])
 
-        # Chart 3: Days open vs OPDIR (scatter)
+                if len(status_counts) > 0:
+                    colors_map = {'Overdue': '#dc3545', 'Due Soon': '#ffc107', 'On Track': '#28a745'}
+                    bar_colors = [colors_map.get(s, '#6c757d') for s in status_counts.index]
+                    bars = self.opdir_ax2.bar(range(len(status_counts)), status_counts.values, color=bar_colors)
+                    self.opdir_ax2.set_xticks(range(len(status_counts)))
+                    self.opdir_ax2.set_xticklabels(status_counts.index, fontsize=8)
+
+                    # Add data labels
+                    for bar, val in zip(bars, status_counts.values):
+                        self.opdir_ax2.annotate(f'{int(val)}',
+                                               xy=(bar.get_x() + bar.get_width()/2, val),
+                                               xytext=(0, 3), textcoords='offset points',
+                                               ha='center', va='bottom', fontsize=7, color='white')
+        self.opdir_ax2.set_title('OPDIR Status Distribution', color=GUI_DARK_THEME['fg'])
+        self.opdir_ax2.set_ylabel('Count', color=GUI_DARK_THEME['fg'])
+
+        # Chart 3: Finding age histogram for OPDIR-mapped items
         if 'days_open' in df.columns and 'opdir_number' in df.columns:
             mapped_df = df[df['opdir_number'].notna() & (df['opdir_number'] != '')]
-            if not mapped_df.empty and len(mapped_df) < 1000:
-                self.opdir_ax3.scatter(range(len(mapped_df)), mapped_df['days_open'].values,
-                                       alpha=0.5, c='#007bff', s=10)
-        self.opdir_ax3.set_title('Finding Age (OPDIR Mapped)', color=GUI_DARK_THEME['fg'])
-        self.opdir_ax3.set_ylabel('Days Open', color=GUI_DARK_THEME['fg'])
+            if not mapped_df.empty:
+                days = mapped_df['days_open'].values
+                bins = [0, 7, 30, 60, 90, 180, max(days.max() + 1, 181)]
+                bin_labels = ['0-7', '8-30', '31-60', '61-90', '91-180', '180+']
+                hist, _ = np.histogram(days, bins=bins)
 
-        # Chart 4: Placeholder for compliance by year
-        self.opdir_ax4.text(0.5, 0.5, 'OPDIR Year Analysis\n(requires OPDIR data)',
-                           ha='center', va='center', color=GUI_DARK_THEME['fg'], fontsize=10)
+                colors = ['#28a745', '#28a745', '#ffc107', '#ffc107', '#fd7e14', '#dc3545']
+                bars = self.opdir_ax3.bar(range(len(hist)), hist, color=colors[:len(hist)])
+                self.opdir_ax3.set_xticks(range(len(hist)))
+                self.opdir_ax3.set_xticklabels(bin_labels[:len(hist)], fontsize=7)
+
+                # Add data labels
+                for bar, val in zip(bars, hist):
+                    if val > 0:
+                        self.opdir_ax3.annotate(f'{int(val)}',
+                                               xy=(bar.get_x() + bar.get_width()/2, val),
+                                               xytext=(0, 2), textcoords='offset points',
+                                               ha='center', va='bottom', fontsize=6, color='white')
+            else:
+                self.opdir_ax3.text(0.5, 0.5, 'No OPDIR-mapped\nfindings', ha='center', va='center',
+                                   color=GUI_DARK_THEME['fg'], fontsize=9)
+        self.opdir_ax3.set_title('Finding Age (OPDIR Mapped)', color=GUI_DARK_THEME['fg'])
+        self.opdir_ax3.set_xlabel('Days Open', color=GUI_DARK_THEME['fg'])
+        self.opdir_ax3.set_ylabel('Count', color=GUI_DARK_THEME['fg'])
+
+        # Chart 4: Compliance by OPDIR Year (stacked bar)
+        if 'opdir_year' in df.columns and 'opdir_status' in df.columns:
+            year_df = df[df['opdir_year'].notna() & (df['opdir_status'] != '')]
+            if not year_df.empty:
+                # Group by year and status
+                year_status = year_df.groupby(['opdir_year', 'opdir_status']).size().unstack(fill_value=0)
+                years = year_status.index
+                x = range(len(years))
+
+                # Stacked bars
+                bottom = np.zeros(len(years))
+                colors_map = {'On Track': '#28a745', 'Due Soon': '#ffc107', 'Overdue': '#dc3545'}
+
+                for status in ['On Track', 'Due Soon', 'Overdue']:
+                    if status in year_status.columns:
+                        values = year_status[status].values
+                        self.opdir_ax4.bar(x, values, bottom=bottom, label=status,
+                                          color=colors_map.get(status, '#6c757d'), width=0.7)
+                        bottom += values
+
+                self.opdir_ax4.set_xticks(x)
+                self.opdir_ax4.set_xticklabels([int(y) for y in years], fontsize=8)
+                self.opdir_ax4.legend(loc='upper right', fontsize=6)
+            else:
+                self.opdir_ax4.text(0.5, 0.5, 'No OPDIR year data\n(Load OPDIR mapping)',
+                                   ha='center', va='center', color=GUI_DARK_THEME['fg'], fontsize=9)
+        else:
+            self.opdir_ax4.text(0.5, 0.5, 'OPDIR Year Analysis\n(Load OPDIR mapping)',
+                               ha='center', va='center', color=GUI_DARK_THEME['fg'], fontsize=9)
         self.opdir_ax4.set_title('Compliance by OPDIR Year', color=GUI_DARK_THEME['fg'])
+        self.opdir_ax4.set_ylabel('Count', color=GUI_DARK_THEME['fg'])
 
         for ax in [self.opdir_ax1, self.opdir_ax2, self.opdir_ax3, self.opdir_ax4]:
             ax.tick_params(colors=GUI_DARK_THEME['fg'])
