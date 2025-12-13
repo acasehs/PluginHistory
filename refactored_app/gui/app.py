@@ -80,6 +80,15 @@ class NessusHistoryTrackerApp:
         self.filter_start_date = tk.StringVar()
         self.filter_end_date = tk.StringVar()
         self.filter_severity = tk.StringVar(value="All")
+        # Individual severity toggles for highlight/toggle behavior
+        self.severity_toggles = {
+            'Critical': tk.BooleanVar(value=True),
+            'High': tk.BooleanVar(value=True),
+            'Medium': tk.BooleanVar(value=True),
+            'Low': tk.BooleanVar(value=True),
+            'Info': tk.BooleanVar(value=False),  # Off by default
+        }
+        self.severity_buttons = {}  # Will hold button widgets
         self.filter_status = tk.StringVar(value="All")
         self.filter_host = tk.StringVar()
         self.filter_host_type = tk.StringVar(value="All")
@@ -229,16 +238,40 @@ class NessusHistoryTrackerApp:
         ttk.Label(date_row, text="-").pack(side=tk.LEFT)
         ttk.Entry(date_row, textvariable=self.filter_end_date, width=10).pack(side=tk.LEFT, padx=1)
 
-        # Row 3: Severity + Status (inline)
+        # Row 3: Severity toggle buttons with colored highlights
         sev_row = ttk.Frame(filter_frame)
         sev_row.pack(fill=tk.X, pady=3)
         ttk.Label(sev_row, text="Severity:", width=8).pack(side=tk.LEFT)
-        severity_options = ["All", "Critical", "High", "Medium", "Low", "Info", "Crit+High", "Med+High+Crit"]
-        ttk.Combobox(sev_row, textvariable=self.filter_severity,
-                    values=severity_options, state="readonly", width=12).pack(side=tk.LEFT, padx=1)
-        ttk.Label(sev_row, text="Status:").pack(side=tk.LEFT, padx=(5, 0))
-        ttk.Combobox(sev_row, textvariable=self.filter_status,
-                    values=["All", "Active", "Resolved"], state="readonly", width=8).pack(side=tk.LEFT, padx=1)
+
+        # Severity colors (from settings or defaults)
+        sev_colors = self.settings_manager.settings.get_severity_colors()
+
+        # Create toggle buttons for each severity
+        for sev in ['Critical', 'High', 'Medium', 'Low', 'Info']:
+            color = sev_colors.get(sev, '#6c757d')
+            btn = tk.Button(
+                sev_row, text=sev[0], width=2,  # Single letter: C, H, M, L, I
+                relief=tk.RAISED if self.severity_toggles[sev].get() else tk.FLAT,
+                bg=color if self.severity_toggles[sev].get() else GUI_DARK_THEME['button_bg'],
+                fg='white',
+                activebackground=color,
+                command=lambda s=sev: self._toggle_severity(s)
+            )
+            btn.pack(side=tk.LEFT, padx=1)
+            self.severity_buttons[sev] = btn
+
+        # Quick select buttons
+        ttk.Button(sev_row, text="All", width=3,
+                  command=self._select_all_severities).pack(side=tk.LEFT, padx=(3, 1))
+        ttk.Button(sev_row, text="None", width=4,
+                  command=self._select_no_severities).pack(side=tk.LEFT, padx=1)
+
+        # Row 3b: Status filter
+        status_row = ttk.Frame(filter_frame)
+        status_row.pack(fill=tk.X, pady=3)
+        ttk.Label(status_row, text="Status:", width=8).pack(side=tk.LEFT)
+        ttk.Combobox(status_row, textvariable=self.filter_status,
+                    values=["All", "Active", "Resolved"], state="readonly", width=10).pack(side=tk.LEFT, padx=1)
 
         # Row 4: Host Type + Env Type (inline)
         host_row = ttk.Frame(filter_frame)
@@ -1174,15 +1207,17 @@ class NessusHistoryTrackerApp:
                 pass
 
         # Filter: Severity
-        severity = self.filter_severity.get()
-        if severity != "All" and 'severity_text' in filtered.columns:
-            if severity == "Crit+High":
-                filtered = filtered[filtered['severity_text'].isin(['Critical', 'High'])]
-            elif severity == "Med+High+Crit":
-                filtered = filtered[filtered['severity_text'].isin(['Critical', 'High', 'Medium'])]
-            else:
-                filtered = filtered[filtered['severity_text'] == severity]
-            filter_descriptions.append(f"Severity: {severity}")
+        # Severity filter: use toggle buttons
+        selected_severities = self._get_selected_severities()
+        if 'severity_text' in filtered.columns:
+            # If all are selected or none, don't filter by severity
+            all_severities = ['Critical', 'High', 'Medium', 'Low', 'Info']
+            if selected_severities and set(selected_severities) != set(all_severities):
+                filtered = filtered[filtered['severity_text'].isin(selected_severities)]
+                if len(selected_severities) <= 3:
+                    filter_descriptions.append(f"Severity: {', '.join(selected_severities)}")
+                else:
+                    filter_descriptions.append(f"Severity: {len(selected_severities)} selected")
 
         # Filter: Status
         status = self.filter_status.get()
@@ -1303,10 +1338,53 @@ class NessusHistoryTrackerApp:
 
         self._log(f"Filters applied: {len(filtered)} findings, {len(self.filtered_host_df)} hosts")
 
+    def _toggle_severity(self, severity: str):
+        """Toggle a severity filter and update button appearance."""
+        current = self.severity_toggles[severity].get()
+        self.severity_toggles[severity].set(not current)
+        self._update_severity_button(severity)
+
+    def _update_severity_button(self, severity: str):
+        """Update button appearance based on toggle state."""
+        if severity not in self.severity_buttons:
+            return
+
+        btn = self.severity_buttons[severity]
+        is_active = self.severity_toggles[severity].get()
+        sev_colors = self.settings_manager.settings.get_severity_colors()
+        color = sev_colors.get(severity, '#6c757d')
+
+        if is_active:
+            btn.config(relief=tk.RAISED, bg=color)
+        else:
+            btn.config(relief=tk.FLAT, bg=GUI_DARK_THEME['button_bg'])
+
+    def _select_all_severities(self):
+        """Select all severity levels."""
+        for sev in self.severity_toggles:
+            self.severity_toggles[sev].set(True)
+            self._update_severity_button(sev)
+
+    def _select_no_severities(self):
+        """Deselect all severity levels."""
+        for sev in self.severity_toggles:
+            self.severity_toggles[sev].set(False)
+            self._update_severity_button(sev)
+
+    def _get_selected_severities(self) -> list:
+        """Get list of currently selected severity levels."""
+        return [sev for sev, var in self.severity_toggles.items() if var.get()]
+
     def _reset_filters(self):
         """Reset all filters to default values."""
         self.filter_include_info.set(True)
         self.filter_severity.set("All")
+        # Reset severity toggles to defaults
+        for sev in ['Critical', 'High', 'Medium', 'Low']:
+            self.severity_toggles[sev].set(True)
+            self._update_severity_button(sev)
+        self.severity_toggles['Info'].set(False)
+        self._update_severity_button('Info')
         self.filter_status.set("All")
         self.filter_host_type.set("All")
         self.filter_env_type.set("All")
