@@ -283,16 +283,16 @@ class NessusHistoryTrackerApp:
         ttk.Button(row1, text="Process", command=self._process_archives).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
         ttk.Button(row1, text="Refresh", command=self._refresh_analysis).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
 
-        # Row 2: Excel + SQLite
+        # Row 2: Export Excel + Save SQLite
         row2 = ttk.Frame(action_frame)
         row2.pack(fill=tk.X, pady=2)
-        ttk.Button(row2, text="Excel", command=self._export_excel).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
-        ttk.Button(row2, text="SQLite", command=self._export_sqlite).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+        ttk.Button(row2, text="Export Excel", command=self._export_excel).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+        ttk.Button(row2, text="Save SQLite", command=self._export_sqlite).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
 
-        # Row 3: JSON (centered)
+        # Row 3: Save JSON
         row3 = ttk.Frame(action_frame)
         row3.pack(fill=tk.X, pady=2)
-        ttk.Button(row3, text="JSON", command=self._export_json).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+        ttk.Button(row3, text="Save JSON", command=self._export_json).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
 
     def _build_status_tab(self):
         """Build status/log tab."""
