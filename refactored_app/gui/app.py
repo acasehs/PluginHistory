@@ -190,6 +190,7 @@ class NessusHistoryTrackerApp:
         self._build_sla_tab()
         self._build_metrics_tab()
         self._build_host_tracking_tab()
+        self._build_advanced_tab()
 
     def _build_file_selection(self, parent):
         """Build file selection section with compact layout."""
@@ -1041,6 +1042,91 @@ class NessusHistoryTrackerApp:
             self._bind_chart_popouts_host_tracking()
         else:
             ttk.Label(host_tracking_frame, text="Install matplotlib for visualizations").pack(pady=50)
+
+    def _build_advanced_tab(self):
+        """Build advanced analytics visualization tab with 8 advanced charts."""
+        advanced_frame = ttk.Frame(self.notebook)
+        self.notebook.add(advanced_frame, text="Advanced")
+        self.advanced_frame = advanced_frame
+
+        if HAS_MATPLOTLIB:
+            # Create sub-notebook for different visualization categories
+            self.advanced_notebook = ttk.Notebook(advanced_frame)
+            self.advanced_notebook.pack(fill=tk.BOTH, expand=True)
+
+            # Page 1: Heatmap & Bubble Chart (Risk Analysis)
+            risk_page = ttk.Frame(self.advanced_notebook)
+            self.advanced_notebook.add(risk_page, text="Risk Analysis")
+
+            self.advanced_fig1 = Figure(figsize=(12, 5), dpi=100, facecolor=GUI_DARK_THEME['bg'])
+            self.heatmap_ax = self.advanced_fig1.add_subplot(121)
+            self.heatmap_ax.set_title('Risk Heatmap by Subnet/Time', color=GUI_DARK_THEME['fg'])
+            self.bubble_ax = self.advanced_fig1.add_subplot(122)
+            self.bubble_ax.set_title('CVSS vs Age vs Impact', color=GUI_DARK_THEME['fg'])
+            for ax in [self.heatmap_ax, self.bubble_ax]:
+                ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
+                ax.tick_params(colors=GUI_DARK_THEME['fg'])
+                for spine in ax.spines.values():
+                    spine.set_color(GUI_DARK_THEME['fg'])
+            self.advanced_canvas1 = FigureCanvasTkAgg(self.advanced_fig1, master=risk_page)
+            self.advanced_canvas1.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+            # Page 2: Sankey & Treemap (Composition)
+            comp_page = ttk.Frame(self.advanced_notebook)
+            self.advanced_notebook.add(comp_page, text="Composition")
+
+            self.advanced_fig2 = Figure(figsize=(12, 5), dpi=100, facecolor=GUI_DARK_THEME['bg'])
+            self.sankey_ax = self.advanced_fig2.add_subplot(121)
+            self.sankey_ax.set_title('Vulnerability Lifecycle Flow', color=GUI_DARK_THEME['fg'])
+            self.treemap_ax = self.advanced_fig2.add_subplot(122)
+            self.treemap_ax.set_title('Plugin Family Treemap', color=GUI_DARK_THEME['fg'])
+            for ax in [self.sankey_ax, self.treemap_ax]:
+                ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
+                ax.tick_params(colors=GUI_DARK_THEME['fg'])
+                for spine in ax.spines.values():
+                    spine.set_color(GUI_DARK_THEME['fg'])
+            self.advanced_canvas2 = FigureCanvasTkAgg(self.advanced_fig2, master=comp_page)
+            self.advanced_canvas2.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+            # Page 3: Radar & Gauge (Health Indicators)
+            health_page = ttk.Frame(self.advanced_notebook)
+            self.advanced_notebook.add(health_page, text="Health Indicators")
+
+            self.advanced_fig3 = Figure(figsize=(12, 5), dpi=100, facecolor=GUI_DARK_THEME['bg'])
+            self.radar_ax = self.advanced_fig3.add_subplot(121, projection='polar')
+            self.radar_ax.set_title('Subnet Risk Profile', color=GUI_DARK_THEME['fg'], pad=20)
+            self.radar_ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
+            self.gauge_ax = self.advanced_fig3.add_subplot(122)
+            self.gauge_ax.set_title('Remediation Velocity', color=GUI_DARK_THEME['fg'])
+            self.gauge_ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
+            self.gauge_ax.tick_params(colors=GUI_DARK_THEME['fg'])
+            for spine in self.gauge_ax.spines.values():
+                spine.set_color(GUI_DARK_THEME['fg'])
+            self.advanced_canvas3 = FigureCanvasTkAgg(self.advanced_fig3, master=health_page)
+            self.advanced_canvas3.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+            # Page 4: Prediction & Comparison (Trends)
+            trend_page = ttk.Frame(self.advanced_notebook)
+            self.advanced_notebook.add(trend_page, text="Trends & Prediction")
+
+            self.advanced_fig4 = Figure(figsize=(12, 5), dpi=100, facecolor=GUI_DARK_THEME['bg'])
+            self.prediction_ax = self.advanced_fig4.add_subplot(121)
+            self.prediction_ax.set_title('SLA Breach Prediction', color=GUI_DARK_THEME['fg'])
+            self.comparison_ax = self.advanced_fig4.add_subplot(122)
+            self.comparison_ax.set_title('Period Comparison', color=GUI_DARK_THEME['fg'])
+            for ax in [self.prediction_ax, self.comparison_ax]:
+                ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
+                ax.tick_params(colors=GUI_DARK_THEME['fg'])
+                for spine in ax.spines.values():
+                    spine.set_color(GUI_DARK_THEME['fg'])
+            self.advanced_canvas4 = FigureCanvasTkAgg(self.advanced_fig4, master=trend_page)
+            self.advanced_canvas4.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+            hint = ttk.Label(advanced_frame, text="Advanced analytics - switch tabs for different visualizations",
+                            font=('Arial', 8), foreground='gray')
+            hint.pack(anchor=tk.SE, padx=5)
+        else:
+            ttk.Label(advanced_frame, text="Install matplotlib for advanced visualizations").pack(pady=50)
 
     # File selection methods
     def _truncate_filename(self, name: str, max_len: int = 20) -> str:
@@ -5378,6 +5464,593 @@ class NessusHistoryTrackerApp:
         self.metrics_fig.tight_layout()
         self.metrics_canvas.draw()
 
+    def _update_advanced_charts(self):
+        """Update all advanced analytics visualizations."""
+        if not HAS_MATPLOTLIB or not hasattr(self, 'heatmap_ax'):
+            return
+
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        hist_df = self.historical_df
+
+        # Clear all axes
+        for ax in [self.heatmap_ax, self.bubble_ax, self.sankey_ax, self.treemap_ax,
+                   self.gauge_ax, self.prediction_ax, self.comparison_ax]:
+            ax.clear()
+            ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
+
+        self.radar_ax.clear()
+        self.radar_ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
+
+        if df.empty and hist_df.empty:
+            for ax in [self.heatmap_ax, self.bubble_ax, self.sankey_ax, self.treemap_ax,
+                       self.gauge_ax, self.prediction_ax, self.comparison_ax]:
+                ax.text(0.5, 0.5, 'No data available', ha='center', va='center',
+                       color=GUI_DARK_THEME['fg'], fontsize=10)
+            self.advanced_canvas1.draw()
+            self.advanced_canvas2.draw()
+            self.advanced_canvas3.draw()
+            self.advanced_canvas4.draw()
+            return
+
+        # ===== PAGE 1: Risk Analysis =====
+        # Chart 1: Risk Heatmap by Subnet/Time
+        self._draw_risk_heatmap(df, hist_df)
+
+        # Chart 2: Bubble Chart (CVSS vs Age vs Count)
+        self._draw_bubble_chart(df)
+
+        self.advanced_fig1.tight_layout()
+        self.advanced_canvas1.draw()
+
+        # ===== PAGE 2: Composition =====
+        # Chart 3: Vulnerability Lifecycle Sankey
+        self._draw_sankey_diagram(df, hist_df)
+
+        # Chart 4: Plugin Family Treemap
+        self._draw_treemap(df)
+
+        self.advanced_fig2.tight_layout()
+        self.advanced_canvas2.draw()
+
+        # ===== PAGE 3: Health Indicators =====
+        # Chart 5: Radar Chart per Subnet
+        self._draw_radar_chart(df)
+
+        # Chart 6: Remediation Velocity Gauge
+        self._draw_velocity_gauge(df, hist_df)
+
+        self.advanced_fig3.tight_layout()
+        self.advanced_canvas3.draw()
+
+        # ===== PAGE 4: Trends & Prediction =====
+        # Chart 7: SLA Breach Prediction
+        self._draw_sla_prediction(df)
+
+        # Chart 8: Period Comparison
+        self._draw_period_comparison(hist_df)
+
+        self.advanced_fig4.tight_layout()
+        self.advanced_canvas4.draw()
+
+    def _draw_risk_heatmap(self, df, hist_df):
+        """Draw Risk Heatmap by Subnet/Time."""
+        ax = self.heatmap_ax
+
+        if hist_df.empty or 'scan_date' not in hist_df.columns:
+            ax.text(0.5, 0.5, 'Insufficient historical data\nfor heatmap', ha='center', va='center',
+                   color=GUI_DARK_THEME['fg'], fontsize=9)
+            ax.set_title('Risk Heatmap by Subnet/Time', color=GUI_DARK_THEME['fg'], fontsize=10)
+            return
+
+        # Get IP column
+        ip_col = 'ip_address' if 'ip_address' in hist_df.columns else 'ip' if 'ip' in hist_df.columns else None
+        if not ip_col:
+            ax.text(0.5, 0.5, 'No IP address data', ha='center', va='center', color=GUI_DARK_THEME['fg'])
+            ax.set_title('Risk Heatmap by Subnet/Time', color=GUI_DARK_THEME['fg'], fontsize=10)
+            return
+
+        hist_copy = hist_df.copy()
+        hist_copy['scan_date'] = pd.to_datetime(hist_copy['scan_date'])
+        hist_copy['month'] = hist_copy['scan_date'].dt.to_period('M').astype(str)
+        hist_copy['subnet'] = hist_copy[ip_col].apply(
+            lambda x: '.'.join(str(x).split('.')[:3]) + '.0/24' if pd.notna(x) and '.' in str(x) else 'Unknown'
+        )
+
+        # Get top 10 subnets by total vulnerabilities
+        top_subnets = hist_copy['subnet'].value_counts().head(10).index.tolist()
+        filtered = hist_copy[hist_copy['subnet'].isin(top_subnets)]
+
+        if filtered.empty:
+            ax.text(0.5, 0.5, 'No subnet data', ha='center', va='center', color=GUI_DARK_THEME['fg'])
+            ax.set_title('Risk Heatmap by Subnet/Time', color=GUI_DARK_THEME['fg'], fontsize=10)
+            return
+
+        # Create pivot table
+        pivot = filtered.pivot_table(index='subnet', columns='month', aggfunc='size', fill_value=0)
+
+        # Plot heatmap
+        im = ax.imshow(pivot.values, cmap='YlOrRd', aspect='auto')
+
+        # Set ticks
+        ax.set_xticks(range(len(pivot.columns)))
+        ax.set_xticklabels([c[-5:] for c in pivot.columns], fontsize=7, rotation=45, ha='right')
+        ax.set_yticks(range(len(pivot.index)))
+        ax.set_yticklabels([s[:15] for s in pivot.index], fontsize=7)
+
+        ax.set_title('Risk Heatmap by Subnet/Time', color=GUI_DARK_THEME['fg'], fontsize=10)
+        ax.text(0.5, 1.02, 'Vulnerability density: darker = more findings',
+            transform=ax.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
+
+        # Add colorbar
+        cbar = self.advanced_fig1.colorbar(im, ax=ax, shrink=0.8)
+        cbar.ax.tick_params(colors=GUI_DARK_THEME['fg'], labelsize=7)
+        cbar.set_label('Count', color=GUI_DARK_THEME['fg'], fontsize=8)
+
+    def _draw_bubble_chart(self, df):
+        """Draw Bubble Chart: CVSS vs Age vs Impact."""
+        ax = self.bubble_ax
+
+        if df.empty or 'days_open' not in df.columns:
+            ax.text(0.5, 0.5, 'No vulnerability age data', ha='center', va='center',
+                   color=GUI_DARK_THEME['fg'], fontsize=9)
+            ax.set_title('CVSS vs Age vs Impact', color=GUI_DARK_THEME['fg'], fontsize=10)
+            return
+
+        # Filter to active findings
+        active = df[df['status'] == 'Active'].copy() if 'status' in df.columns else df.copy()
+
+        if active.empty:
+            ax.text(0.5, 0.5, 'No active findings', ha='center', va='center', color=GUI_DARK_THEME['fg'])
+            ax.set_title('CVSS vs Age vs Impact', color=GUI_DARK_THEME['fg'], fontsize=10)
+            return
+
+        # Get CVSS scores
+        cvss_col = 'cvss3_base_score' if 'cvss3_base_score' in active.columns else 'cvss_base_score' if 'cvss_base_score' in active.columns else None
+
+        if not cvss_col:
+            # Use severity_value as fallback
+            if 'severity_value' in active.columns:
+                active['cvss_proxy'] = active['severity_value'] * 2.5  # Scale to 0-10
+                cvss_col = 'cvss_proxy'
+            else:
+                ax.text(0.5, 0.5, 'No CVSS data available', ha='center', va='center', color=GUI_DARK_THEME['fg'])
+                ax.set_title('CVSS vs Age vs Impact', color=GUI_DARK_THEME['fg'], fontsize=10)
+                return
+
+        # Group by plugin_id to get aggregated bubbles
+        if 'plugin_id' in active.columns:
+            grouped = active.groupby('plugin_id').agg({
+                cvss_col: 'mean',
+                'days_open': 'mean',
+                'hostname': 'nunique' if 'hostname' in active.columns else 'count'
+            }).reset_index()
+            grouped.columns = ['plugin_id', 'cvss', 'age', 'hosts']
+        else:
+            grouped = pd.DataFrame({
+                'cvss': active[cvss_col].values,
+                'age': active['days_open'].values,
+                'hosts': [1] * len(active)
+            })
+
+        # Filter out NaN
+        grouped = grouped.dropna(subset=['cvss', 'age'])
+
+        if grouped.empty:
+            ax.text(0.5, 0.5, 'No data after filtering', ha='center', va='center', color=GUI_DARK_THEME['fg'])
+            ax.set_title('CVSS vs Age vs Impact', color=GUI_DARK_THEME['fg'], fontsize=10)
+            return
+
+        # Color by severity
+        colors = grouped['cvss'].apply(
+            lambda x: '#dc3545' if x >= 9 else '#fd7e14' if x >= 7 else '#ffc107' if x >= 4 else '#007bff'
+        )
+
+        # Size by host count (scaled)
+        sizes = grouped['hosts'] * 50 + 20
+        sizes = sizes.clip(upper=500)
+
+        scatter = ax.scatter(grouped['age'], grouped['cvss'], s=sizes, c=colors, alpha=0.6, edgecolors='white', linewidth=0.5)
+
+        ax.set_xlabel('Days Open', color=GUI_DARK_THEME['fg'], fontsize=8)
+        ax.set_ylabel('CVSS Score', color=GUI_DARK_THEME['fg'], fontsize=8)
+        ax.set_title('CVSS vs Age vs Impact', color=GUI_DARK_THEME['fg'], fontsize=10)
+        ax.text(0.5, 1.02, 'Bubble size = hosts affected; Color = severity',
+            transform=ax.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
+
+        # Add quadrant lines
+        ax.axhline(y=7, color='#fd7e14', linestyle='--', alpha=0.5, linewidth=1)
+        ax.axvline(x=30, color='#ffc107', linestyle='--', alpha=0.5, linewidth=1)
+
+        # Quadrant labels
+        ax.text(0.02, 0.98, 'Monitor', transform=ax.transAxes, fontsize=7, color='#28a745', va='top')
+        ax.text(0.98, 0.98, 'URGENT', transform=ax.transAxes, fontsize=7, color='#dc3545', va='top', ha='right')
+
+    def _draw_sankey_diagram(self, df, hist_df):
+        """Draw Vulnerability Lifecycle Flow (simplified Sankey-style)."""
+        ax = self.sankey_ax
+
+        if df.empty or 'status' not in df.columns:
+            ax.text(0.5, 0.5, 'No lifecycle data available', ha='center', va='center',
+                   color=GUI_DARK_THEME['fg'], fontsize=9)
+            ax.set_title('Vulnerability Lifecycle Flow', color=GUI_DARK_THEME['fg'], fontsize=10)
+            return
+
+        # Count by status
+        status_counts = df['status'].value_counts()
+        total = len(df)
+        active = status_counts.get('Active', 0)
+        resolved = status_counts.get('Resolved', 0)
+        reopened = df['reappearances'].sum() if 'reappearances' in df.columns else 0
+
+        # Calculate flow percentages
+        new_to_active = active / total * 100 if total > 0 else 0
+        active_to_resolved = resolved / total * 100 if total > 0 else 0
+        resolved_to_reopened = min(reopened / max(resolved, 1) * 100, 100)
+
+        # Draw flow diagram using arrows
+        ax.set_xlim(0, 10)
+        ax.set_ylim(0, 6)
+
+        # Boxes
+        box_style = dict(boxstyle='round,pad=0.3', facecolor='#2d2d2d', edgecolor='white', linewidth=1)
+
+        # New findings box
+        ax.text(1, 5, f'Discovered\n{total:,}', ha='center', va='center', fontsize=9,
+               color='white', bbox=box_style)
+
+        # Active box
+        ax.text(5, 5, f'Active\n{active:,}', ha='center', va='center', fontsize=9,
+               color='white', bbox=dict(boxstyle='round,pad=0.3', facecolor='#dc3545', edgecolor='white'))
+
+        # Resolved box
+        ax.text(9, 5, f'Resolved\n{resolved:,}', ha='center', va='center', fontsize=9,
+               color='white', bbox=dict(boxstyle='round,pad=0.3', facecolor='#28a745', edgecolor='white'))
+
+        # Reopened box (if any)
+        if reopened > 0:
+            ax.text(5, 2, f'Reopened\n{int(reopened):,}', ha='center', va='center', fontsize=9,
+                   color='white', bbox=dict(boxstyle='round,pad=0.3', facecolor='#ffc107', edgecolor='white'))
+
+        # Arrows
+        ax.annotate('', xy=(3.5, 5), xytext=(2, 5),
+                   arrowprops=dict(arrowstyle='->', color='#007bff', lw=2))
+        ax.annotate('', xy=(7.5, 5), xytext=(6, 5),
+                   arrowprops=dict(arrowstyle='->', color='#28a745', lw=2))
+
+        if reopened > 0:
+            ax.annotate('', xy=(5, 3.5), xytext=(7.5, 4.5),
+                       arrowprops=dict(arrowstyle='->', color='#ffc107', lw=1.5, connectionstyle='arc3,rad=0.3'))
+            ax.annotate('', xy=(5, 4.5), xytext=(5, 3),
+                       arrowprops=dict(arrowstyle='->', color='#dc3545', lw=1.5))
+
+        ax.axis('off')
+        ax.set_title('Vulnerability Lifecycle Flow', color=GUI_DARK_THEME['fg'], fontsize=10)
+        ax.text(0.5, -0.02, f'Resolution rate: {active_to_resolved:.1f}%',
+            transform=ax.transAxes, ha='center', va='top', fontsize=8, color='#28a745')
+
+    def _draw_treemap(self, df):
+        """Draw Plugin Family Treemap."""
+        ax = self.treemap_ax
+
+        # Check for plugin family or create from plugin_name
+        if 'plugin_family' not in df.columns and 'plugin_name' not in df.columns:
+            ax.text(0.5, 0.5, 'No plugin family data\navailable', ha='center', va='center',
+                   color=GUI_DARK_THEME['fg'], fontsize=9)
+            ax.set_title('Plugin Family Treemap', color=GUI_DARK_THEME['fg'], fontsize=10)
+            return
+
+        if 'plugin_family' in df.columns:
+            family_counts = df['plugin_family'].value_counts().head(12)
+        else:
+            # Group by first word of plugin name as proxy
+            df_copy = df.copy()
+            df_copy['family_proxy'] = df_copy['plugin_name'].apply(
+                lambda x: str(x).split()[0][:15] if pd.notna(x) else 'Unknown'
+            )
+            family_counts = df_copy['family_proxy'].value_counts().head(12)
+
+        if family_counts.empty:
+            ax.text(0.5, 0.5, 'No plugin data', ha='center', va='center', color=GUI_DARK_THEME['fg'])
+            ax.set_title('Plugin Family Treemap', color=GUI_DARK_THEME['fg'], fontsize=10)
+            return
+
+        # Draw treemap manually using rectangles
+        sizes = family_counts.values
+        labels = family_counts.index.tolist()
+        total = sum(sizes)
+
+        # Use squarify algorithm (simplified version)
+        try:
+            import squarify
+            normalized = squarify.normalize_sizes(sizes, 100, 100)
+            rects = squarify.squarify(normalized, 0, 0, 100, 100)
+
+            cmap = plt.cm.get_cmap('Set3')
+            for i, (rect, label, size) in enumerate(zip(rects, labels, sizes)):
+                color = cmap(i / len(rects))
+                ax.add_patch(plt.Rectangle((rect['x'], rect['y']), rect['dx'], rect['dy'],
+                            facecolor=color, edgecolor='white', linewidth=1))
+                # Add label if box is big enough
+                if rect['dx'] > 15 and rect['dy'] > 10:
+                    ax.text(rect['x'] + rect['dx']/2, rect['y'] + rect['dy']/2,
+                           f'{label[:12]}\n{size}', ha='center', va='center',
+                           fontsize=6, color='black', fontweight='bold')
+        except ImportError:
+            # Fallback: simple bar chart
+            colors = plt.cm.Set3(np.linspace(0, 1, len(family_counts)))
+            bars = ax.barh(range(len(family_counts)), family_counts.values, color=colors)
+            ax.set_yticks(range(len(family_counts)))
+            ax.set_yticklabels([str(l)[:15] for l in labels], fontsize=7)
+            ax.invert_yaxis()
+            for bar, val in zip(bars, family_counts.values):
+                ax.text(val + 1, bar.get_y() + bar.get_height()/2, f'{int(val)}',
+                       va='center', fontsize=6, color='white')
+
+        ax.set_xlim(0, 100)
+        ax.set_ylim(0, 100)
+        ax.axis('off')
+        ax.set_title('Plugin Family Treemap', color=GUI_DARK_THEME['fg'], fontsize=10)
+        ax.text(0.5, 1.02, 'Vulnerability distribution by plugin category',
+            transform=ax.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
+
+    def _draw_radar_chart(self, df):
+        """Draw Radar/Spider Chart for top subnets."""
+        ax = self.radar_ax
+
+        ip_col = 'ip_address' if 'ip_address' in df.columns else 'ip' if 'ip' in df.columns else None
+        if not ip_col or df.empty:
+            ax.text(0, 0, 'No subnet data', ha='center', va='center', color=GUI_DARK_THEME['fg'])
+            ax.set_title('Subnet Risk Profile', color=GUI_DARK_THEME['fg'], fontsize=10, pad=20)
+            return
+
+        df_copy = df.copy()
+        df_copy['subnet'] = df_copy[ip_col].apply(
+            lambda x: '.'.join(str(x).split('.')[:3]) + '.x' if pd.notna(x) and '.' in str(x) else 'Unknown'
+        )
+
+        # Get top 5 subnets
+        top_subnets = df_copy['subnet'].value_counts().head(5).index.tolist()
+        if not top_subnets:
+            ax.text(0, 0, 'No subnet data', ha='center', va='center', color=GUI_DARK_THEME['fg'])
+            ax.set_title('Subnet Risk Profile', color=GUI_DARK_THEME['fg'], fontsize=10, pad=20)
+            return
+
+        # Calculate metrics for each subnet
+        categories = ['Total Vulns', 'Critical', 'High', 'Avg Age', 'Hosts']
+        num_vars = len(categories)
+        angles = [n / float(num_vars) * 2 * np.pi for n in range(num_vars)]
+        angles += angles[:1]  # Complete the circle
+
+        colors = ['#dc3545', '#007bff', '#28a745', '#ffc107', '#17a2b8']
+
+        for i, subnet in enumerate(top_subnets[:3]):  # Limit to 3 for readability
+            subnet_df = df_copy[df_copy['subnet'] == subnet]
+
+            total = len(subnet_df)
+            critical = len(subnet_df[subnet_df.get('severity_text', '') == 'Critical']) if 'severity_text' in subnet_df.columns else 0
+            high = len(subnet_df[subnet_df.get('severity_text', '') == 'High']) if 'severity_text' in subnet_df.columns else 0
+            avg_age = subnet_df['days_open'].mean() if 'days_open' in subnet_df.columns else 0
+            hosts = subnet_df['hostname'].nunique() if 'hostname' in subnet_df.columns else 0
+
+            # Normalize values (0-100 scale)
+            max_total = df_copy.groupby('subnet').size().max()
+            max_age = df_copy['days_open'].max() if 'days_open' in df_copy.columns else 1
+            max_hosts = df_copy.groupby('subnet')['hostname'].nunique().max() if 'hostname' in df_copy.columns else 1
+
+            values = [
+                total / max_total * 100 if max_total > 0 else 0,
+                critical / max(total, 1) * 100,
+                high / max(total, 1) * 100,
+                min(avg_age / max_age * 100, 100) if max_age > 0 else 0,
+                hosts / max_hosts * 100 if max_hosts > 0 else 0
+            ]
+            values += values[:1]
+
+            ax.plot(angles, values, 'o-', linewidth=1.5, label=subnet[:12], color=colors[i % len(colors)])
+            ax.fill(angles, values, alpha=0.15, color=colors[i % len(colors)])
+
+        ax.set_xticks(angles[:-1])
+        ax.set_xticklabels(categories, fontsize=7, color=GUI_DARK_THEME['fg'])
+        ax.set_ylim(0, 100)
+        ax.legend(loc='upper right', bbox_to_anchor=(1.3, 1.0), fontsize=6)
+        ax.set_title('Subnet Risk Profile', color=GUI_DARK_THEME['fg'], fontsize=10, pad=20)
+
+    def _draw_velocity_gauge(self, df, hist_df):
+        """Draw Remediation Velocity Gauge."""
+        ax = self.gauge_ax
+
+        if df.empty or 'status' not in df.columns:
+            ax.text(0.5, 0.5, 'No remediation data', ha='center', va='center',
+                   color=GUI_DARK_THEME['fg'], fontsize=9)
+            ax.set_title('Remediation Velocity', color=GUI_DARK_THEME['fg'], fontsize=10)
+            return
+
+        # Calculate remediation rate
+        total = len(df)
+        resolved = len(df[df['status'] == 'Resolved'])
+        rate = resolved / total * 100 if total > 0 else 0
+
+        # Calculate velocity (resolutions per day from historical data)
+        velocity = 0
+        if not hist_df.empty and 'status' in hist_df.columns:
+            hist_copy = hist_df.copy()
+            hist_copy['scan_date'] = pd.to_datetime(hist_copy['scan_date'])
+            date_range = (hist_copy['scan_date'].max() - hist_copy['scan_date'].min()).days
+            if date_range > 0:
+                total_resolved = len(hist_df[hist_df.get('status', '') == 'Resolved'])
+                velocity = total_resolved / date_range
+
+        # Draw gauge
+        ax.set_xlim(-1.5, 1.5)
+        ax.set_ylim(-0.5, 1.2)
+
+        # Draw arc for gauge background
+        theta = np.linspace(0, np.pi, 100)
+        x = np.cos(theta)
+        y = np.sin(theta)
+
+        # Background arc (gray)
+        ax.plot(x, y, color='#3d3d3d', linewidth=20, solid_capstyle='round')
+
+        # Colored sections
+        for i, (start, end, color) in enumerate([
+            (0, 0.33, '#dc3545'),    # Red (0-33%)
+            (0.33, 0.66, '#ffc107'),  # Yellow (33-66%)
+            (0.66, 1.0, '#28a745')    # Green (66-100%)
+        ]):
+            theta_section = np.linspace(np.pi * (1 - end), np.pi * (1 - start), 50)
+            ax.plot(np.cos(theta_section), np.sin(theta_section), color=color, linewidth=18, solid_capstyle='butt')
+
+        # Needle
+        needle_angle = np.pi * (1 - rate / 100)
+        ax.annotate('', xy=(0.8 * np.cos(needle_angle), 0.8 * np.sin(needle_angle)), xytext=(0, 0),
+                   arrowprops=dict(arrowstyle='->', color='white', lw=3))
+
+        # Center circle
+        circle = plt.Circle((0, 0), 0.15, color='#2d2d2d', ec='white', linewidth=2)
+        ax.add_patch(circle)
+
+        # Labels
+        ax.text(0, 0.5, f'{rate:.1f}%', ha='center', va='center', fontsize=16,
+               color='white', fontweight='bold')
+        ax.text(0, 0.25, 'Remediation\nRate', ha='center', va='center', fontsize=8, color='#888888')
+
+        # Velocity indicator
+        velocity_color = '#28a745' if velocity > 1 else '#ffc107' if velocity > 0.5 else '#dc3545'
+        ax.text(0, -0.3, f'Velocity: {velocity:.1f}/day', ha='center', fontsize=9, color=velocity_color)
+
+        ax.axis('off')
+        ax.set_aspect('equal')
+        ax.set_title('Remediation Velocity', color=GUI_DARK_THEME['fg'], fontsize=10)
+
+    def _draw_sla_prediction(self, df):
+        """Draw SLA Breach Prediction Chart."""
+        ax = self.prediction_ax
+
+        if df.empty or 'status' not in df.columns:
+            ax.text(0.5, 0.5, 'No SLA data available', ha='center', va='center',
+                   color=GUI_DARK_THEME['fg'], fontsize=9)
+            ax.set_title('SLA Breach Prediction', color=GUI_DARK_THEME['fg'], fontsize=10)
+            return
+
+        active = df[df['status'] == 'Active'].copy() if 'status' in df.columns else df.copy()
+
+        if active.empty or 'days_open' not in active.columns:
+            ax.text(0.5, 0.5, 'No active findings with age data', ha='center', va='center',
+                   color=GUI_DARK_THEME['fg'], fontsize=9)
+            ax.set_title('SLA Breach Prediction', color=GUI_DARK_THEME['fg'], fontsize=10)
+            return
+
+        # Get SLA targets from settings or use defaults
+        sla_targets = {'Critical': 7, 'High': 30, 'Medium': 60, 'Low': 90}
+
+        # Calculate days until SLA breach for each finding
+        if 'severity_text' in active.columns:
+            active['sla_target'] = active['severity_text'].map(sla_targets).fillna(90)
+        else:
+            active['sla_target'] = 60  # Default
+
+        active['days_until_breach'] = active['sla_target'] - active['days_open']
+
+        # Group by days until breach
+        breach_timeline = []
+        for days in range(0, 31):  # Next 30 days
+            at_risk = len(active[active['days_until_breach'] <= days])
+            breach_timeline.append(at_risk)
+
+        # Current breaches
+        current_breaches = len(active[active['days_until_breach'] <= 0])
+
+        # Plot
+        x = range(31)
+        ax.fill_between(x, breach_timeline, alpha=0.3, color='#dc3545')
+        ax.plot(x, breach_timeline, color='#dc3545', linewidth=2, marker='o', markersize=3)
+
+        # Highlight critical zone
+        ax.axhline(y=current_breaches, color='#ffc107', linestyle='--', linewidth=1, alpha=0.7)
+        ax.axvline(x=7, color='#fd7e14', linestyle=':', linewidth=1, alpha=0.7)
+        ax.axvline(x=14, color='#ffc107', linestyle=':', linewidth=1, alpha=0.7)
+
+        ax.set_xlabel('Days from Now', color=GUI_DARK_THEME['fg'], fontsize=8)
+        ax.set_ylabel('Cumulative At-Risk', color=GUI_DARK_THEME['fg'], fontsize=8)
+        ax.set_title('SLA Breach Prediction', color=GUI_DARK_THEME['fg'], fontsize=10)
+        ax.text(0.5, 1.02, f'Current breaches: {current_breaches} | 7-day forecast: {breach_timeline[7]}',
+            transform=ax.transAxes, ha='center', va='bottom', fontsize=7, color='#dc3545')
+
+        ax.tick_params(colors=GUI_DARK_THEME['fg'], labelsize=7)
+
+    def _draw_period_comparison(self, hist_df):
+        """Draw Period Comparison Chart."""
+        ax = self.comparison_ax
+
+        if hist_df.empty or 'scan_date' not in hist_df.columns:
+            ax.text(0.5, 0.5, 'Insufficient historical data\nfor comparison', ha='center', va='center',
+                   color=GUI_DARK_THEME['fg'], fontsize=9)
+            ax.set_title('Period Comparison', color=GUI_DARK_THEME['fg'], fontsize=10)
+            return
+
+        hist_copy = hist_df.copy()
+        hist_copy['scan_date'] = pd.to_datetime(hist_copy['scan_date'])
+
+        # Get date range
+        max_date = hist_copy['scan_date'].max()
+        min_date = hist_copy['scan_date'].min()
+        total_days = (max_date - min_date).days
+
+        if total_days < 14:
+            ax.text(0.5, 0.5, 'Need at least 2 weeks\nof data for comparison', ha='center', va='center',
+                   color=GUI_DARK_THEME['fg'], fontsize=9)
+            ax.set_title('Period Comparison', color=GUI_DARK_THEME['fg'], fontsize=10)
+            return
+
+        # Split into two periods
+        mid_date = min_date + timedelta(days=total_days // 2)
+
+        period1 = hist_copy[hist_copy['scan_date'] <= mid_date]
+        period2 = hist_copy[hist_copy['scan_date'] > mid_date]
+
+        # Calculate metrics for each period
+        metrics = ['Total', 'Critical', 'High', 'Medium', 'Avg Age']
+
+        p1_values = [
+            len(period1),
+            len(period1[period1.get('severity_text', '') == 'Critical']) if 'severity_text' in period1.columns else 0,
+            len(period1[period1.get('severity_text', '') == 'High']) if 'severity_text' in period1.columns else 0,
+            len(period1[period1.get('severity_text', '') == 'Medium']) if 'severity_text' in period1.columns else 0,
+            period1['days_open'].mean() if 'days_open' in period1.columns and not period1.empty else 0
+        ]
+
+        p2_values = [
+            len(period2),
+            len(period2[period2.get('severity_text', '') == 'Critical']) if 'severity_text' in period2.columns else 0,
+            len(period2[period2.get('severity_text', '') == 'High']) if 'severity_text' in period2.columns else 0,
+            len(period2[period2.get('severity_text', '') == 'Medium']) if 'severity_text' in period2.columns else 0,
+            period2['days_open'].mean() if 'days_open' in period2.columns and not period2.empty else 0
+        ]
+
+        x = np.arange(len(metrics))
+        width = 0.35
+
+        bars1 = ax.bar(x - width/2, p1_values, width, label='Earlier Period', color='#6c757d', alpha=0.8)
+        bars2 = ax.bar(x + width/2, p2_values, width, label='Recent Period', color='#007bff', alpha=0.8)
+
+        # Add change indicators
+        for i, (v1, v2) in enumerate(zip(p1_values, p2_values)):
+            if v1 > 0:
+                change = ((v2 - v1) / v1) * 100
+                color = '#28a745' if change < 0 else '#dc3545'  # Green if decrease (good)
+                arrow = '↓' if change < 0 else '↑'
+                ax.text(i, max(v1, v2) + max(p1_values + p2_values) * 0.05,
+                       f'{arrow}{abs(change):.0f}%', ha='center', fontsize=7, color=color)
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(metrics, fontsize=7)
+        ax.legend(fontsize=7, loc='upper right')
+        ax.set_title('Period Comparison', color=GUI_DARK_THEME['fg'], fontsize=10)
+        ax.text(0.5, 1.02, 'Earlier vs Recent period metrics comparison',
+            transform=ax.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
+        ax.tick_params(colors=GUI_DARK_THEME['fg'], labelsize=7)
+
     def _update_all_visualizations(self):
         """Update all visualization tabs."""
         self._update_trends_chart()
@@ -5391,6 +6064,7 @@ class NessusHistoryTrackerApp:
         self._update_sla_charts()
         self._update_metrics_charts()
         self._update_host_tracking_charts()
+        self._update_advanced_charts()
 
     # Export methods
     def _export_excel(self):
