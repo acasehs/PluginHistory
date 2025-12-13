@@ -87,6 +87,11 @@ class NessusHistoryTrackerApp:
         self.filter_host_list: List[str] = []  # Specific hostnames selected
         self.filter_list_manager = FilterListManager()  # Saved filter lists
 
+        # Lifecycle navigation state
+        self.lifecycle_page_size = tk.IntVar(value=100)
+        self.lifecycle_current_start = 0  # Starting index for pagination
+        self.lifecycle_jump_to = tk.StringVar()
+
         # Build UI
         self._setup_styles()
         self._build_ui()
@@ -391,11 +396,43 @@ class NessusHistoryTrackerApp:
         self.notebook.add(lifecycle_frame, text="Lifecycle")
         self.lifecycle_frame = lifecycle_frame
 
-        # Info label
-        info_frame = ttk.Frame(lifecycle_frame)
-        info_frame.pack(fill=tk.X, padx=5, pady=5)
-        self.lifecycle_count_label = ttk.Label(info_frame, text="Showing 0 findings")
+        # Navigation controls frame
+        nav_frame = ttk.Frame(lifecycle_frame)
+        nav_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        # Left side: count label
+        self.lifecycle_count_label = ttk.Label(nav_frame, text="Showing 0 findings")
         self.lifecycle_count_label.pack(side=tk.LEFT)
+
+        # Right side: navigation controls
+        nav_controls = ttk.Frame(nav_frame)
+        nav_controls.pack(side=tk.RIGHT)
+
+        # Page size dropdown
+        ttk.Label(nav_controls, text="Show:").pack(side=tk.LEFT, padx=(0, 2))
+        page_sizes = [50, 100, 250, 500, 1000, 0]  # 0 = All
+        page_combo = ttk.Combobox(nav_controls, textvariable=self.lifecycle_page_size,
+                                   values=page_sizes, width=5, state="readonly")
+        page_combo.pack(side=tk.LEFT, padx=(0, 10))
+        page_combo.bind("<<ComboboxSelected>>", lambda e: self._lifecycle_page_changed())
+
+        # Navigation buttons: |< < > >|
+        ttk.Button(nav_controls, text="|<", width=2,
+                   command=self._lifecycle_first_page).pack(side=tk.LEFT, padx=1)
+        ttk.Button(nav_controls, text="<", width=2,
+                   command=self._lifecycle_prev_page).pack(side=tk.LEFT, padx=1)
+        ttk.Button(nav_controls, text=">", width=2,
+                   command=self._lifecycle_next_page).pack(side=tk.LEFT, padx=1)
+        ttk.Button(nav_controls, text=">|", width=2,
+                   command=self._lifecycle_last_page).pack(side=tk.LEFT, padx=(1, 10))
+
+        # Jump to row
+        ttk.Label(nav_controls, text="Jump to:").pack(side=tk.LEFT, padx=(0, 2))
+        jump_entry = ttk.Entry(nav_controls, textvariable=self.lifecycle_jump_to, width=6)
+        jump_entry.pack(side=tk.LEFT, padx=(0, 2))
+        jump_entry.bind("<Return>", lambda e: self._lifecycle_jump())
+        ttk.Button(nav_controls, text="Go", width=3,
+                   command=self._lifecycle_jump).pack(side=tk.LEFT)
 
         # Treeview with scrollbars
         tree_frame = ttk.Frame(lifecycle_frame)
@@ -1529,7 +1566,7 @@ class NessusHistoryTrackerApp:
                 self.host_type_labels[htype].config(text=str(count))
 
     def _update_lifecycle_tree(self):
-        """Update lifecycle treeview with filtered data."""
+        """Update lifecycle treeview with filtered data and pagination."""
         # Clear existing items
         for item in self.lifecycle_tree.get_children():
             self.lifecycle_tree.delete(item)
@@ -1540,14 +1577,30 @@ class NessusHistoryTrackerApp:
             self.lifecycle_count_label.config(text="Showing 0 findings")
             return
 
-        # Limit display to prevent UI freeze (show first 1000)
-        display_df = df.head(1000)
+        total = len(df)
+        page_size = self.lifecycle_page_size.get()
+        start = self.lifecycle_current_start
+
+        # Ensure start is within bounds
+        if start >= total:
+            start = max(0, total - page_size) if page_size > 0 else 0
+            self.lifecycle_current_start = start
+
+        # Get page of data (0 = show all)
+        if page_size == 0:
+            display_df = df
+            end = total
+        else:
+            end = min(start + page_size, total)
+            display_df = df.iloc[start:end]
 
         for _, row in display_df.iterrows():
+            # Use plugin_name field (from lifecycle analysis), fallback to name
+            plugin_name = row.get('plugin_name', row.get('name', ''))
             values = (
                 row.get('hostname', ''),
                 row.get('plugin_id', ''),
-                str(row.get('name', ''))[:50],  # Truncate long names
+                str(plugin_name)[:50] if plugin_name else '',  # Truncate long names
                 row.get('severity_text', row.get('severity', '')),
                 row.get('status', ''),
                 str(row.get('first_seen', ''))[:10],
@@ -1556,9 +1609,11 @@ class NessusHistoryTrackerApp:
             )
             self.lifecycle_tree.insert('', tk.END, values=values)
 
-        total = len(df)
-        shown = len(display_df)
-        label_text = f"Showing {shown} of {total} findings" if shown < total else f"Showing {total} findings"
+        # Update count label with range info
+        if page_size == 0:
+            label_text = f"Showing all {total} findings"
+        else:
+            label_text = f"Showing {start + 1}-{end} of {total} findings"
         self.lifecycle_count_label.config(text=label_text)
 
     def _update_host_tree(self):
@@ -1615,6 +1670,59 @@ class NessusHistoryTrackerApp:
             items.sort(key=lambda t: t[0])
         for index, (val, k) in enumerate(items):
             self.lifecycle_tree.move(k, '', index)
+
+    def _lifecycle_page_changed(self):
+        """Handle page size change."""
+        self.lifecycle_current_start = 0  # Reset to beginning on page size change
+        self._update_lifecycle_tree()
+
+    def _lifecycle_first_page(self):
+        """Navigate to first page."""
+        self.lifecycle_current_start = 0
+        self._update_lifecycle_tree()
+
+    def _lifecycle_prev_page(self):
+        """Navigate to previous page."""
+        page_size = self.lifecycle_page_size.get()
+        if page_size > 0:
+            self.lifecycle_current_start = max(0, self.lifecycle_current_start - page_size)
+            self._update_lifecycle_tree()
+
+    def _lifecycle_next_page(self):
+        """Navigate to next page."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        total = len(df)
+        page_size = self.lifecycle_page_size.get()
+        if page_size > 0:
+            new_start = self.lifecycle_current_start + page_size
+            if new_start < total:
+                self.lifecycle_current_start = new_start
+                self._update_lifecycle_tree()
+
+    def _lifecycle_last_page(self):
+        """Navigate to last page."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        total = len(df)
+        page_size = self.lifecycle_page_size.get()
+        if page_size > 0:
+            self.lifecycle_current_start = max(0, total - page_size)
+        else:
+            self.lifecycle_current_start = 0
+        self._update_lifecycle_tree()
+
+    def _lifecycle_jump(self):
+        """Jump to specific row number."""
+        try:
+            target = int(self.lifecycle_jump_to.get()) - 1  # Convert to 0-based index
+            df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+            total = len(df)
+            if 0 <= target < total:
+                self.lifecycle_current_start = target
+                self._update_lifecycle_tree()
+            else:
+                messagebox.showwarning("Invalid Row", f"Row number must be between 1 and {total}")
+        except ValueError:
+            messagebox.showwarning("Invalid Input", "Please enter a valid row number")
 
     def _sort_host_tree(self, col):
         """Sort host treeview by column."""
