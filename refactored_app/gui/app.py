@@ -39,6 +39,7 @@ from ..filters.custom_lists import FilterListManager, FilterList
 from ..export.sqlite_export import export_to_sqlite
 from ..export.excel_export import export_to_excel
 from ..export.json_export import export_to_json
+from ..settings import SettingsManager, UserSettings
 
 
 class NessusHistoryTrackerApp:
@@ -91,6 +92,10 @@ class NessusHistoryTrackerApp:
         self.lifecycle_page_size = tk.IntVar(value=100)
         self.lifecycle_current_start = 0  # Starting index for pagination
         self.lifecycle_jump_to = tk.StringVar()
+
+        # Settings manager
+        self.settings_manager = SettingsManager()
+        self._apply_settings_to_ui()
 
         # Build UI
         self._setup_styles()
@@ -289,10 +294,11 @@ class NessusHistoryTrackerApp:
         ttk.Button(row2, text="Export Excel", command=self._export_excel).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
         ttk.Button(row2, text="Save SQLite", command=self._export_sqlite).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
 
-        # Row 3: Save JSON
+        # Row 3: Save JSON + Settings
         row3 = ttk.Frame(action_frame)
         row3.pack(fill=tk.X, pady=2)
         ttk.Button(row3, text="Save JSON", command=self._export_json).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+        ttk.Button(row3, text="Settings", command=self._show_settings_dialog).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
 
     def _build_status_tab(self):
         """Build status/log tab."""
@@ -2561,6 +2567,208 @@ class NessusHistoryTrackerApp:
             if success:
                 self._log(f"Exported to: {filepath}")
                 messagebox.showinfo("Success", f"Exported to:\n{filepath}")
+
+    def _apply_settings_to_ui(self):
+        """Apply loaded settings to UI elements."""
+        settings = self.settings_manager.settings
+
+        # Apply default filter settings
+        self.filter_include_info.set(settings.default_include_info)
+
+        # Apply page size
+        self.lifecycle_page_size.set(settings.default_page_size)
+
+        # Load recent files if they exist
+        if settings.recent_plugins_db and os.path.exists(settings.recent_plugins_db):
+            self.plugins_db_path = settings.recent_plugins_db
+        if settings.recent_opdir_file and os.path.exists(settings.recent_opdir_file):
+            self.opdir_file_path = settings.recent_opdir_file
+        if settings.recent_sqlite_db and os.path.exists(settings.recent_sqlite_db):
+            self.existing_db_path = settings.recent_sqlite_db
+
+    def _show_settings_dialog(self):
+        """Show settings configuration dialog."""
+        settings = self.settings_manager.settings
+
+        dialog = tk.Toplevel(self.window)
+        dialog.title("Settings")
+        dialog.geometry("500x600")
+        dialog.configure(bg=GUI_DARK_THEME['bg'])
+        dialog.transient(self.window)
+        dialog.grab_set()
+
+        # Create notebook for tabbed settings
+        notebook = ttk.Notebook(dialog)
+        notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # === SLA Tab ===
+        sla_frame = ttk.Frame(notebook, padding=10)
+        notebook.add(sla_frame, text="SLA Targets")
+
+        ttk.Label(sla_frame, text="Days to remediate by severity:").pack(anchor=tk.W, pady=(0, 10))
+
+        sla_vars = {}
+        for severity, default in [('Critical', settings.sla_critical),
+                                   ('High', settings.sla_high),
+                                   ('Medium', settings.sla_medium),
+                                   ('Low', settings.sla_low)]:
+            row = ttk.Frame(sla_frame)
+            row.pack(fill=tk.X, pady=2)
+            ttk.Label(row, text=f"{severity}:", width=12).pack(side=tk.LEFT)
+            var = tk.StringVar(value=str(default))
+            sla_vars[severity] = var
+            ttk.Entry(row, textvariable=var, width=10).pack(side=tk.LEFT)
+            ttk.Label(row, text="days").pack(side=tk.LEFT, padx=5)
+
+        # Info has no SLA checkbox
+        info_row = ttk.Frame(sla_frame)
+        info_row.pack(fill=tk.X, pady=2)
+        ttk.Label(info_row, text="Info:", width=12).pack(side=tk.LEFT)
+        ttk.Label(info_row, text="No SLA (informational)").pack(side=tk.LEFT)
+
+        # Warning threshold
+        warn_row = ttk.Frame(sla_frame)
+        warn_row.pack(fill=tk.X, pady=(15, 2))
+        ttk.Label(warn_row, text="Warning threshold:").pack(side=tk.LEFT)
+        warn_var = tk.StringVar(value=str(int(settings.sla_warning_threshold * 100)))
+        ttk.Entry(warn_row, textvariable=warn_var, width=5).pack(side=tk.LEFT, padx=5)
+        ttk.Label(warn_row, text="% remaining").pack(side=tk.LEFT)
+
+        # === Colors Tab ===
+        colors_frame = ttk.Frame(notebook, padding=10)
+        notebook.add(colors_frame, text="Colors")
+
+        ttk.Label(colors_frame, text="Severity colors (hex values):").pack(anchor=tk.W, pady=(0, 10))
+
+        color_vars = {}
+        for severity, color_attr in [('Critical', 'color_critical'),
+                                      ('High', 'color_high'),
+                                      ('Medium', 'color_medium'),
+                                      ('Low', 'color_low'),
+                                      ('Info', 'color_info')]:
+            row = ttk.Frame(colors_frame)
+            row.pack(fill=tk.X, pady=2)
+            ttk.Label(row, text=f"{severity}:", width=12).pack(side=tk.LEFT)
+            var = tk.StringVar(value=getattr(settings, color_attr))
+            color_vars[severity] = var
+            entry = ttk.Entry(row, textvariable=var, width=10)
+            entry.pack(side=tk.LEFT)
+            # Color preview label
+            preview = tk.Label(row, text="  ", bg=getattr(settings, color_attr), width=3)
+            preview.pack(side=tk.LEFT, padx=5)
+            # Update preview on change
+            var.trace('w', lambda *args, v=var, p=preview: self._update_color_preview(v, p))
+
+        # === Defaults Tab ===
+        defaults_frame = ttk.Frame(notebook, padding=10)
+        notebook.add(defaults_frame, text="Defaults")
+
+        ttk.Label(defaults_frame, text="Default filter settings:").pack(anchor=tk.W, pady=(0, 10))
+
+        # Include Info default
+        include_info_var = tk.BooleanVar(value=settings.default_include_info)
+        ttk.Checkbutton(defaults_frame, text="Include Info severity by default",
+                        variable=include_info_var).pack(anchor=tk.W, pady=2)
+
+        # Show data labels
+        show_labels_var = tk.BooleanVar(value=settings.show_data_labels)
+        ttk.Checkbutton(defaults_frame, text="Show data labels on charts",
+                        variable=show_labels_var).pack(anchor=tk.W, pady=2)
+
+        # Default page size
+        page_row = ttk.Frame(defaults_frame)
+        page_row.pack(fill=tk.X, pady=(15, 2))
+        ttk.Label(page_row, text="Default page size:").pack(side=tk.LEFT)
+        page_var = tk.StringVar(value=str(settings.default_page_size))
+        ttk.Combobox(page_row, textvariable=page_var,
+                     values=['50', '100', '250', '500', '1000'],
+                     width=8, state="readonly").pack(side=tk.LEFT, padx=5)
+
+        # === Recent Files Tab ===
+        recent_frame = ttk.Frame(notebook, padding=10)
+        notebook.add(recent_frame, text="Recent Files")
+
+        ttk.Label(recent_frame, text="Recently used files (auto-loaded on startup):").pack(anchor=tk.W, pady=(0, 10))
+
+        for label, attr in [('Plugins DB:', 'recent_plugins_db'),
+                            ('OPDIR File:', 'recent_opdir_file'),
+                            ('SQLite DB:', 'recent_sqlite_db')]:
+            row = ttk.Frame(recent_frame)
+            row.pack(fill=tk.X, pady=2)
+            ttk.Label(row, text=label, width=12).pack(side=tk.LEFT)
+            path = getattr(settings, attr) or "(none)"
+            ttk.Label(row, text=path[:40] + "..." if len(path) > 40 else path,
+                      foreground="gray").pack(side=tk.LEFT)
+
+        ttk.Button(recent_frame, text="Clear Recent Files",
+                   command=lambda: self._clear_recent_files(dialog)).pack(anchor=tk.W, pady=15)
+
+        # === Action Buttons ===
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(fill=tk.X, padx=10, pady=10)
+
+        def save_settings():
+            try:
+                # Update SLA settings
+                settings.sla_critical = int(sla_vars['Critical'].get())
+                settings.sla_high = int(sla_vars['High'].get())
+                settings.sla_medium = int(sla_vars['Medium'].get())
+                settings.sla_low = int(sla_vars['Low'].get())
+                settings.sla_warning_threshold = int(warn_var.get()) / 100.0
+
+                # Update colors
+                settings.color_critical = color_vars['Critical'].get()
+                settings.color_high = color_vars['High'].get()
+                settings.color_medium = color_vars['Medium'].get()
+                settings.color_low = color_vars['Low'].get()
+                settings.color_info = color_vars['Info'].get()
+
+                # Update defaults
+                settings.default_include_info = include_info_var.get()
+                settings.show_data_labels = show_labels_var.get()
+                settings.default_page_size = int(page_var.get())
+
+                # Save to file
+                self.settings_manager.save()
+                self._apply_settings_to_ui()
+                self._log("Settings saved")
+                dialog.destroy()
+
+            except ValueError as e:
+                messagebox.showerror("Invalid Input", f"Please enter valid numbers: {e}")
+
+        ttk.Button(btn_frame, text="Save", command=save_settings, width=10).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=dialog.destroy, width=10).pack(side=tk.RIGHT)
+        ttk.Button(btn_frame, text="Reset Defaults",
+                   command=lambda: self._reset_settings_to_defaults(dialog)).pack(side=tk.LEFT)
+
+    def _update_color_preview(self, var: tk.StringVar, preview: tk.Label):
+        """Update color preview label."""
+        try:
+            color = var.get()
+            if color.startswith('#') and len(color) == 7:
+                preview.configure(bg=color)
+        except:
+            pass
+
+    def _clear_recent_files(self, dialog: tk.Toplevel):
+        """Clear recent files from settings."""
+        self.settings_manager.settings.recent_plugins_db = ''
+        self.settings_manager.settings.recent_opdir_file = ''
+        self.settings_manager.settings.recent_sqlite_db = ''
+        self.settings_manager.save()
+        self._log("Cleared recent files")
+        dialog.destroy()
+        self._show_settings_dialog()  # Refresh dialog
+
+    def _reset_settings_to_defaults(self, dialog: tk.Toplevel):
+        """Reset settings to defaults."""
+        if messagebox.askyesno("Reset Settings", "Reset all settings to defaults?"):
+            self.settings_manager.reset_to_defaults()
+            self._apply_settings_to_ui()
+            self._log("Settings reset to defaults")
+            dialog.destroy()
+            self._show_settings_dialog()  # Refresh dialog
 
     def _log(self, message: str):
         """Add message to status log."""
