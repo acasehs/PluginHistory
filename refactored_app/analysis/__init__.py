@@ -25,6 +25,17 @@ from .opdir_compliance import (
     calculate_opdir_compliance_status
 )
 
+from .advanced_metrics import (
+    get_all_advanced_metrics,
+    calculate_reopen_rate,
+    calculate_coverage_metrics,
+    calculate_mttd,
+    calculate_risk_reduction_trend,
+    calculate_remediation_rate,
+    calculate_sla_breach_tracking,
+    calculate_normalized_metrics
+)
+
 __all__ = [
     'analyze_finding_lifecycle',
     'identify_reappearances',
@@ -36,5 +47,13 @@ __all__ = [
     'calculate_host_churn',
     'load_opdir_mapping',
     'enrich_with_opdir',
-    'calculate_opdir_compliance_status'
+    'calculate_opdir_compliance_status',
+    'get_all_advanced_metrics',
+    'calculate_reopen_rate',
+    'calculate_coverage_metrics',
+    'calculate_mttd',
+    'calculate_risk_reduction_trend',
+    'calculate_remediation_rate',
+    'calculate_sla_breach_tracking',
+    'calculate_normalized_metrics'
 ]

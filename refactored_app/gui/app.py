@@ -33,6 +33,11 @@ from ..analysis.lifecycle import analyze_finding_lifecycle
 from ..analysis.host_presence import create_host_presence_analysis
 from ..analysis.scan_changes import analyze_scan_changes
 from ..analysis.opdir_compliance import load_opdir_mapping, enrich_with_opdir
+from ..analysis.advanced_metrics import (
+    get_all_advanced_metrics, calculate_reopen_rate, calculate_coverage_metrics,
+    calculate_remediation_rate, calculate_sla_breach_tracking, calculate_normalized_metrics,
+    calculate_risk_reduction_trend
+)
 from ..filters.filter_engine import FilterEngine, apply_filters
 from ..filters.hostname_parser import parse_hostname, HostType
 from ..filters.custom_lists import FilterListManager, FilterList
@@ -167,6 +172,7 @@ class NessusHistoryTrackerApp:
         self._build_plugin_tab()
         self._build_priority_tab()
         self._build_sla_tab()
+        self._build_metrics_tab()
         self._build_host_tracking_tab()
 
     def _build_file_selection(self, parent):
@@ -836,6 +842,69 @@ class NessusHistoryTrackerApp:
             self.sla_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
         else:
             ttk.Label(sla_frame, text="Install matplotlib for visualizations").pack(pady=50)
+
+    def _build_metrics_tab(self):
+        """Build advanced metrics visualization tab with industry best practices."""
+        metrics_frame = ttk.Frame(self.notebook)
+        self.notebook.add(metrics_frame, text="Metrics")
+        self.metrics_frame = metrics_frame
+
+        # Summary stats panel at top
+        summary_frame = ttk.LabelFrame(metrics_frame, text="Key Performance Indicators", padding=5)
+        summary_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        # KPI labels - will be updated with real data
+        kpi_row = ttk.Frame(summary_frame)
+        kpi_row.pack(fill=tk.X)
+
+        self.kpi_labels = {}
+        kpi_defs = [
+            ('reopen_rate', 'Reopen Rate', '#ffc107'),
+            ('remediation_rate', 'Remediation Rate', '#28a745'),
+            ('breach_rate', 'SLA Breach Rate', '#dc3545'),
+            ('vulns_per_host', 'Vulns/Host', '#007bff'),
+            ('coverage', 'Scan Coverage', '#17a2b8')
+        ]
+
+        for i, (key, label, color) in enumerate(kpi_defs):
+            frame = ttk.Frame(kpi_row)
+            frame.grid(row=0, column=i, padx=10, pady=2)
+            ttk.Label(frame, text=label, font=('Arial', 8)).pack()
+            self.kpi_labels[key] = ttk.Label(frame, text="--", font=('Arial', 14, 'bold'), foreground=color)
+            self.kpi_labels[key].pack()
+
+        if HAS_MATPLOTLIB:
+            chart_frame = ttk.Frame(metrics_frame)
+            chart_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+            self.metrics_fig = Figure(figsize=(10, 8), dpi=100, facecolor=GUI_DARK_THEME['bg'])
+
+            # Remediation Rate by Severity
+            self.metrics_ax1 = self.metrics_fig.add_subplot(221)
+            self.metrics_ax1.set_title('Remediation Rate by Severity', color=GUI_DARK_THEME['fg'])
+
+            # Risk Trend Over Time
+            self.metrics_ax2 = self.metrics_fig.add_subplot(222)
+            self.metrics_ax2.set_title('Risk Score Trend', color=GUI_DARK_THEME['fg'])
+
+            # SLA Breach by Severity
+            self.metrics_ax3 = self.metrics_fig.add_subplot(223)
+            self.metrics_ax3.set_title('SLA Status by Severity', color=GUI_DARK_THEME['fg'])
+
+            # Normalized Metrics Trend (vulns per host)
+            self.metrics_ax4 = self.metrics_fig.add_subplot(224)
+            self.metrics_ax4.set_title('Vulnerabilities per Host Trend', color=GUI_DARK_THEME['fg'])
+
+            for ax in [self.metrics_ax1, self.metrics_ax2, self.metrics_ax3, self.metrics_ax4]:
+                ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
+                ax.tick_params(colors=GUI_DARK_THEME['fg'])
+                for spine in ax.spines.values():
+                    spine.set_color(GUI_DARK_THEME['fg'])
+
+            self.metrics_canvas = FigureCanvasTkAgg(self.metrics_fig, master=chart_frame)
+            self.metrics_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        else:
+            ttk.Label(metrics_frame, text="Install matplotlib for visualizations").pack(pady=50)
 
     def _build_host_tracking_tab(self):
         """Build host tracking visualization tab."""
@@ -2485,6 +2554,131 @@ class NessusHistoryTrackerApp:
         self.host_tracking_fig.tight_layout()
         self.host_tracking_canvas.draw()
 
+    def _update_metrics_charts(self):
+        """Update advanced metrics visualizations with industry KPIs."""
+        if not HAS_MATPLOTLIB or not hasattr(self, 'metrics_ax1'):
+            return
+
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        hist_df = self.historical_df
+
+        for ax in [self.metrics_ax1, self.metrics_ax2, self.metrics_ax3, self.metrics_ax4]:
+            ax.clear()
+            ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
+
+        if df.empty:
+            # Reset KPI labels
+            for key in self.kpi_labels:
+                self.kpi_labels[key].config(text="--")
+            self.metrics_canvas.draw()
+            return
+
+        # Get SLA targets from settings
+        sla_targets = self.settings_manager.settings.get_sla_targets()
+        sla_targets = {k: v for k, v in sla_targets.items() if v is not None}
+
+        # Calculate metrics
+        reopen_metrics = calculate_reopen_rate(df)
+        remediation_metrics = calculate_remediation_rate(df, hist_df)
+        sla_metrics = calculate_sla_breach_tracking(df, sla_targets)
+        normalized_metrics = calculate_normalized_metrics(hist_df, df)
+        risk_trend = calculate_risk_reduction_trend(hist_df)
+
+        # Update KPI labels
+        self.kpi_labels['reopen_rate'].config(text=f"{reopen_metrics['reopen_rate_pct']}%")
+        self.kpi_labels['remediation_rate'].config(text=f"{remediation_metrics['remediation_rate_pct']}%")
+        self.kpi_labels['breach_rate'].config(text=f"{sla_metrics['breach_rate_pct']}%")
+        self.kpi_labels['vulns_per_host'].config(text=f"{normalized_metrics['vulns_per_host']}")
+        # Coverage defaults to 100% when no expected hosts list
+        coverage_pct = calculate_coverage_metrics(hist_df).get('coverage_pct', 100.0)
+        self.kpi_labels['coverage'].config(text=f"{coverage_pct}%")
+
+        # Chart 1: Remediation Rate by Severity (stacked bar)
+        by_sev = remediation_metrics.get('by_severity', {})
+        if by_sev:
+            severities = ['Critical', 'High', 'Medium', 'Low']
+            discovered = [by_sev.get(s, {}).get('discovered', 0) for s in severities]
+            remediated = [by_sev.get(s, {}).get('remediated', 0) for s in severities]
+            active = [by_sev.get(s, {}).get('active', 0) for s in severities]
+
+            x = range(len(severities))
+            width = 0.35
+            self.metrics_ax1.bar([i - width/2 for i in x], remediated, width, label='Remediated', color='#28a745')
+            self.metrics_ax1.bar([i + width/2 for i in x], active, width, label='Active', color='#dc3545')
+            self.metrics_ax1.set_xticks(x)
+            self.metrics_ax1.set_xticklabels(severities, fontsize=8)
+            self.metrics_ax1.legend(loc='upper right', fontsize=7)
+        self.metrics_ax1.set_title('Remediation Status by Severity', color=GUI_DARK_THEME['fg'])
+        self.metrics_ax1.set_ylabel('Count', color=GUI_DARK_THEME['fg'])
+
+        # Chart 2: Risk Trend Over Time (line chart)
+        if not risk_trend.empty and len(risk_trend) > 1:
+            dates = risk_trend['scan_date']
+            risk_scores = risk_trend['total_risk_score']
+            self.metrics_ax2.plot(range(len(dates)), risk_scores, marker='o', color='#007bff', linewidth=2)
+            self.metrics_ax2.fill_between(range(len(dates)), risk_scores, alpha=0.3, color='#007bff')
+
+            # Show only few date labels to avoid crowding
+            if len(dates) > 6:
+                step = len(dates) // 6
+                tick_positions = list(range(0, len(dates), step))
+                self.metrics_ax2.set_xticks(tick_positions)
+                tick_labels = [dates.iloc[i].strftime('%m/%d') if hasattr(dates.iloc[i], 'strftime') else str(dates.iloc[i])[:5] for i in tick_positions]
+                self.metrics_ax2.set_xticklabels(tick_labels, fontsize=7, rotation=45)
+            else:
+                self.metrics_ax2.set_xticks(range(len(dates)))
+                tick_labels = [d.strftime('%m/%d') if hasattr(d, 'strftime') else str(d)[:5] for d in dates]
+                self.metrics_ax2.set_xticklabels(tick_labels, fontsize=7, rotation=45)
+        self.metrics_ax2.set_title('Risk Score Trend', color=GUI_DARK_THEME['fg'])
+        self.metrics_ax2.set_ylabel('Risk Score', color=GUI_DARK_THEME['fg'])
+
+        # Chart 3: SLA Status by Severity (stacked bar - breached/at_risk/on_track)
+        sla_by_sev = sla_metrics.get('by_severity', {})
+        if sla_by_sev:
+            severities = ['Critical', 'High', 'Medium', 'Low']
+            breached = [sla_by_sev.get(s, {}).get('breached', 0) for s in severities]
+            at_risk = [sla_by_sev.get(s, {}).get('at_risk', 0) for s in severities]
+            on_track = [sla_by_sev.get(s, {}).get('on_track', 0) for s in severities]
+
+            x = range(len(severities))
+            self.metrics_ax3.bar(x, breached, label='Breached', color='#dc3545')
+            self.metrics_ax3.bar(x, at_risk, bottom=breached, label='At Risk', color='#ffc107')
+            bottom_track = [b + r for b, r in zip(breached, at_risk)]
+            self.metrics_ax3.bar(x, on_track, bottom=bottom_track, label='On Track', color='#28a745')
+            self.metrics_ax3.set_xticks(x)
+            self.metrics_ax3.set_xticklabels(severities, fontsize=8)
+            self.metrics_ax3.legend(loc='upper right', fontsize=7)
+        self.metrics_ax3.set_title('SLA Status by Severity', color=GUI_DARK_THEME['fg'])
+        self.metrics_ax3.set_ylabel('Count', color=GUI_DARK_THEME['fg'])
+
+        # Chart 4: Vulns per Host Trend (line chart)
+        norm_trend = normalized_metrics.get('trend', [])
+        if norm_trend and len(norm_trend) > 1:
+            dates = [t['scan_date'] for t in norm_trend]
+            vpH = [t['vulns_per_host'] for t in norm_trend]
+            self.metrics_ax4.plot(range(len(dates)), vpH, marker='s', color='#17a2b8', linewidth=2)
+
+            # Show only few date labels
+            if len(dates) > 6:
+                step = len(dates) // 6
+                tick_positions = list(range(0, len(dates), step))
+                self.metrics_ax4.set_xticks(tick_positions)
+                tick_labels = [dates[i][:5] for i in tick_positions]
+                self.metrics_ax4.set_xticklabels(tick_labels, fontsize=7, rotation=45)
+            else:
+                self.metrics_ax4.set_xticks(range(len(dates)))
+                self.metrics_ax4.set_xticklabels([d[:5] for d in dates], fontsize=7, rotation=45)
+        self.metrics_ax4.set_title('Vulnerabilities per Host Trend', color=GUI_DARK_THEME['fg'])
+        self.metrics_ax4.set_ylabel('Vulns/Host', color=GUI_DARK_THEME['fg'])
+
+        for ax in [self.metrics_ax1, self.metrics_ax2, self.metrics_ax3, self.metrics_ax4]:
+            ax.tick_params(colors=GUI_DARK_THEME['fg'])
+            for spine in ax.spines.values():
+                spine.set_color(GUI_DARK_THEME['fg'])
+
+        self.metrics_fig.tight_layout()
+        self.metrics_canvas.draw()
+
     def _update_all_visualizations(self):
         """Update all visualization tabs."""
         self._update_trends_chart()
@@ -2496,6 +2690,7 @@ class NessusHistoryTrackerApp:
         self._update_plugin_charts()
         self._update_priority_charts()
         self._update_sla_charts()
+        self._update_metrics_charts()
         self._update_host_tracking_charts()
 
     # Export methods
