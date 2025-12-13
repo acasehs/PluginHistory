@@ -35,6 +35,7 @@ from ..analysis.scan_changes import analyze_scan_changes
 from ..analysis.opdir_compliance import load_opdir_mapping, enrich_with_opdir
 from ..filters.filter_engine import FilterEngine, apply_filters
 from ..filters.hostname_parser import parse_hostname, HostType
+from ..filters.custom_lists import FilterListManager, FilterList
 from ..export.sqlite_export import export_to_sqlite
 from ..export.excel_export import export_to_excel
 from ..export.json_export import export_to_json
@@ -81,6 +82,10 @@ class NessusHistoryTrackerApp:
         self.filter_cvss_max = tk.StringVar(value="10.0")
         self.filter_opdir_status = tk.StringVar(value="All")
         self.filter_env_type = tk.StringVar(value="All")  # Production/Pre-Production
+
+        # Advanced host filtering
+        self.filter_host_list: List[str] = []  # Specific hostnames selected
+        self.filter_list_manager = FilterListManager()  # Saved filter lists
 
         # Build UI
         self._setup_styles()
@@ -235,7 +240,10 @@ class NessusHistoryTrackerApp:
         ttk.Label(loc_row, text="Loc:", width=8).pack(side=tk.LEFT)
         ttk.Entry(loc_row, textvariable=self.filter_location, width=6).pack(side=tk.LEFT, padx=1)
         ttk.Label(loc_row, text="Host:").pack(side=tk.LEFT, padx=(5, 0))
-        ttk.Entry(loc_row, textvariable=self.filter_host, width=12).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+        ttk.Entry(loc_row, textvariable=self.filter_host, width=10).pack(side=tk.LEFT, padx=1)
+        ttk.Button(loc_row, text="...", command=self._show_host_selector, width=2).pack(side=tk.LEFT, padx=1)
+        self.host_count_label = ttk.Label(loc_row, text="", foreground="cyan", width=6)
+        self.host_count_label.pack(side=tk.LEFT)
 
         # Row 6: CVSS Range (inline)
         cvss_row = ttk.Frame(filter_frame)
@@ -1110,11 +1118,26 @@ class NessusHistoryTrackerApp:
             filtered = filtered[filtered['hostname'].str.upper().str.startswith(location)]
             filter_descriptions.append(f"Location: {location}")
 
-        # Filter: Host Pattern
+        # Filter: Host Pattern (supports comma-separated multiple patterns)
         host_pattern = self.filter_host.get().strip()
         if host_pattern and 'hostname' in filtered.columns:
-            filtered = filtered[filtered['hostname'].str.contains(host_pattern, case=False, na=False)]
-            filter_descriptions.append(f"Host: *{host_pattern}*")
+            patterns = [p.strip() for p in host_pattern.split(',') if p.strip()]
+            if len(patterns) == 1:
+                # Single pattern - simple contains
+                filtered = filtered[filtered['hostname'].str.contains(patterns[0], case=False, na=False)]
+                filter_descriptions.append(f"Host: *{patterns[0]}*")
+            elif len(patterns) > 1:
+                # Multiple patterns - OR logic
+                mask = filtered['hostname'].str.contains(patterns[0], case=False, na=False)
+                for pattern in patterns[1:]:
+                    mask = mask | filtered['hostname'].str.contains(pattern, case=False, na=False)
+                filtered = filtered[mask]
+                filter_descriptions.append(f"Host: {len(patterns)} patterns")
+
+        # Filter: Specific Hostname List (from selector dialog)
+        if self.filter_host_list and 'hostname' in filtered.columns:
+            filtered = filtered[filtered['hostname'].isin(self.filter_host_list)]
+            filter_descriptions.append(f"Hosts: {len(self.filter_host_list)} selected")
 
         # Filter: CVSS Range
         try:
@@ -1179,6 +1202,10 @@ class NessusHistoryTrackerApp:
         self.filter_cvss_max.set("10.0")
         self.filter_opdir_status.set("All")
 
+        # Reset host list filter
+        self.filter_host_list = []
+        self._update_host_count_label()
+
         # Reset date filters to data range if available
         if not self.historical_df.empty and 'scan_date' in self.historical_df.columns:
             self.filter_start_date.set(self.historical_df['scan_date'].min().strftime('%Y-%m-%d'))
@@ -1190,6 +1217,260 @@ class NessusHistoryTrackerApp:
         # Apply the reset filters
         self._apply_filters()
         self._log("Filters reset to defaults")
+
+    def _update_host_count_label(self):
+        """Update the host count label next to the host filter."""
+        if self.filter_host_list:
+            self.host_count_label.config(text=f"[{len(self.filter_host_list)}]")
+        else:
+            self.host_count_label.config(text="")
+
+    def _show_host_selector(self):
+        """Show the host selection dialog for advanced filtering."""
+        dialog = tk.Toplevel(self.window)
+        dialog.title("Host Selector")
+        dialog.geometry("700x550")
+        dialog.configure(bg=GUI_DARK_THEME['bg'])
+        dialog.transient(self.window)
+        dialog.grab_set()
+
+        # Main container with panes
+        main_frame = ttk.Frame(dialog, padding=10)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Top section: Available hosts from data + selection
+        top_frame = ttk.LabelFrame(main_frame, text="Select from Available Hosts", padding=5)
+        top_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
+
+        # Search filter for available hosts
+        search_frame = ttk.Frame(top_frame)
+        search_frame.pack(fill=tk.X, pady=(0, 5))
+        ttk.Label(search_frame, text="Search:").pack(side=tk.LEFT)
+        search_var = tk.StringVar()
+        search_entry = ttk.Entry(search_frame, textvariable=search_var, width=30)
+        search_entry.pack(side=tk.LEFT, padx=5)
+
+        # Two listboxes side by side: available and selected
+        lists_frame = ttk.Frame(top_frame)
+        lists_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Available hosts
+        avail_frame = ttk.Frame(lists_frame)
+        avail_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
+        ttk.Label(avail_frame, text="Available:").pack(anchor=tk.W)
+        avail_scroll = ttk.Scrollbar(avail_frame)
+        avail_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        avail_listbox = tk.Listbox(avail_frame, selectmode=tk.EXTENDED,
+                                    bg=GUI_DARK_THEME['entry_bg'], fg=GUI_DARK_THEME['fg'],
+                                    yscrollcommand=avail_scroll.set, height=10)
+        avail_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        avail_scroll.config(command=avail_listbox.yview)
+
+        # Buttons between lists
+        btn_frame = ttk.Frame(lists_frame)
+        btn_frame.pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text=">>", width=3,
+                   command=lambda: self._move_hosts(avail_listbox, selected_listbox, 'add')).pack(pady=2)
+        ttk.Button(btn_frame, text="<<", width=3,
+                   command=lambda: self._move_hosts(avail_listbox, selected_listbox, 'remove')).pack(pady=2)
+        ttk.Button(btn_frame, text="All >>", width=5,
+                   command=lambda: self._move_all_hosts(avail_listbox, selected_listbox, 'add')).pack(pady=2)
+        ttk.Button(btn_frame, text="Clear", width=5,
+                   command=lambda: self._move_all_hosts(avail_listbox, selected_listbox, 'clear')).pack(pady=2)
+
+        # Selected hosts
+        sel_frame = ttk.Frame(lists_frame)
+        sel_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(5, 0))
+        ttk.Label(sel_frame, text="Selected:").pack(anchor=tk.W)
+        sel_scroll = ttk.Scrollbar(sel_frame)
+        sel_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        selected_listbox = tk.Listbox(sel_frame, selectmode=tk.EXTENDED,
+                                       bg=GUI_DARK_THEME['entry_bg'], fg=GUI_DARK_THEME['fg'],
+                                       yscrollcommand=sel_scroll.set, height=10)
+        selected_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sel_scroll.config(command=selected_listbox.yview)
+
+        # Middle section: Paste hostnames
+        paste_frame = ttk.LabelFrame(main_frame, text="Paste Hostnames (one per line or comma-separated)", padding=5)
+        paste_frame.pack(fill=tk.X, pady=5)
+        paste_text = tk.Text(paste_frame, height=3, bg=GUI_DARK_THEME['entry_bg'], fg=GUI_DARK_THEME['fg'])
+        paste_text.pack(fill=tk.X, pady=(0, 5))
+        ttk.Button(paste_frame, text="Add Pasted Hosts",
+                   command=lambda: self._add_pasted_hosts(paste_text, selected_listbox)).pack(anchor=tk.W)
+
+        # Bottom section: Saved filter lists
+        saved_frame = ttk.LabelFrame(main_frame, text="Saved Filter Lists", padding=5)
+        saved_frame.pack(fill=tk.X, pady=5)
+
+        saved_row = ttk.Frame(saved_frame)
+        saved_row.pack(fill=tk.X)
+
+        # Dropdown for saved lists
+        saved_lists = self.filter_list_manager.get_lists_by_type('hostname')
+        list_names = [""] + [fl.name for fl in saved_lists]
+        saved_list_var = tk.StringVar()
+        saved_combo = ttk.Combobox(saved_row, textvariable=saved_list_var, values=list_names, width=20)
+        saved_combo.pack(side=tk.LEFT, padx=(0, 5))
+
+        ttk.Button(saved_row, text="Load",
+                   command=lambda: self._load_saved_list(saved_list_var.get(), selected_listbox)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(saved_row, text="Save As...",
+                   command=lambda: self._save_host_list(selected_listbox, saved_combo)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(saved_row, text="Delete",
+                   command=lambda: self._delete_saved_list(saved_list_var.get(), saved_combo)).pack(side=tk.LEFT, padx=2)
+
+        # Action buttons
+        action_frame = ttk.Frame(main_frame)
+        action_frame.pack(fill=tk.X, pady=(10, 0))
+        ttk.Button(action_frame, text="Apply", width=10,
+                   command=lambda: self._apply_host_selection(selected_listbox, dialog)).pack(side=tk.RIGHT, padx=2)
+        ttk.Button(action_frame, text="Cancel", width=10,
+                   command=dialog.destroy).pack(side=tk.RIGHT, padx=2)
+
+        # Populate available hosts from data
+        all_hosts = self._get_all_hostnames()
+        for host in sorted(all_hosts):
+            avail_listbox.insert(tk.END, host)
+
+        # Populate already selected hosts
+        for host in self.filter_host_list:
+            selected_listbox.insert(tk.END, host)
+
+        # Search filter functionality
+        def filter_available(*args):
+            search_term = search_var.get().lower()
+            avail_listbox.delete(0, tk.END)
+            for host in sorted(all_hosts):
+                if search_term in host.lower():
+                    avail_listbox.insert(tk.END, host)
+
+        search_var.trace('w', filter_available)
+
+    def _get_all_hostnames(self) -> List[str]:
+        """Get all unique hostnames from loaded data."""
+        hostnames = set()
+        if not self.lifecycle_df.empty and 'hostname' in self.lifecycle_df.columns:
+            hostnames.update(self.lifecycle_df['hostname'].dropna().unique())
+        if not self.host_presence_df.empty and 'hostname' in self.host_presence_df.columns:
+            hostnames.update(self.host_presence_df['hostname'].dropna().unique())
+        return list(hostnames)
+
+    def _move_hosts(self, avail_listbox: tk.Listbox, selected_listbox: tk.Listbox, action: str):
+        """Move hosts between available and selected listboxes."""
+        if action == 'add':
+            selected_indices = avail_listbox.curselection()
+            for idx in selected_indices:
+                host = avail_listbox.get(idx)
+                if host not in selected_listbox.get(0, tk.END):
+                    selected_listbox.insert(tk.END, host)
+        elif action == 'remove':
+            selected_indices = list(selected_listbox.curselection())
+            for idx in reversed(selected_indices):
+                selected_listbox.delete(idx)
+
+    def _move_all_hosts(self, avail_listbox: tk.Listbox, selected_listbox: tk.Listbox, action: str):
+        """Move all hosts or clear selection."""
+        if action == 'add':
+            for idx in range(avail_listbox.size()):
+                host = avail_listbox.get(idx)
+                if host not in selected_listbox.get(0, tk.END):
+                    selected_listbox.insert(tk.END, host)
+        elif action == 'clear':
+            selected_listbox.delete(0, tk.END)
+
+    def _add_pasted_hosts(self, paste_text: tk.Text, selected_listbox: tk.Listbox):
+        """Add pasted hostnames to selected list."""
+        text = paste_text.get("1.0", tk.END).strip()
+        if not text:
+            return
+
+        # Split by newlines or commas
+        hosts = []
+        for line in text.split('\n'):
+            for part in line.split(','):
+                host = part.strip()
+                if host:
+                    hosts.append(host)
+
+        # Add to selected listbox
+        current = set(selected_listbox.get(0, tk.END))
+        for host in hosts:
+            if host not in current:
+                selected_listbox.insert(tk.END, host)
+
+        # Clear paste area
+        paste_text.delete("1.0", tk.END)
+        self._log(f"Added {len(hosts)} hosts from paste")
+
+    def _load_saved_list(self, list_name: str, selected_listbox: tk.Listbox):
+        """Load a saved filter list into the selected hosts."""
+        if not list_name:
+            return
+
+        filter_list = self.filter_list_manager.get_list(list_name)
+        if filter_list:
+            selected_listbox.delete(0, tk.END)
+            for host in filter_list.items:
+                selected_listbox.insert(tk.END, host)
+            self._log(f"Loaded filter list '{list_name}' with {filter_list.count} hosts")
+
+    def _save_host_list(self, selected_listbox: tk.Listbox, saved_combo: ttk.Combobox):
+        """Save current selection as a named filter list."""
+        hosts = list(selected_listbox.get(0, tk.END))
+        if not hosts:
+            messagebox.showwarning("Save Filter List", "No hosts selected to save.")
+            return
+
+        # Ask for name
+        from tkinter import simpledialog
+        name = simpledialog.askstring("Save Filter List", "Enter a name for this filter list:",
+                                       parent=self.window)
+        if not name:
+            return
+
+        # Create or update list
+        if self.filter_list_manager.list_exists(name):
+            existing = self.filter_list_manager.get_list(name)
+            existing.items = hosts
+            self.filter_list_manager.save_list(name)
+        else:
+            self.filter_list_manager.create_list(
+                name=name,
+                filter_type='hostname',
+                description=f"Saved from host selector with {len(hosts)} hosts",
+                items=hosts
+            )
+
+        # Update dropdown
+        saved_lists = self.filter_list_manager.get_lists_by_type('hostname')
+        list_names = [""] + [fl.name for fl in saved_lists]
+        saved_combo['values'] = list_names
+        saved_combo.set(name)
+
+        self._log(f"Saved filter list '{name}' with {len(hosts)} hosts")
+
+    def _delete_saved_list(self, list_name: str, saved_combo: ttk.Combobox):
+        """Delete a saved filter list."""
+        if not list_name:
+            return
+
+        if messagebox.askyesno("Delete Filter List", f"Delete filter list '{list_name}'?"):
+            self.filter_list_manager.delete_list(list_name)
+
+            # Update dropdown
+            saved_lists = self.filter_list_manager.get_lists_by_type('hostname')
+            list_names = [""] + [fl.name for fl in saved_lists]
+            saved_combo['values'] = list_names
+            saved_combo.set("")
+
+            self._log(f"Deleted filter list '{list_name}'")
+
+    def _apply_host_selection(self, selected_listbox: tk.Listbox, dialog: tk.Toplevel):
+        """Apply the host selection and close dialog."""
+        self.filter_host_list = list(selected_listbox.get(0, tk.END))
+        self._update_host_count_label()
+        dialog.destroy()
+        self._log(f"Selected {len(self.filter_host_list)} specific hosts for filtering")
 
     def _update_dashboard(self):
         """Update dashboard statistics from filtered data."""
