@@ -23,6 +23,72 @@ def sanitize_hostname_for_excel(hostname: str) -> str:
     return safe_hostname
 
 
+def extract_host_scan_time(host_element: ET.Element) -> Tuple[Optional[datetime], Optional[str], Optional[str]]:
+    """
+    Extract scan date and time from host properties.
+
+    The HOST_START tag in .nessus files contains the scan start time for each host.
+    Format example: "Mon Jan 01 12:00:00 2024"
+
+    Args:
+        host_element: XML ReportHost element
+
+    Returns:
+        Tuple of (datetime object, date string YYYY-MM-DD, time string HH:MM:SS)
+    """
+    props = host_element.find('HostProperties')
+    if props is None:
+        return None, None, None
+
+    host_start = None
+    for tag in props.findall('tag'):
+        name = tag.get('name', '')
+        if name == 'HOST_START' and tag.text:
+            host_start = tag.text.strip()
+            break
+
+    if not host_start:
+        return None, None, None
+
+    # Parse various date formats from Nessus
+    date_formats = [
+        "%a %b %d %H:%M:%S %Y",      # Mon Jan 01 12:00:00 2024
+        "%a %b  %d %H:%M:%S %Y",     # Mon Jan  1 12:00:00 2024 (single digit day with extra space)
+        "%Y-%m-%d %H:%M:%S",         # 2024-01-01 12:00:00
+        "%Y/%m/%d %H:%M:%S",         # 2024/01/01 12:00:00
+        "%d %b %Y %H:%M:%S",         # 01 Jan 2024 12:00:00
+    ]
+
+    scan_datetime = None
+    for fmt in date_formats:
+        try:
+            scan_datetime = datetime.strptime(host_start, fmt)
+            break
+        except ValueError:
+            continue
+
+    if scan_datetime is None:
+        # Try a more flexible approach - extract date components
+        try:
+            # Handle "Mon Jan  1 12:00:00 2024" with regex
+            match = re.match(r'\w+\s+(\w+)\s+(\d+)\s+(\d+):(\d+):(\d+)\s+(\d+)', host_start)
+            if match:
+                month_str, day, hour, minute, second, year = match.groups()
+                month_map = {'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6,
+                            'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12}
+                month = month_map.get(month_str, 1)
+                scan_datetime = datetime(int(year), month, int(day), int(hour), int(minute), int(second))
+        except Exception:
+            pass
+
+    if scan_datetime:
+        scan_date = scan_datetime.strftime('%Y-%m-%d')
+        scan_time = scan_datetime.strftime('%H:%M:%S')
+        return scan_datetime, scan_date, scan_time
+
+    return None, None, None
+
+
 def extract_hostname_from_plugins(host_element: ET.Element) -> Optional[str]:
     """
     Extract hostname from host properties.
@@ -121,7 +187,9 @@ def parse_credentialed_scan_info(plugin_output: str) -> Dict[str, str]:
     return result
 
 
-def extract_finding_data(item: ET.Element, host_name: str, hostname: str, plugins_dict: Dict = None) -> Dict[str, Any]:
+def extract_finding_data(item: ET.Element, host_name: str, hostname: str,
+                         scan_date: str = None, scan_time: str = None,
+                         plugins_dict: Dict = None) -> Dict[str, Any]:
     """
     Extract finding data from a single ReportItem element.
 
@@ -129,6 +197,8 @@ def extract_finding_data(item: ET.Element, host_name: str, hostname: str, plugin
         item: XML ReportItem element
         host_name: IP address of the host
         hostname: Resolved hostname
+        scan_date: Scan date string (YYYY-MM-DD) from HOST_START
+        scan_time: Scan time string (HH:MM:SS) from HOST_START
         plugins_dict: Optional plugins database for enrichment
 
     Returns:
@@ -176,7 +246,9 @@ def extract_finding_data(item: ET.Element, host_name: str, hostname: str, plugin
         'exploit_frameworks': '',
         'iavx': '',
         'hostname': hostname,
-        'svc_name': svc_name
+        'svc_name': svc_name,
+        'scan_date': scan_date,
+        'scan_time': scan_time
     }
 
     # Extract plugin output
@@ -302,6 +374,9 @@ def parse_nessus_file(nessus_file: str, plugins_dict: Dict = None) -> Tuple[pd.D
             if not hostname:
                 hostname = resolve_hostname(host_name, host)
 
+            # Extract scan date and time from HOST_START tag
+            scan_datetime, scan_date, scan_time = extract_host_scan_time(host)
+
             cred_info = {
                 'proper_scan': 'No',
                 'cred_checks_value': 'N/A',
@@ -318,7 +393,9 @@ def parse_nessus_file(nessus_file: str, plugins_dict: Dict = None) -> Tuple[pd.D
                     if plugin_output is not None and plugin_output.text:
                         cred_info = parse_credentialed_scan_info(plugin_output.text)
 
-                finding = extract_finding_data(item, host_name, hostname, plugins_dict)
+                finding = extract_finding_data(item, host_name, hostname,
+                                               scan_date=scan_date, scan_time=scan_time,
+                                               plugins_dict=plugins_dict)
                 all_findings.append(finding)
 
             host_summary = {
@@ -328,6 +405,8 @@ def parse_nessus_file(nessus_file: str, plugins_dict: Dict = None) -> Tuple[pd.D
                 'hostname': hostname,
                 'safe_hostname': sanitize_hostname_for_excel(hostname),
                 'total_reportitems': len(items),
+                'scan_date': scan_date,
+                'scan_time': scan_time,
                 **cred_info
             }
 
