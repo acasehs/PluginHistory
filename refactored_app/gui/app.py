@@ -904,9 +904,11 @@ class NessusHistoryTrackerApp:
                 self._process_new_archives()
 
             # Set date filter defaults
-            if not self.historical_df.empty:
-                start_date = self.historical_df['scan_date'].min().strftime('%Y-%m-%d')
-                end_date = self.historical_df['scan_date'].max().strftime('%Y-%m-%d')
+            if not self.historical_df.empty and 'scan_date' in self.historical_df.columns:
+                # Ensure scan_date is datetime for min/max operations
+                scan_dates = pd.to_datetime(self.historical_df['scan_date'])
+                start_date = scan_dates.min().strftime('%Y-%m-%d')
+                end_date = scan_dates.max().strftime('%Y-%m-%d')
                 self.filter_start_date.set(start_date)
                 self.filter_end_date.set(end_date)
 
@@ -1208,8 +1210,9 @@ class NessusHistoryTrackerApp:
 
         # Reset date filters to data range if available
         if not self.historical_df.empty and 'scan_date' in self.historical_df.columns:
-            self.filter_start_date.set(self.historical_df['scan_date'].min().strftime('%Y-%m-%d'))
-            self.filter_end_date.set(self.historical_df['scan_date'].max().strftime('%Y-%m-%d'))
+            scan_dates = pd.to_datetime(self.historical_df['scan_date'])
+            self.filter_start_date.set(scan_dates.min().strftime('%Y-%m-%d'))
+            self.filter_end_date.set(scan_dates.max().strftime('%Y-%m-%d'))
         else:
             self.filter_start_date.set("")
             self.filter_end_date.set("")
