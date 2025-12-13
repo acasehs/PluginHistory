@@ -2042,7 +2042,9 @@ class NessusHistoryTrackerApp:
             symbol = '↓' if change < 0 else '↑'
             self.timeline_ax1.text(0.98, 0.98, f'{symbol}{abs(pct):.0f}%', transform=self.timeline_ax1.transAxes,
                                   fontsize=9, va='top', ha='right', color=color, fontweight='bold')
-        self.timeline_ax1.set_title('Total Findings Over Time', color=GUI_DARK_THEME['fg'])
+        self.timeline_ax1.set_title('Total Findings Over Time', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.timeline_ax1.text(0.5, 1.02, 'Vulnerability count trend across scan history',
+            transform=self.timeline_ax1.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         self.timeline_ax1.set_ylabel('Count', color=GUI_DARK_THEME['fg'])
 
         # Chart 2: Severity breakdown over time with markers
@@ -2056,7 +2058,9 @@ class NessusHistoryTrackerApp:
                                           label=f'{sev} ({sev_counts.iloc[-1] if len(sev_counts) > 0 else 0})',
                                           marker='o', markersize=4, linewidth=2)
             self.timeline_ax2.legend(fontsize=7, facecolor=GUI_DARK_THEME['bg'], labelcolor=GUI_DARK_THEME['fg'])
-        self.timeline_ax2.set_title('Findings by Severity', color=GUI_DARK_THEME['fg'])
+        self.timeline_ax2.set_title('Findings by Severity', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.timeline_ax2.text(0.5, 1.02, 'Critical/High/Medium/Low breakdown over time',
+            transform=self.timeline_ax2.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
 
         # Chart 3: New vs Resolved with data labels
         if not self.scan_changes_df.empty and 'change_type' in self.scan_changes_df.columns:
@@ -2079,7 +2083,9 @@ class NessusHistoryTrackerApp:
                                                   xytext=(0, 2), textcoords='offset points',
                                                   ha='center', va='bottom', fontsize=6, color='white')
             self.timeline_ax3.legend(fontsize=7, facecolor=GUI_DARK_THEME['bg'], labelcolor=GUI_DARK_THEME['fg'])
-        self.timeline_ax3.set_title('New vs Resolved', color=GUI_DARK_THEME['fg'])
+        self.timeline_ax3.set_title('New vs Resolved', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.timeline_ax3.text(0.5, 1.02, 'Monthly new vs resolved vulnerability comparison',
+            transform=self.timeline_ax3.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
 
         # Chart 4: Cumulative risk with current value label
         if 'severity_value' in hist_df.columns:
@@ -2095,7 +2101,9 @@ class NessusHistoryTrackerApp:
                 if peak != current:
                     self.timeline_ax4.text(0.02, 0.88, f'Peak: {int(peak):,}', transform=self.timeline_ax4.transAxes,
                                           fontsize=8, va='top', color='#ffc107')
-        self.timeline_ax4.set_title('Cumulative Risk Exposure', color=GUI_DARK_THEME['fg'])
+        self.timeline_ax4.set_title('Cumulative Risk Exposure', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.timeline_ax4.text(0.5, 1.02, 'Running total of severity-weighted risk score',
+            transform=self.timeline_ax4.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
 
         for ax in [self.timeline_ax1, self.timeline_ax2, self.timeline_ax3, self.timeline_ax4]:
             ax.tick_params(colors=GUI_DARK_THEME['fg'])
@@ -2145,7 +2153,9 @@ class NessusHistoryTrackerApp:
                 max_cvss = cvss_scores.max()
                 self.risk_ax1.text(0.98, 0.98, f'Avg: {avg_cvss:.1f} | Max: {max_cvss:.1f}',
                                   transform=self.risk_ax1.transAxes, fontsize=8, va='top', ha='right', color='white')
-        self.risk_ax1.set_title('CVSS Score Distribution', color=GUI_DARK_THEME['fg'])
+        self.risk_ax1.set_title('CVSS Score Distribution', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.risk_ax1.text(0.5, 1.02, 'Distribution of CVSS v3 scores by severity level',
+            transform=self.risk_ax1.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         self.risk_ax1.set_xlabel('CVSS Score', color=GUI_DARK_THEME['fg'])
         self.risk_ax1.set_ylabel('Count', color=GUI_DARK_THEME['fg'])
 
@@ -2171,7 +2181,9 @@ class NessusHistoryTrackerApp:
                 self.risk_ax2.axhline(y=overall_mttr, color='white', linestyle='--', linewidth=1, alpha=0.5)
                 self.risk_ax2.text(0.02, 0.98, f'Overall: {overall_mttr:.0f}d', transform=self.risk_ax2.transAxes,
                                   fontsize=7, va='top', color='white')
-        self.risk_ax2.set_title('Mean Time to Remediation', color=GUI_DARK_THEME['fg'])
+        self.risk_ax2.set_title('Mean Time to Remediation', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.risk_ax2.text(0.5, 1.02, 'Average days to resolve by severity level',
+            transform=self.risk_ax2.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         self.risk_ax2.set_ylabel('Days', color=GUI_DARK_THEME['fg'])
 
         # Chart 3: Findings by age with urgency coloring
@@ -2195,7 +2207,9 @@ class NessusHistoryTrackerApp:
                 avg_age = active['days_open'].mean()
                 self.risk_ax3.text(0.98, 0.98, f'Avg: {avg_age:.0f}d', transform=self.risk_ax3.transAxes,
                                   fontsize=8, va='top', ha='right', color='white')
-        self.risk_ax3.set_title('Active Findings by Age', color=GUI_DARK_THEME['fg'])
+        self.risk_ax3.set_title('Active Findings by Age', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.risk_ax3.text(0.5, 1.02, 'Urgency buckets for unresolved vulnerabilities',
+            transform=self.risk_ax3.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         self.risk_ax3.set_xlabel('Days Open', color=GUI_DARK_THEME['fg'])
 
         # Chart 4: Top risky hosts with risk gradient
@@ -2215,7 +2229,9 @@ class NessusHistoryTrackerApp:
                                               xytext=(3, 0), textcoords='offset points',
                                               ha='left', va='center', fontsize=6, color='white')
                 self.risk_ax4.invert_yaxis()
-        self.risk_ax4.set_title('Top 10 Risky Hosts', color=GUI_DARK_THEME['fg'])
+        self.risk_ax4.set_title('Top 10 Risky Hosts', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.risk_ax4.text(0.5, 1.02, 'Hosts with highest total severity-weighted risk',
+            transform=self.risk_ax4.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         self.risk_ax4.set_xlabel('Risk Score', color=GUI_DARK_THEME['fg'])
 
         for ax in [self.risk_ax1, self.risk_ax2, self.risk_ax3, self.risk_ax4]:
@@ -4229,6 +4245,9 @@ class NessusHistoryTrackerApp:
             self.opdir_canvas.draw()
             return
 
+        # Check if data labels are enabled
+        show_labels = self.settings_manager.settings.show_data_labels
+
         # Chart 1: OPDIR coverage pie with counts
         if 'opdir_number' in df.columns:
             mapped = df['opdir_number'].notna() & (df['opdir_number'] != '')
@@ -4243,7 +4262,9 @@ class NessusHistoryTrackerApp:
             else:
                 self.opdir_ax1.text(0.5, 0.5, 'No data', ha='center', va='center',
                                    color=GUI_DARK_THEME['fg'])
-        self.opdir_ax1.set_title('OPDIR Mapping Coverage', color=GUI_DARK_THEME['fg'])
+        self.opdir_ax1.set_title('OPDIR Mapping Coverage\n', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.opdir_ax1.text(0.5, 1.02, 'Findings linked to OPDIR directives vs unmapped',
+            transform=self.opdir_ax1.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
 
         # Chart 2: OPDIR status distribution with data labels
         if 'opdir_status' in df.columns:
@@ -4267,7 +4288,9 @@ class NessusHistoryTrackerApp:
                                                xy=(bar.get_x() + bar.get_width()/2, val),
                                                xytext=(0, 3), textcoords='offset points',
                                                ha='center', va='bottom', fontsize=7, color='white')
-        self.opdir_ax2.set_title('OPDIR Status Distribution', color=GUI_DARK_THEME['fg'])
+        self.opdir_ax2.set_title('OPDIR Status Distribution', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.opdir_ax2.text(0.5, 1.02, 'Compliance status: Overdue/Due Soon/On Track',
+            transform=self.opdir_ax2.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         self.opdir_ax2.set_ylabel('Count', color=GUI_DARK_THEME['fg'])
 
         # Chart 3: Finding age histogram for OPDIR-mapped items
@@ -4294,7 +4317,9 @@ class NessusHistoryTrackerApp:
             else:
                 self.opdir_ax3.text(0.5, 0.5, 'No OPDIR-mapped\nfindings', ha='center', va='center',
                                    color=GUI_DARK_THEME['fg'], fontsize=9)
-        self.opdir_ax3.set_title('Finding Age (OPDIR Mapped)', color=GUI_DARK_THEME['fg'])
+        self.opdir_ax3.set_title('Finding Age (OPDIR Mapped)', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.opdir_ax3.text(0.5, 1.02, 'Age distribution of findings with OPDIR assignments',
+            transform=self.opdir_ax3.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         self.opdir_ax3.set_xlabel('Days Open', color=GUI_DARK_THEME['fg'])
         self.opdir_ax3.set_ylabel('Count', color=GUI_DARK_THEME['fg'])
 
@@ -4327,7 +4352,9 @@ class NessusHistoryTrackerApp:
         else:
             self.opdir_ax4.text(0.5, 0.5, 'OPDIR Year Analysis\n(Load OPDIR mapping)',
                                ha='center', va='center', color=GUI_DARK_THEME['fg'], fontsize=9)
-        self.opdir_ax4.set_title('Compliance by OPDIR Year', color=GUI_DARK_THEME['fg'])
+        self.opdir_ax4.set_title('Compliance by OPDIR Year', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.opdir_ax4.text(0.5, 1.02, 'Status breakdown by directive release year',
+            transform=self.opdir_ax4.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         self.opdir_ax4.set_ylabel('Count', color=GUI_DARK_THEME['fg'])
 
         for ax in [self.opdir_ax1, self.opdir_ax2, self.opdir_ax3, self.opdir_ax4]:
@@ -4373,7 +4400,9 @@ class NessusHistoryTrackerApp:
             self.efficiency_ax1.axvline(x=avg_presence, color='white', linestyle='--', linewidth=1, alpha=0.7)
             self.efficiency_ax1.text(0.98, 0.98, f'Avg: {avg_presence:.1f}%', transform=self.efficiency_ax1.transAxes,
                                     fontsize=8, va='top', ha='right', color='white')
-        self.efficiency_ax1.set_title('Scan Coverage Consistency', color=GUI_DARK_THEME['fg'])
+        self.efficiency_ax1.set_title('Scan Coverage Consistency', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.efficiency_ax1.text(0.5, 1.02, 'How consistently hosts appear across scans',
+            transform=self.efficiency_ax1.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         self.efficiency_ax1.set_xlabel('Presence %', color=GUI_DARK_THEME['fg'])
         self.efficiency_ax1.set_ylabel('Host Count', color=GUI_DARK_THEME['fg'])
 
@@ -4396,7 +4425,9 @@ class NessusHistoryTrackerApp:
                 pct = recurring / total * 100 if total > 0 else 0
                 self.efficiency_ax2.text(0.98, 0.98, f'Recurring: {pct:.1f}%', transform=self.efficiency_ax2.transAxes,
                                         fontsize=8, va='top', ha='right', color='#fd7e14')
-        self.efficiency_ax2.set_title('Reappearance Analysis', color=GUI_DARK_THEME['fg'])
+        self.efficiency_ax2.set_title('Reappearance Analysis', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.efficiency_ax2.text(0.5, 1.02, 'Vulnerabilities recurring after remediation',
+            transform=self.efficiency_ax2.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         self.efficiency_ax2.set_xlabel('Times Seen', color=GUI_DARK_THEME['fg'])
         self.efficiency_ax2.set_ylabel('Finding Count', color=GUI_DARK_THEME['fg'])
 
@@ -4411,7 +4442,9 @@ class NessusHistoryTrackerApp:
                 self.efficiency_ax3.axvline(x=avg_burden, color='white', linestyle='--', linewidth=1, alpha=0.7)
                 self.efficiency_ax3.text(0.98, 0.98, f'Avg: {avg_burden:.1f} | Max: {max_burden}',
                                         transform=self.efficiency_ax3.transAxes, fontsize=8, va='top', ha='right', color='white')
-        self.efficiency_ax3.set_title('Host Vulnerability Burden', color=GUI_DARK_THEME['fg'])
+        self.efficiency_ax3.set_title('Host Vulnerability Burden', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.efficiency_ax3.text(0.5, 1.02, 'Number of vulnerabilities per host distribution',
+            transform=self.efficiency_ax3.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         self.efficiency_ax3.set_xlabel('Findings per Host', color=GUI_DARK_THEME['fg'])
         self.efficiency_ax3.set_ylabel('Host Count', color=GUI_DARK_THEME['fg'])
 
@@ -4438,7 +4471,9 @@ class NessusHistoryTrackerApp:
                     avg_days = days.mean()
                     self.efficiency_ax4.text(0.98, 0.98, f'Avg: {avg_days:.0f}d', transform=self.efficiency_ax4.transAxes,
                                             fontsize=8, va='top', ha='right', color='white')
-        self.efficiency_ax4.set_title('Resolution Velocity', color=GUI_DARK_THEME['fg'])
+        self.efficiency_ax4.set_title('Resolution Velocity', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.efficiency_ax4.text(0.5, 1.02, 'How quickly vulnerabilities are resolved',
+            transform=self.efficiency_ax4.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         self.efficiency_ax4.set_xlabel('Time to Resolve', color=GUI_DARK_THEME['fg'])
         self.efficiency_ax4.set_ylabel('Finding Count', color=GUI_DARK_THEME['fg'])
 
@@ -4492,7 +4527,9 @@ class NessusHistoryTrackerApp:
                     self.network_ax1.annotate(f'{int(val)}', xy=(val, bar.get_y() + bar.get_height()/2),
                                              xytext=(3, 0), textcoords='offset points',
                                              ha='left', va='center', fontsize=6, color='white')
-        self.network_ax1.set_title('Top Subnets by Vulnerability', color=GUI_DARK_THEME['fg'])
+        self.network_ax1.set_title('Top Subnets by Vulnerability', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.network_ax1.text(0.5, 1.02, 'Network segments with most vulnerabilities',
+            transform=self.network_ax1.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         self.network_ax1.set_xlabel('Vuln Count', color=GUI_DARK_THEME['fg'])
 
         # Chart 2: Subnet risk scores with gradient colors
@@ -4511,7 +4548,9 @@ class NessusHistoryTrackerApp:
                         self.network_ax2.annotate(f'{int(val)}', xy=(val, bar.get_y() + bar.get_height()/2),
                                                  xytext=(3, 0), textcoords='offset points',
                                                  ha='left', va='center', fontsize=6, color='white')
-        self.network_ax2.set_title('Subnet Risk Scores', color=GUI_DARK_THEME['fg'])
+        self.network_ax2.set_title('Subnet Risk Scores', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.network_ax2.text(0.5, 1.02, 'Severity-weighted risk by network segment',
+            transform=self.network_ax2.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         self.network_ax2.set_xlabel('Risk Score', color=GUI_DARK_THEME['fg'])
 
         # Chart 3: Host criticality distribution with stats
@@ -4524,7 +4563,9 @@ class NessusHistoryTrackerApp:
                 self.network_ax3.axvline(x=avg_risk, color='white', linestyle='--', linewidth=1, alpha=0.7)
                 self.network_ax3.text(0.98, 0.98, f'Avg: {avg_risk:.0f} | High Risk: {high_risk}',
                                      transform=self.network_ax3.transAxes, fontsize=7, va='top', ha='right', color='white')
-        self.network_ax3.set_title('Host Criticality Distribution', color=GUI_DARK_THEME['fg'])
+        self.network_ax3.set_title('Host Criticality Distribution', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.network_ax3.text(0.5, 1.02, 'Distribution of host-level risk scores',
+            transform=self.network_ax3.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         self.network_ax3.set_xlabel('Risk Score', color=GUI_DARK_THEME['fg'])
         self.network_ax3.set_ylabel('Host Count', color=GUI_DARK_THEME['fg'])
 
@@ -4549,7 +4590,9 @@ class NessusHistoryTrackerApp:
             labels = [f'{idx}\n({val})' for idx, val in zip(class_counts.index, class_counts.values)]
             self.network_ax4.pie(class_counts.values, labels=labels, colors=colors,
                                 autopct='%1.1f%%', textprops={'color': 'white', 'fontsize': 8})
-        self.network_ax4.set_title('Network Segment Analysis', color=GUI_DARK_THEME['fg'])
+        self.network_ax4.set_title('Network Segment Analysis', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.network_ax4.text(0.5, 1.02, 'IP address class breakdown (A/B/C)',
+            transform=self.network_ax4.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
 
         for ax in [self.network_ax1, self.network_ax2, self.network_ax3, self.network_ax4]:
             ax.tick_params(colors=GUI_DARK_THEME['fg'])
@@ -4598,7 +4641,9 @@ class NessusHistoryTrackerApp:
                 total_plugins = df['plugin_id'].nunique()
                 self.plugin_ax1.text(0.98, 0.98, f'Total: {total_plugins}', transform=self.plugin_ax1.transAxes,
                                     fontsize=7, va='top', ha='right', color='white')
-        self.plugin_ax1.set_title('Top 15 Most Common Plugins', color=GUI_DARK_THEME['fg'])
+        self.plugin_ax1.set_title('Top 15 Most Common Plugins', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.plugin_ax1.text(0.5, 1.02, 'Most frequently detected vulnerabilities',
+            transform=self.plugin_ax1.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         self.plugin_ax1.set_xlabel('Finding Count', color=GUI_DARK_THEME['fg'])
 
         # Chart 2: Plugin severity distribution with data labels
@@ -4621,7 +4666,9 @@ class NessusHistoryTrackerApp:
                         self.plugin_ax2.annotate(f'{int(val)}', xy=(bar.get_x() + bar.get_width()/2, val),
                                                 xytext=(0, 3), textcoords='offset points',
                                                 ha='center', va='bottom', fontsize=7, color='white')
-        self.plugin_ax2.set_title('Findings by Severity', color=GUI_DARK_THEME['fg'])
+        self.plugin_ax2.set_title('Findings by Severity', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.plugin_ax2.text(0.5, 1.02, 'Vulnerability severity level breakdown',
+            transform=self.plugin_ax2.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         self.plugin_ax2.set_ylabel('Count', color=GUI_DARK_THEME['fg'])
 
         # Chart 3: Plugins affecting most hosts with data labels
@@ -4642,7 +4689,9 @@ class NessusHistoryTrackerApp:
                         self.plugin_ax3.annotate(f'{int(val)}', xy=(val, bar.get_y() + bar.get_height()/2),
                                                 xytext=(3, 0), textcoords='offset points',
                                                 ha='left', va='center', fontsize=6, color='white')
-        self.plugin_ax3.set_title('Plugins Affecting Most Hosts', color=GUI_DARK_THEME['fg'])
+        self.plugin_ax3.set_title('Plugins Affecting Most Hosts', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.plugin_ax3.text(0.5, 1.02, 'Widespread vulnerabilities across environment',
+            transform=self.plugin_ax3.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         self.plugin_ax3.set_xlabel('Host Count', color=GUI_DARK_THEME['fg'])
 
         # Chart 4: Plugin average age with color coding
@@ -4665,7 +4714,9 @@ class NessusHistoryTrackerApp:
                         self.plugin_ax4.annotate(f'{int(val)}d', xy=(val, bar.get_y() + bar.get_height()/2),
                                                 xytext=(3, 0), textcoords='offset points',
                                                 ha='left', va='center', fontsize=6, color='white')
-        self.plugin_ax4.set_title('Plugins with Longest Avg Age', color=GUI_DARK_THEME['fg'])
+        self.plugin_ax4.set_title('Plugins with Longest Avg Age', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.plugin_ax4.text(0.5, 1.02, 'Vulnerabilities persisting the longest',
+            transform=self.plugin_ax4.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         self.plugin_ax4.set_xlabel('Days Open', color=GUI_DARK_THEME['fg'])
 
         for ax in [self.plugin_ax1, self.plugin_ax2, self.plugin_ax3, self.plugin_ax4]:
@@ -4732,7 +4783,9 @@ class NessusHistoryTrackerApp:
                                   transform=self.priority_ax1.transAxes, va='bottom')
             self.priority_ax1.text(0.98, 0.02, f'Schedule ({schedule})', fontsize=8, color='#ffc107',
                                   transform=self.priority_ax1.transAxes, va='bottom', ha='right')
-        self.priority_ax1.set_title('Priority Matrix (CVSS vs Age)', color=GUI_DARK_THEME['fg'])
+        self.priority_ax1.set_title('Priority Matrix (CVSS vs Age)', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.priority_ax1.text(0.5, 1.02, 'Prioritize by CVSS score and age combination',
+            transform=self.priority_ax1.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         self.priority_ax1.set_xlabel('Days Open', color=GUI_DARK_THEME['fg'])
         self.priority_ax1.set_ylabel('CVSS Score', color=GUI_DARK_THEME['fg'])
 
@@ -4755,7 +4808,9 @@ class NessusHistoryTrackerApp:
             labels = [f'{idx}\n({val})' for idx, val in zip(priority_cats.index, priority_cats.values)]
             self.priority_ax2.pie(priority_cats.values, labels=labels, colors=pie_colors,
                                  autopct='%1.1f%%', textprops={'color': 'white', 'fontsize': 8})
-        self.priority_ax2.set_title('Priority Distribution', color=GUI_DARK_THEME['fg'])
+        self.priority_ax2.set_title('Priority Distribution', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.priority_ax2.text(0.5, 1.02, 'Breakdown by urgency level',
+            transform=self.priority_ax2.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
 
         # Chart 3: Top 10 priority findings with data labels
         if 'priority_score' in active_df.columns and len(active_df) > 0:
@@ -4773,7 +4828,9 @@ class NessusHistoryTrackerApp:
                     self.priority_ax3.annotate(f'{val:.0f}', xy=(val, bar.get_y() + bar.get_height()/2),
                                               xytext=(3, 0), textcoords='offset points',
                                               ha='left', va='center', fontsize=6, color='white')
-        self.priority_ax3.set_title('Top 10 Priority Findings', color=GUI_DARK_THEME['fg'])
+        self.priority_ax3.set_title('Top 10 Priority Findings', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.priority_ax3.text(0.5, 1.02, 'Most urgent vulnerabilities to address',
+            transform=self.priority_ax3.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         self.priority_ax3.set_xlabel('Priority Score', color=GUI_DARK_THEME['fg'])
 
         # Chart 4: Priority by severity with data labels
@@ -4793,7 +4850,9 @@ class NessusHistoryTrackerApp:
                         self.priority_ax4.annotate(f'{val:.1f}', xy=(bar.get_x() + bar.get_width()/2, val),
                                                   xytext=(0, 3), textcoords='offset points',
                                                   ha='center', va='bottom', fontsize=7, color='white')
-        self.priority_ax4.set_title('Avg Priority by Severity', color=GUI_DARK_THEME['fg'])
+        self.priority_ax4.set_title('Avg Priority by Severity', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.priority_ax4.text(0.5, 1.02, 'Average urgency score by severity level',
+            transform=self.priority_ax4.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         self.priority_ax4.set_ylabel('Priority Score', color=GUI_DARK_THEME['fg'])
 
         for ax in [self.priority_ax1, self.priority_ax2, self.priority_ax3, self.priority_ax4]:
@@ -4877,7 +4936,9 @@ class NessusHistoryTrackerApp:
             self.sla_ax1.text(0, 0, f'{total_active}\nactive',
                 ha='center', va='center', fontsize=9, fontweight='bold',
                 color=GUI_DARK_THEME['fg'])
-        self.sla_ax1.set_title('SLA Compliance Status', color=GUI_DARK_THEME['fg'])
+        self.sla_ax1.set_title('SLA Compliance Status', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.sla_ax1.text(0.5, -0.05, 'Overall SLA compliance breakdown',
+            transform=self.sla_ax1.transAxes, ha='center', va='top', fontsize=7, color='#888888')
 
         # Chart 2: Overdue by severity
         overdue = active_df[active_df['sla_status'] == SLA_STATUS_OVERDUE]
@@ -4899,7 +4960,9 @@ class NessusHistoryTrackerApp:
                             xy=(bar.get_x() + bar.get_width()/2, val),
                             xytext=(0, 3), textcoords='offset points',
                             ha='center', va='bottom', fontsize=8, color='white', fontweight='bold')
-        self.sla_ax2.set_title(f'Overdue Findings ({len(overdue)} total)', color=GUI_DARK_THEME['fg'])
+        self.sla_ax2.set_title(f'Overdue Findings ({len(overdue)} total)', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.sla_ax2.text(0.5, 1.02, 'SLA breaches by severity level',
+            transform=self.sla_ax2.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         self.sla_ax2.set_ylabel('Count', color=GUI_DARK_THEME['fg'])
 
         # Chart 3: Approaching deadline - show findings closest to SLA breach
@@ -4934,7 +4997,9 @@ class NessusHistoryTrackerApp:
                 self.sla_ax3.text(0.98, 0.98, f'⚠ {critical_approaching} due in ≤3 days',
                     transform=self.sla_ax3.transAxes, fontsize=7, color='#ff6b6b',
                     ha='right', va='top', fontweight='bold')
-        self.sla_ax3.set_title(f'Approaching Deadline ({len(approaching)} findings)', color=GUI_DARK_THEME['fg'])
+        self.sla_ax3.set_title(f'Approaching Deadline ({len(approaching)} findings)', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.sla_ax3.text(0.5, 1.02, 'Findings nearing SLA expiration',
+            transform=self.sla_ax3.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         self.sla_ax3.set_xlabel('Days Until SLA Breach', color=GUI_DARK_THEME['fg'])
 
         # Chart 4: Days until/past SLA distribution
@@ -4975,7 +5040,9 @@ class NessusHistoryTrackerApp:
                 self.sla_ax4.text(0.98, 0.98, f'On track: {on_track_count}',
                     transform=self.sla_ax4.transAxes, fontsize=7, color='#28a745',
                     ha='right', va='top', fontweight='bold')
-        self.sla_ax4.set_title('Days Until/Past SLA Distribution', color=GUI_DARK_THEME['fg'])
+        self.sla_ax4.set_title('Days Until/Past SLA Distribution', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.sla_ax4.text(0.5, 1.02, 'Time to deadline distribution (neg=overdue)',
+            transform=self.sla_ax4.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         self.sla_ax4.set_xlabel('Days (negative = overdue)', color=GUI_DARK_THEME['fg'])
         self.sla_ax4.set_ylabel('Finding Count', color=GUI_DARK_THEME['fg'])
 
@@ -5035,7 +5102,9 @@ class NessusHistoryTrackerApp:
                     self.host_tracking_ax1.text(0.98, 0.98, f'Total: {total_missing} | Avg: {avg_days:.0f}d',
                         transform=self.host_tracking_ax1.transAxes, fontsize=7, color='#ff6b6b',
                         ha='right', va='top')
-        self.host_tracking_ax1.set_title('Hosts Missing from Recent Scans', color=GUI_DARK_THEME['fg'])
+        self.host_tracking_ax1.set_title('Hosts Missing from Recent Scans', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.host_tracking_ax1.text(0.5, 1.02, 'Hosts not seen in recent vulnerability scans',
+            transform=self.host_tracking_ax1.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         self.host_tracking_ax1.set_xlabel('Days Since Last Seen', color=GUI_DARK_THEME['fg'])
 
         # Chart 2: Host presence over time
@@ -5071,7 +5140,9 @@ class NessusHistoryTrackerApp:
                         self.host_tracking_ax2.text(0.98, 0.98, f'{arrow} {abs(change):.1f}%',
                             transform=self.host_tracking_ax2.transAxes, fontsize=8, color=color,
                             ha='right', va='top', fontweight='bold')
-        self.host_tracking_ax2.set_title('Host Presence Over Time', color=GUI_DARK_THEME['fg'])
+        self.host_tracking_ax2.set_title('Host Presence Over Time', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.host_tracking_ax2.text(0.5, 1.02, 'Unique hosts per scan over time',
+            transform=self.host_tracking_ax2.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         self.host_tracking_ax2.set_ylabel('Unique Hosts', color=GUI_DARK_THEME['fg'])
 
         # Chart 3: Hosts with declining presence (low presence %)
@@ -5102,7 +5173,9 @@ class NessusHistoryTrackerApp:
                 self.host_tracking_ax3.text(0.98, 0.02, f'<50%: {total_low} | <25%: {critical_low}',
                     transform=self.host_tracking_ax3.transAxes, fontsize=7, color='#ffc107',
                     ha='right', va='bottom')
-        self.host_tracking_ax3.set_title('Hosts with Low Presence (<50%)', color=GUI_DARK_THEME['fg'])
+        self.host_tracking_ax3.set_title('Hosts with Low Presence (<50%)', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.host_tracking_ax3.text(0.5, 1.02, 'Hosts with intermittent scan coverage',
+            transform=self.host_tracking_ax3.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         self.host_tracking_ax3.set_xlabel('Presence %', color=GUI_DARK_THEME['fg'])
 
         # Chart 4: Host status distribution
@@ -5132,7 +5205,9 @@ class NessusHistoryTrackerApp:
                 self.host_tracking_ax4.text(0, 0, f'{total_hosts}\nhosts',
                     ha='center', va='center', fontsize=9, fontweight='bold',
                     color=GUI_DARK_THEME['fg'])
-        self.host_tracking_ax4.set_title('Host Status Distribution', color=GUI_DARK_THEME['fg'])
+        self.host_tracking_ax4.set_title('Host Status Distribution', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.host_tracking_ax4.text(0.5, -0.05, 'Active/Inactive/Intermittent host counts',
+            transform=self.host_tracking_ax4.transAxes, ha='center', va='top', fontsize=7, color='#888888')
 
         for ax in [self.host_tracking_ax1, self.host_tracking_ax2, self.host_tracking_ax3, self.host_tracking_ax4]:
             ax.tick_params(colors=GUI_DARK_THEME['fg'])
@@ -5205,7 +5280,9 @@ class NessusHistoryTrackerApp:
                 add_data_labels(self.metrics_ax1, bars1, fontsize=6)
                 add_data_labels(self.metrics_ax1, bars2, fontsize=6)
 
-        self.metrics_ax1.set_title('Remediation Status by Severity', color=GUI_DARK_THEME['fg'])
+        self.metrics_ax1.set_title('Remediation Status by Severity', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.metrics_ax1.text(0.5, 1.02, 'Remediated vs active findings per severity',
+            transform=self.metrics_ax1.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         self.metrics_ax1.set_ylabel('Count', color=GUI_DARK_THEME['fg'])
 
         # Chart 2: Risk Trend Over Time (line chart)
@@ -5226,7 +5303,9 @@ class NessusHistoryTrackerApp:
                 self.metrics_ax2.set_xticks(range(len(dates)))
                 tick_labels = [d.strftime('%m/%d') if hasattr(d, 'strftime') else str(d)[:5] for d in dates]
                 self.metrics_ax2.set_xticklabels(tick_labels, fontsize=7, rotation=45)
-        self.metrics_ax2.set_title('Risk Score Trend', color=GUI_DARK_THEME['fg'])
+        self.metrics_ax2.set_title('Risk Score Trend', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.metrics_ax2.text(0.5, 1.02, 'Organization-wide risk trend over time',
+            transform=self.metrics_ax2.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         self.metrics_ax2.set_ylabel('Risk Score', color=GUI_DARK_THEME['fg'])
 
         # Chart 3: SLA Status by Severity (stacked bar - breached/at_risk/on_track)
@@ -5245,7 +5324,9 @@ class NessusHistoryTrackerApp:
             self.metrics_ax3.set_xticks(x)
             self.metrics_ax3.set_xticklabels(severities, fontsize=8)
             self.metrics_ax3.legend(loc='upper right', fontsize=7)
-        self.metrics_ax3.set_title('SLA Status by Severity', color=GUI_DARK_THEME['fg'])
+        self.metrics_ax3.set_title('SLA Status by Severity', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.metrics_ax3.text(0.5, 1.02, 'SLA compliance breakdown per severity',
+            transform=self.metrics_ax3.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         self.metrics_ax3.set_ylabel('Count', color=GUI_DARK_THEME['fg'])
 
         # Chart 4: Vulns per Host Trend (line chart)
@@ -5265,7 +5346,9 @@ class NessusHistoryTrackerApp:
             else:
                 self.metrics_ax4.set_xticks(range(len(dates)))
                 self.metrics_ax4.set_xticklabels([d[:5] for d in dates], fontsize=7, rotation=45)
-        self.metrics_ax4.set_title('Vulnerabilities per Host Trend', color=GUI_DARK_THEME['fg'])
+        self.metrics_ax4.set_title('Vulnerabilities per Host Trend', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.metrics_ax4.text(0.5, 1.02, 'Average vulnerabilities per host over time',
+            transform=self.metrics_ax4.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         self.metrics_ax4.set_ylabel('Vulns/Host', color=GUI_DARK_THEME['fg'])
 
         for ax in [self.metrics_ax1, self.metrics_ax2, self.metrics_ax3, self.metrics_ax4]:
