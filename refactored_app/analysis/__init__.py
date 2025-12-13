@@ -22,7 +22,14 @@ from .scan_changes import (
 from .opdir_compliance import (
     load_opdir_mapping,
     enrich_with_opdir,
-    calculate_opdir_compliance_status
+    calculate_opdir_compliance_status,
+    get_opdir_compliance_summary,
+    get_overdue_findings,
+    get_opdir_by_year_report,
+    extract_opdir_from_iavx,
+    normalize_opdir_number,
+    create_opdir_lookup,
+    match_opdir
 )
 
 from .advanced_metrics import (
@@ -48,6 +55,13 @@ __all__ = [
     'load_opdir_mapping',
     'enrich_with_opdir',
     'calculate_opdir_compliance_status',
+    'get_opdir_compliance_summary',
+    'get_overdue_findings',
+    'get_opdir_by_year_report',
+    'extract_opdir_from_iavx',
+    'normalize_opdir_number',
+    'create_opdir_lookup',
+    'match_opdir',
     'get_all_advanced_metrics',
     'calculate_reopen_rate',
     'calculate_coverage_metrics',
