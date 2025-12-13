@@ -4242,8 +4242,14 @@ class NessusHistoryTrackerApp:
             ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
 
         if df.empty:
+            for ax in [self.opdir_ax1, self.opdir_ax2, self.opdir_ax3, self.opdir_ax4]:
+                ax.text(0.5, 0.5, 'No vulnerability data loaded', ha='center', va='center',
+                       color=GUI_DARK_THEME['fg'], fontsize=10)
             self.opdir_canvas.draw()
             return
+
+        # Check if OPDIR file has been loaded
+        opdir_loaded = hasattr(self, 'opdir_df') and not self.opdir_df.empty
 
         # Check if data labels are enabled
         show_labels = self.settings_manager.settings.show_data_labels
@@ -4260,13 +4266,18 @@ class NessusHistoryTrackerApp:
                 self.opdir_ax1.pie(counts, labels=labels, colors=colors, autopct='%1.1f%%',
                                   textprops={'color': GUI_DARK_THEME['fg'], 'fontsize': 8})
             else:
-                self.opdir_ax1.text(0.5, 0.5, 'No data', ha='center', va='center',
+                self.opdir_ax1.text(0.5, 0.5, 'No findings to display', ha='center', va='center',
                                    color=GUI_DARK_THEME['fg'])
+        else:
+            # No opdir_number column means OPDIR enrichment hasn't run
+            self.opdir_ax1.text(0.5, 0.5, 'Load OPDIR mapping file\nto enable compliance tracking',
+                               ha='center', va='center', color=GUI_DARK_THEME['fg'], fontsize=9)
         self.opdir_ax1.set_title('OPDIR Mapping Coverage\n', color=GUI_DARK_THEME['fg'], fontsize=10)
         self.opdir_ax1.text(0.5, 1.02, 'Findings linked to OPDIR directives vs unmapped',
             transform=self.opdir_ax1.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
 
         # Chart 2: OPDIR status distribution with data labels
+        has_status_data = False
         if 'opdir_status' in df.columns:
             # Filter to only rows with status
             status_df = df[df['opdir_status'] != '']
@@ -4276,6 +4287,7 @@ class NessusHistoryTrackerApp:
                 status_counts = status_counts.reindex([s for s in status_order if s in status_counts.index])
 
                 if len(status_counts) > 0:
+                    has_status_data = True
                     colors_map = {'Overdue': '#dc3545', 'Due Soon': '#ffc107', 'On Track': '#28a745'}
                     bar_colors = [colors_map.get(s, '#6c757d') for s in status_counts.index]
                     bars = self.opdir_ax2.bar(range(len(status_counts)), status_counts.values, color=bar_colors)
@@ -4288,6 +4300,13 @@ class NessusHistoryTrackerApp:
                                                xy=(bar.get_x() + bar.get_width()/2, val),
                                                xytext=(0, 3), textcoords='offset points',
                                                ha='center', va='bottom', fontsize=7, color='white')
+        if not has_status_data:
+            if not opdir_loaded:
+                self.opdir_ax2.text(0.5, 0.5, 'Load OPDIR file with\ndue dates for status tracking',
+                                   ha='center', va='center', color=GUI_DARK_THEME['fg'], fontsize=9)
+            else:
+                self.opdir_ax2.text(0.5, 0.5, 'No findings with\nOPDIR due dates',
+                                   ha='center', va='center', color=GUI_DARK_THEME['fg'], fontsize=9)
         self.opdir_ax2.set_title('OPDIR Status Distribution', color=GUI_DARK_THEME['fg'], fontsize=10)
         self.opdir_ax2.text(0.5, 1.02, 'Compliance status: Overdue/Due Soon/On Track',
             transform=self.opdir_ax2.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
