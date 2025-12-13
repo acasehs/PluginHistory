@@ -45,7 +45,10 @@ from ..export.sqlite_export import export_to_sqlite
 from ..export.excel_export import export_to_excel
 from ..export.json_export import export_to_json
 from ..settings import SettingsManager, UserSettings
-from .chart_utils import add_data_labels, add_horizontal_data_labels, add_line_data_labels
+from .chart_utils import (
+    add_data_labels, add_horizontal_data_labels, add_line_data_labels,
+    ChartPopoutModal
+)
 
 
 class NessusHistoryTrackerApp:
@@ -107,6 +110,9 @@ class NessusHistoryTrackerApp:
         self.lifecycle_page_size = tk.IntVar(value=100)
         self.lifecycle_current_start = 0  # Starting index for pagination
         self.lifecycle_jump_to = tk.StringVar()
+
+        # Chart pop-out redraw functions (populated after UI build)
+        self.chart_redraw_funcs: Dict[str, Any] = {}
 
         # Settings manager
         self.settings_manager = SettingsManager()
@@ -644,6 +650,12 @@ class NessusHistoryTrackerApp:
 
             self.risk_canvas = FigureCanvasTkAgg(self.risk_fig, master=risk_frame)
             self.risk_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+            # Bind double-click for pop-out (hint label)
+            hint = ttk.Label(risk_frame, text="Double-click chart to pop-out",
+                            font=('Arial', 8), foreground='gray')
+            hint.pack(anchor=tk.SE, padx=5)
+            self._bind_chart_popouts_risk()
         else:
             ttk.Label(risk_frame, text="Install matplotlib for visualizations").pack(pady=50)
 
@@ -937,6 +949,12 @@ class NessusHistoryTrackerApp:
 
             self.metrics_canvas = FigureCanvasTkAgg(self.metrics_fig, master=chart_frame)
             self.metrics_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+            # Bind double-click for pop-out
+            hint = ttk.Label(metrics_frame, text="Double-click chart to pop-out",
+                            font=('Arial', 8), foreground='gray')
+            hint.pack(anchor=tk.SE, padx=5)
+            self._bind_chart_popouts_metrics()
         else:
             ttk.Label(metrics_frame, text="Install matplotlib for visualizations").pack(pady=50)
 
@@ -2076,6 +2094,441 @@ class NessusHistoryTrackerApp:
 
         self.risk_fig.tight_layout()
         self.risk_canvas.draw()
+
+    def _bind_chart_popouts_risk(self):
+        """Bind double-click pop-out for risk charts."""
+        def get_click_quadrant(event):
+            """Determine which quadrant was clicked (0-3 for 2x2 grid)."""
+            widget = event.widget
+            w, h = widget.winfo_width(), widget.winfo_height()
+            x, y = event.x, event.y
+            col = 0 if x < w / 2 else 1
+            row = 0 if y < h / 2 else 1
+            return row * 2 + col
+
+        def on_double_click(event):
+            quadrant = get_click_quadrant(event)
+            chart_info = [
+                ('CVSS Score Distribution', self._draw_cvss_popout),
+                ('Mean Time to Remediation', self._draw_mttr_popout),
+                ('Findings by Age', self._draw_age_popout),
+                ('Top Risky Hosts', self._draw_risky_hosts_popout),
+            ]
+            title, redraw_func = chart_info[quadrant]
+            ChartPopoutModal(self.window, title, redraw_func)
+
+        self.risk_canvas.get_tk_widget().bind('<Double-Button-1>', on_double_click)
+
+    def _draw_cvss_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw CVSS distribution chart for pop-out."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        if df.empty or 'cvss3_base_score' not in df.columns:
+            ax.text(0.5, 0.5, 'No CVSS data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        cvss_scores = pd.to_numeric(df['cvss3_base_score'], errors='coerce').dropna()
+        if len(cvss_scores) == 0:
+            ax.text(0.5, 0.5, 'No CVSS scores found', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Larger bins for better visibility
+        n, bins, patches = ax.hist(cvss_scores, bins=20, color='#007bff',
+                                   edgecolor='white', alpha=0.8)
+
+        # Color by severity range
+        for i, patch in enumerate(patches):
+            bin_center = (bins[i] + bins[i+1]) / 2
+            if bin_center >= 9.0:
+                patch.set_facecolor('#dc3545')  # Critical
+            elif bin_center >= 7.0:
+                patch.set_facecolor('#fd7e14')  # High
+            elif bin_center >= 4.0:
+                patch.set_facecolor('#ffc107')  # Medium
+            else:
+                patch.set_facecolor('#28a745')  # Low
+
+        if show_labels and enlarged:
+            for i, count in enumerate(n):
+                if count > 0:
+                    ax.annotate(f'{int(count)}',
+                               xy=((bins[i] + bins[i+1]) / 2, count),
+                               ha='center', va='bottom', fontsize=8, color='white')
+
+        ax.set_title('CVSS Score Distribution')
+        ax.set_xlabel('CVSS Score')
+        ax.set_ylabel('Count')
+        ax.axvline(x=7.0, color='#fd7e14', linestyle='--', alpha=0.7, label='High (7.0)')
+        ax.axvline(x=9.0, color='#dc3545', linestyle='--', alpha=0.7, label='Critical (9.0)')
+        ax.legend(fontsize=9)
+
+    def _draw_mttr_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw MTTR by severity chart for pop-out."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        if df.empty or 'severity_text' not in df.columns or 'days_open' not in df.columns:
+            ax.text(0.5, 0.5, 'No MTTR data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        resolved = df[df['status'] == 'Resolved']
+        if resolved.empty:
+            ax.text(0.5, 0.5, 'No resolved findings', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        mttr = resolved.groupby('severity_text')['days_open'].mean()
+        severity_order = ['Critical', 'High', 'Medium', 'Low', 'Info']
+        mttr = mttr.reindex([s for s in severity_order if s in mttr.index])
+
+        colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107',
+                 'Low': '#28a745', 'Info': '#17a2b8'}
+        bar_colors = [colors.get(s, '#6c757d') for s in mttr.index]
+
+        bars = ax.bar(range(len(mttr)), mttr.values, color=bar_colors)
+        ax.set_xticks(range(len(mttr)))
+        ax.set_xticklabels(mttr.index, fontsize=10)
+
+        if show_labels:
+            for bar, val in zip(bars, mttr.values):
+                ax.annotate(f'{val:.1f}d',
+                           xy=(bar.get_x() + bar.get_width() / 2, val),
+                           ha='center', va='bottom', fontsize=10, color='white')
+
+        ax.set_title('Mean Time to Remediation by Severity')
+        ax.set_ylabel('Days')
+
+    def _draw_age_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw findings by age chart for pop-out."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        if df.empty or 'days_open' not in df.columns:
+            ax.text(0.5, 0.5, 'No age data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        active = df[df['status'] == 'Active']
+        if active.empty:
+            ax.text(0.5, 0.5, 'No active findings', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        buckets = [0, 30, 60, 90, 120, 180, 365, float('inf')]
+        labels = ['0-30', '31-60', '61-90', '91-120', '121-180', '181-365', '365+']
+        age_counts = pd.cut(active['days_open'], bins=buckets, labels=labels).value_counts().sort_index()
+
+        # Color gradient from green to red
+        colors = ['#28a745', '#7cb342', '#ffc107', '#ff9800', '#ff5722', '#dc3545', '#b71c1c']
+        bars = ax.bar(range(len(age_counts)), age_counts.values, color=colors[:len(age_counts)])
+        ax.set_xticks(range(len(age_counts)))
+        ax.set_xticklabels(labels, fontsize=9)
+
+        if show_labels:
+            for bar, val in zip(bars, age_counts.values):
+                if val > 0:
+                    ax.annotate(f'{int(val)}',
+                               xy=(bar.get_x() + bar.get_width() / 2, val),
+                               ha='center', va='bottom', fontsize=9, color='white')
+
+        ax.set_title('Active Findings by Age (Days)')
+        ax.set_ylabel('Count')
+
+    def _draw_risky_hosts_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw top risky hosts chart for pop-out."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        if df.empty or 'hostname' not in df.columns or 'severity_value' not in df.columns:
+            ax.text(0.5, 0.5, 'No host risk data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Show more hosts in pop-out
+        num_hosts = 15 if enlarged else 10
+        host_risk = df.groupby('hostname')['severity_value'].sum().nlargest(num_hosts)
+
+        if len(host_risk) == 0:
+            ax.text(0.5, 0.5, 'No host data', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Color gradient
+        max_risk = host_risk.max()
+        colors = ['#dc3545' if r > max_risk * 0.7 else '#fd7e14' if r > max_risk * 0.4 else '#ffc107'
+                 for r in host_risk.values]
+
+        bars = ax.barh(range(len(host_risk)), host_risk.values, color=colors)
+        ax.set_yticks(range(len(host_risk)))
+        ax.set_yticklabels([h[:20] for h in host_risk.index], fontsize=9)
+
+        if show_labels:
+            for bar, val in zip(bars, host_risk.values):
+                ax.annotate(f'{int(val)}',
+                           xy=(val, bar.get_y() + bar.get_height() / 2),
+                           xytext=(3, 0), textcoords='offset points',
+                           ha='left', va='center', fontsize=9, color='white')
+
+        ax.set_title(f'Top {num_hosts} Risky Hosts (by Severity Score)')
+        ax.set_xlabel('Risk Score')
+        ax.invert_yaxis()
+
+    def _bind_chart_popouts_metrics(self):
+        """Bind double-click pop-out for Metrics tab charts."""
+        if not hasattr(self, 'metrics_canvas'):
+            return
+
+        def get_click_quadrant(event):
+            """Determine which quadrant of the 2x2 grid was clicked."""
+            widget = event.widget
+            w, h = widget.winfo_width(), widget.winfo_height()
+            x, y = event.x, event.y
+            col = 0 if x < w / 2 else 1
+            row = 0 if y < h / 2 else 1
+            return row * 2 + col
+
+        def on_double_click(event):
+            quadrant = get_click_quadrant(event)
+            chart_info = [
+                ('Remediation Status by Severity', self._draw_remediation_popout),
+                ('Risk Score Trend', self._draw_risk_trend_popout),
+                ('SLA Status by Severity', self._draw_sla_status_popout),
+                ('Vulnerabilities per Host Trend', self._draw_vulns_per_host_popout),
+            ]
+            title, redraw_func = chart_info[quadrant]
+            ChartPopoutModal(self.window, title, redraw_func)
+
+        self.metrics_canvas.get_tk_widget().bind('<Double-Button-1>', on_double_click)
+
+    def _draw_remediation_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw remediation status chart for pop-out."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        hist_df = self.historical_df
+
+        if df.empty:
+            ax.text(0.5, 0.5, 'No data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        remediation_metrics = calculate_remediation_rate(df, hist_df)
+        by_sev = remediation_metrics.get('by_severity', {})
+
+        if not by_sev:
+            ax.text(0.5, 0.5, 'No remediation data', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        severities = ['Critical', 'High', 'Medium', 'Low']
+        remediated = [by_sev.get(s, {}).get('remediated', 0) for s in severities]
+        active = [by_sev.get(s, {}).get('active', 0) for s in severities]
+        discovered = [by_sev.get(s, {}).get('discovered', 0) for s in severities]
+
+        x = range(len(severities))
+        width = 0.25
+
+        # Show discovered in enlarged view
+        if enlarged:
+            bars1 = ax.bar([i - width for i in x], discovered, width, label='Discovered', color='#6c757d')
+            bars2 = ax.bar([i for i in x], remediated, width, label='Remediated', color='#28a745')
+            bars3 = ax.bar([i + width for i in x], active, width, label='Active', color='#dc3545')
+            if show_labels:
+                for bars in [bars1, bars2, bars3]:
+                    for bar in bars:
+                        h = bar.get_height()
+                        if h > 0:
+                            ax.annotate(f'{int(h)}', xy=(bar.get_x() + bar.get_width()/2, h),
+                                       xytext=(0, 3), textcoords='offset points',
+                                       ha='center', va='bottom', fontsize=9, color='white')
+        else:
+            bars1 = ax.bar([i - width/2 for i in x], remediated, width, label='Remediated', color='#28a745')
+            bars2 = ax.bar([i + width/2 for i in x], active, width, label='Active', color='#dc3545')
+            if show_labels:
+                for bars in [bars1, bars2]:
+                    for bar in bars:
+                        h = bar.get_height()
+                        if h > 0:
+                            ax.annotate(f'{int(h)}', xy=(bar.get_x() + bar.get_width()/2, h),
+                                       xytext=(0, 3), textcoords='offset points',
+                                       ha='center', va='bottom', fontsize=9, color='white')
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(severities, fontsize=10)
+        ax.legend(loc='upper right', fontsize=9)
+        ax.set_title('Remediation Status by Severity')
+        ax.set_ylabel('Count')
+
+        # Add summary text in enlarged view
+        if enlarged:
+            total_rem = sum(remediated)
+            total_act = sum(active)
+            rate = total_rem / (total_rem + total_act) * 100 if (total_rem + total_act) > 0 else 0
+            ax.text(0.02, 0.98, f'Overall Rate: {rate:.1f}%', transform=ax.transAxes,
+                   fontsize=10, va='top', color='#28a745')
+
+    def _draw_risk_trend_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw risk score trend chart for pop-out."""
+        hist_df = self.historical_df
+
+        risk_trend = calculate_risk_reduction_trend(hist_df)
+
+        if risk_trend.empty or len(risk_trend) < 2:
+            ax.text(0.5, 0.5, 'Insufficient historical data\n(need 2+ scans)', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        dates = risk_trend['scan_date']
+        risk_scores = risk_trend['total_risk_score']
+
+        # Plot with markers
+        line, = ax.plot(range(len(dates)), risk_scores, marker='o', color='#007bff',
+                       linewidth=2, markersize=8 if enlarged else 5)
+        ax.fill_between(range(len(dates)), risk_scores, alpha=0.3, color='#007bff')
+
+        # Add data labels
+        if show_labels:
+            for i, (x, y) in enumerate(zip(range(len(dates)), risk_scores)):
+                # Skip some labels if too crowded
+                if not enlarged and len(dates) > 10 and i % 2 != 0:
+                    continue
+                ax.annotate(f'{int(y)}', xy=(x, y), xytext=(0, 8), textcoords='offset points',
+                           ha='center', va='bottom', fontsize=9 if enlarged else 7, color='white')
+
+        # Format date labels
+        if len(dates) > 8:
+            step = max(1, len(dates) // 8)
+            tick_positions = list(range(0, len(dates), step))
+            ax.set_xticks(tick_positions)
+            tick_labels = [dates.iloc[i].strftime('%m/%d/%y') if hasattr(dates.iloc[i], 'strftime')
+                          else str(dates.iloc[i])[:8] for i in tick_positions]
+            ax.set_xticklabels(tick_labels, fontsize=9, rotation=45, ha='right')
+        else:
+            ax.set_xticks(range(len(dates)))
+            tick_labels = [d.strftime('%m/%d/%y') if hasattr(d, 'strftime') else str(d)[:8] for d in dates]
+            ax.set_xticklabels(tick_labels, fontsize=9, rotation=45, ha='right')
+
+        ax.set_title('Risk Score Trend Over Time')
+        ax.set_ylabel('Total Risk Score')
+        ax.set_xlabel('Scan Date')
+
+        # Add trend indicator
+        if enlarged and len(risk_scores) >= 2:
+            change = risk_scores.iloc[-1] - risk_scores.iloc[0]
+            pct_change = change / risk_scores.iloc[0] * 100 if risk_scores.iloc[0] > 0 else 0
+            color = '#28a745' if change < 0 else '#dc3545'
+            symbol = '↓' if change < 0 else '↑'
+            ax.text(0.98, 0.98, f'{symbol} {abs(pct_change):.1f}%', transform=ax.transAxes,
+                   fontsize=12, va='top', ha='right', color=color, fontweight='bold')
+
+    def _draw_sla_status_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw SLA status chart for pop-out."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+
+        if df.empty:
+            ax.text(0.5, 0.5, 'No data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        sla_targets = self.settings_manager.settings.get_sla_targets()
+        sla_targets = {k: v for k, v in sla_targets.items() if v is not None}
+        sla_metrics = calculate_sla_breach_tracking(df, sla_targets)
+        sla_by_sev = sla_metrics.get('by_severity', {})
+
+        if not sla_by_sev:
+            ax.text(0.5, 0.5, 'No SLA data\n(configure SLA targets in Settings)', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        severities = ['Critical', 'High', 'Medium', 'Low']
+        breached = [sla_by_sev.get(s, {}).get('breached', 0) for s in severities]
+        at_risk = [sla_by_sev.get(s, {}).get('at_risk', 0) for s in severities]
+        on_track = [sla_by_sev.get(s, {}).get('on_track', 0) for s in severities]
+
+        x = range(len(severities))
+        bars1 = ax.bar(x, breached, label='Breached', color='#dc3545')
+        bars2 = ax.bar(x, at_risk, bottom=breached, label='At Risk', color='#ffc107')
+        bottom_track = [b + r for b, r in zip(breached, at_risk)]
+        bars3 = ax.bar(x, on_track, bottom=bottom_track, label='On Track', color='#28a745')
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(severities, fontsize=10)
+        ax.legend(loc='upper right', fontsize=9)
+        ax.set_title('SLA Status by Severity')
+        ax.set_ylabel('Count')
+
+        # Add labels on bars
+        if show_labels:
+            for bars, values in [(bars1, breached), (bars2, at_risk), (bars3, on_track)]:
+                for bar, val in zip(bars, values):
+                    if val > 0:
+                        h = bar.get_height()
+                        y_pos = bar.get_y() + h / 2
+                        ax.annotate(f'{int(val)}', xy=(bar.get_x() + bar.get_width()/2, y_pos),
+                                   ha='center', va='center', fontsize=9, color='white', fontweight='bold')
+
+        # Add summary in enlarged view
+        if enlarged:
+            total_breached = sum(breached)
+            total_count = sum(breached) + sum(at_risk) + sum(on_track)
+            breach_rate = total_breached / total_count * 100 if total_count > 0 else 0
+            ax.text(0.02, 0.98, f'Breach Rate: {breach_rate:.1f}%', transform=ax.transAxes,
+                   fontsize=10, va='top', color='#dc3545' if breach_rate > 20 else '#28a745')
+
+            # Show SLA targets
+            targets_text = 'SLA Targets (days): ' + ', '.join([f'{k[0]}: {v}' for k, v in sla_targets.items()])
+            ax.text(0.5, -0.12, targets_text, transform=ax.transAxes, fontsize=8,
+                   ha='center', color='gray')
+
+    def _draw_vulns_per_host_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw vulnerabilities per host trend chart for pop-out."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        hist_df = self.historical_df
+
+        normalized_metrics = calculate_normalized_metrics(hist_df, df)
+        norm_trend = normalized_metrics.get('trend', [])
+
+        if not norm_trend or len(norm_trend) < 2:
+            ax.text(0.5, 0.5, 'Insufficient historical data\n(need 2+ scans)', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        dates = [t['scan_date'] for t in norm_trend]
+        vph = [t['vulns_per_host'] for t in norm_trend]
+
+        # Plot with markers
+        line, = ax.plot(range(len(dates)), vph, marker='s', color='#17a2b8',
+                       linewidth=2, markersize=8 if enlarged else 5)
+
+        # Add data labels
+        if show_labels:
+            for i, (x, y) in enumerate(zip(range(len(dates)), vph)):
+                if not enlarged and len(dates) > 10 and i % 2 != 0:
+                    continue
+                ax.annotate(f'{y:.1f}', xy=(x, y), xytext=(0, 8), textcoords='offset points',
+                           ha='center', va='bottom', fontsize=9 if enlarged else 7, color='white')
+
+        # Format date labels
+        if len(dates) > 8:
+            step = max(1, len(dates) // 8)
+            tick_positions = list(range(0, len(dates), step))
+            ax.set_xticks(tick_positions)
+            tick_labels = [dates[i][:8] for i in tick_positions]
+            ax.set_xticklabels(tick_labels, fontsize=9, rotation=45, ha='right')
+        else:
+            ax.set_xticks(range(len(dates)))
+            ax.set_xticklabels([d[:8] for d in dates], fontsize=9, rotation=45, ha='right')
+
+        ax.set_title('Vulnerabilities per Host Over Time')
+        ax.set_ylabel('Vulns per Host')
+        ax.set_xlabel('Scan Date')
+
+        # Add trend indicator
+        if enlarged and len(vph) >= 2:
+            change = vph[-1] - vph[0]
+            pct_change = change / vph[0] * 100 if vph[0] > 0 else 0
+            color = '#28a745' if change < 0 else '#dc3545'
+            symbol = '↓' if change < 0 else '↑'
+            ax.text(0.98, 0.98, f'{symbol} {abs(pct_change):.1f}%', transform=ax.transAxes,
+                   fontsize=12, va='top', ha='right', color=color, fontweight='bold')
+
+            # Add context
+            ax.text(0.02, 0.98, f'Current: {vph[-1]:.1f} vulns/host', transform=ax.transAxes,
+                   fontsize=10, va='top', color='#17a2b8')
 
     def _update_opdir_charts(self):
         """Update OPDIR compliance visualizations."""

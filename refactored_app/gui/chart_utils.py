@@ -3,10 +3,13 @@ Chart Utilities Module
 Helper functions for matplotlib chart formatting and interactivity.
 """
 
+import tkinter as tk
+from tkinter import ttk
 from typing import Optional, List, Dict, Any, Callable
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.axes import Axes
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 import numpy as np
 
 
@@ -220,3 +223,243 @@ def style_chart_for_dark_theme(ax: Axes, bg_color: str = '#1e1e1e',
     ax.title.set_color(fg_color)
     for spine in ax.spines.values():
         spine.set_color(fg_color)
+
+
+class ChartPopoutModal:
+    """
+    Pop-out modal window for enlarged chart viewing with zoom and pan.
+
+    Features:
+    - Resizable window
+    - Matplotlib navigation toolbar (zoom, pan, home, save)
+    - Larger fonts and labels for readability
+    - Dark theme matching main app
+
+    Usage:
+        # In your chart update method, store the redraw function:
+        self.chart_redraw_funcs['risk'] = lambda fig, ax: self._draw_risk_chart(fig, ax)
+
+        # Bind double-click to canvas:
+        canvas.get_tk_widget().bind('<Double-Button-1>',
+            lambda e: ChartPopoutModal(self.window, 'Risk Analysis', self.chart_redraw_funcs['risk']))
+    """
+
+    # Dark theme colors
+    BG_COLOR = '#1e1e1e'
+    FG_COLOR = '#f0f0f0'
+    ENTRY_BG = '#2d2d2d'
+
+    def __init__(self, parent, title: str, redraw_func: Callable,
+                 width: int = 900, height: int = 700):
+        """
+        Create a pop-out chart modal.
+
+        Args:
+            parent: Parent tkinter window
+            title: Window title
+            redraw_func: Function that takes (fig, ax) and draws the chart
+            width: Initial window width
+            height: Initial window height
+        """
+        self.parent = parent
+        self.title = title
+        self.redraw_func = redraw_func
+        self.zoom_level = 1.0
+
+        # Create modal window
+        self.modal = tk.Toplevel(parent)
+        self.modal.title(f"📊 {title} (Pop-out)")
+        self.modal.geometry(f"{width}x{height}")
+        self.modal.configure(bg=self.BG_COLOR)
+        self.modal.transient(parent)
+
+        # Make it resizable
+        self.modal.resizable(True, True)
+        self.modal.minsize(600, 400)
+
+        self._build_ui()
+        self._draw_chart()
+
+        # Bind resize event
+        self.modal.bind('<Configure>', self._on_resize)
+
+        # Focus and bring to front
+        self.modal.focus_set()
+        self.modal.grab_set()
+
+    def _build_ui(self):
+        """Build the modal UI."""
+        # Control bar at top
+        control_frame = ttk.Frame(self.modal)
+        control_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        # Title label
+        ttk.Label(control_frame, text=self.title,
+                 font=('Arial', 12, 'bold')).pack(side=tk.LEFT, padx=5)
+
+        # Zoom controls
+        zoom_frame = ttk.Frame(control_frame)
+        zoom_frame.pack(side=tk.RIGHT, padx=5)
+
+        ttk.Label(zoom_frame, text="Zoom:").pack(side=tk.LEFT, padx=2)
+
+        ttk.Button(zoom_frame, text="-", width=2,
+                  command=self._zoom_out).pack(side=tk.LEFT, padx=1)
+
+        self.zoom_label = ttk.Label(zoom_frame, text="100%", width=5)
+        self.zoom_label.pack(side=tk.LEFT, padx=2)
+
+        ttk.Button(zoom_frame, text="+", width=2,
+                  command=self._zoom_in).pack(side=tk.LEFT, padx=1)
+
+        ttk.Button(zoom_frame, text="Reset", width=5,
+                  command=self._zoom_reset).pack(side=tk.LEFT, padx=5)
+
+        # Show data labels toggle
+        self.show_labels_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(control_frame, text="Labels",
+                       variable=self.show_labels_var,
+                       command=self._redraw).pack(side=tk.RIGHT, padx=10)
+
+        # Chart frame
+        self.chart_frame = ttk.Frame(self.modal)
+        self.chart_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # Create figure with larger size
+        self.fig = Figure(figsize=(10, 8), dpi=100, facecolor=self.BG_COLOR)
+        self.ax = self.fig.add_subplot(111)
+        self.ax.set_facecolor(self.ENTRY_BG)
+
+        # Create canvas
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self.chart_frame)
+        self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        # Add matplotlib navigation toolbar
+        toolbar_frame = ttk.Frame(self.modal)
+        toolbar_frame.pack(fill=tk.X, padx=5, pady=2)
+        self.toolbar = NavigationToolbar2Tk(self.canvas, toolbar_frame)
+        self.toolbar.update()
+
+        # Close button
+        btn_frame = ttk.Frame(self.modal)
+        btn_frame.pack(fill=tk.X, padx=5, pady=5)
+        ttk.Button(btn_frame, text="Close", command=self.modal.destroy).pack(side=tk.RIGHT)
+
+    def _draw_chart(self):
+        """Draw/redraw the chart."""
+        self.ax.clear()
+        self.ax.set_facecolor(self.ENTRY_BG)
+
+        # Call the redraw function with larger font settings
+        try:
+            self.redraw_func(self.fig, self.ax, enlarged=True,
+                           show_labels=self.show_labels_var.get())
+        except TypeError:
+            # Fallback if redraw_func doesn't accept extra args
+            self.redraw_func(self.fig, self.ax)
+
+        # Apply dark theme styling with larger fonts
+        self._style_enlarged_chart()
+
+        self.fig.tight_layout()
+        self.canvas.draw()
+
+    def _redraw(self):
+        """Redraw chart (called from controls)."""
+        self._draw_chart()
+
+    def _style_enlarged_chart(self):
+        """Apply enlarged styling for pop-out view."""
+        # Larger tick labels
+        self.ax.tick_params(axis='both', labelsize=10, colors=self.FG_COLOR)
+
+        # Style spines
+        for spine in self.ax.spines.values():
+            spine.set_color(self.FG_COLOR)
+
+        # Style title and labels
+        title = self.ax.get_title()
+        if title:
+            self.ax.set_title(title, fontsize=14, color=self.FG_COLOR, fontweight='bold')
+
+        xlabel = self.ax.get_xlabel()
+        if xlabel:
+            self.ax.set_xlabel(xlabel, fontsize=11, color=self.FG_COLOR)
+
+        ylabel = self.ax.get_ylabel()
+        if ylabel:
+            self.ax.set_ylabel(ylabel, fontsize=11, color=self.FG_COLOR)
+
+        # Style legend if present
+        legend = self.ax.get_legend()
+        if legend:
+            legend.get_frame().set_facecolor(self.ENTRY_BG)
+            legend.get_frame().set_edgecolor(self.FG_COLOR)
+            for text in legend.get_texts():
+                text.set_color(self.FG_COLOR)
+
+    def _zoom_in(self):
+        """Zoom in on the chart."""
+        self.zoom_level = min(self.zoom_level * 1.2, 3.0)
+        self._apply_zoom()
+
+    def _zoom_out(self):
+        """Zoom out on the chart."""
+        self.zoom_level = max(self.zoom_level / 1.2, 0.5)
+        self._apply_zoom()
+
+    def _zoom_reset(self):
+        """Reset zoom to 100%."""
+        self.zoom_level = 1.0
+        self._apply_zoom()
+
+    def _apply_zoom(self):
+        """Apply current zoom level."""
+        self.zoom_label.config(text=f"{int(self.zoom_level * 100)}%")
+
+        # Adjust figure DPI for zoom effect
+        base_dpi = 100
+        self.fig.set_dpi(base_dpi * self.zoom_level)
+        self.canvas.draw()
+
+    def _on_resize(self, event):
+        """Handle window resize."""
+        # Only respond to actual window resizes
+        if event.widget == self.modal:
+            self.fig.tight_layout()
+            self.canvas.draw()
+
+
+def create_popout_redraw_func(original_update_func, ax_index: int = 0):
+    """
+    Create a redraw function for pop-out from an existing chart update method.
+
+    This wraps an existing multi-axis chart update to work with single-axis pop-out.
+
+    Args:
+        original_update_func: The original _update_*_charts method
+        ax_index: Which subplot to extract (0-3 for 2x2 grid)
+
+    Returns:
+        Function suitable for ChartPopoutModal
+    """
+    def redraw_func(fig, ax, enlarged=False, show_labels=True):
+        # This is a template - actual implementation depends on chart type
+        pass
+    return redraw_func
+
+
+def bind_chart_popout(canvas, parent_window, title: str, redraw_func: Callable):
+    """
+    Bind double-click to pop out a chart.
+
+    Args:
+        canvas: FigureCanvasTkAgg canvas
+        parent_window: Parent tkinter window
+        title: Title for pop-out window
+        redraw_func: Function(fig, ax, enlarged=False, show_labels=True) to draw chart
+    """
+    def on_double_click(event):
+        ChartPopoutModal(parent_window, title, redraw_func)
+
+    canvas.get_tk_widget().bind('<Double-Button-1>', on_double_click)
