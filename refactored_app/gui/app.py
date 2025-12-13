@@ -614,6 +614,12 @@ class NessusHistoryTrackerApp:
 
             self.timeline_canvas = FigureCanvasTkAgg(self.timeline_fig, master=timeline_frame)
             self.timeline_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+            # Bind double-click for pop-out
+            hint = ttk.Label(timeline_frame, text="Double-click chart to pop-out",
+                            font=('Arial', 8), foreground='gray')
+            hint.pack(anchor=tk.SE, padx=5)
+            self._bind_chart_popouts_timeline()
         else:
             ttk.Label(timeline_frame, text="Install matplotlib for visualizations").pack(pady=50)
 
@@ -692,6 +698,12 @@ class NessusHistoryTrackerApp:
 
             self.opdir_canvas = FigureCanvasTkAgg(self.opdir_fig, master=opdir_frame)
             self.opdir_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+            # Bind double-click for pop-out
+            hint = ttk.Label(opdir_frame, text="Double-click chart to pop-out",
+                            font=('Arial', 8), foreground='gray')
+            hint.pack(anchor=tk.SE, padx=5)
+            self._bind_chart_popouts_opdir()
         else:
             ttk.Label(opdir_frame, text="Install matplotlib for visualizations").pack(pady=50)
 
@@ -886,6 +898,12 @@ class NessusHistoryTrackerApp:
 
             self.sla_canvas = FigureCanvasTkAgg(self.sla_fig, master=chart_frame)
             self.sla_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+            # Bind double-click for pop-out
+            hint = ttk.Label(chart_frame, text="Double-click chart to pop-out",
+                            font=('Arial', 8), foreground='gray')
+            hint.pack(anchor=tk.SE, padx=5)
+            self._bind_chart_popouts_sla()
         else:
             ttk.Label(sla_frame, text="Install matplotlib for visualizations").pack(pady=50)
 
@@ -2529,6 +2547,633 @@ class NessusHistoryTrackerApp:
             # Add context
             ax.text(0.02, 0.98, f'Current: {vph[-1]:.1f} vulns/host', transform=ax.transAxes,
                    fontsize=10, va='top', color='#17a2b8')
+
+    # ==================== Timeline Tab Pop-outs ====================
+
+    def _bind_chart_popouts_timeline(self):
+        """Bind double-click pop-out for Timeline tab charts."""
+        if not hasattr(self, 'timeline_canvas'):
+            return
+
+        def get_click_quadrant(event):
+            widget = event.widget
+            w, h = widget.winfo_width(), widget.winfo_height()
+            x, y = event.x, event.y
+            col = 0 if x < w / 2 else 1
+            row = 0 if y < h / 2 else 1
+            return row * 2 + col
+
+        def on_double_click(event):
+            quadrant = get_click_quadrant(event)
+            chart_info = [
+                ('Total Findings Over Time', self._draw_total_findings_popout),
+                ('Findings by Severity Over Time', self._draw_severity_timeline_popout),
+                ('New vs Resolved Findings', self._draw_new_vs_resolved_popout),
+                ('Cumulative Risk Exposure', self._draw_cumulative_risk_popout),
+            ]
+            title, redraw_func = chart_info[quadrant]
+            ChartPopoutModal(self.window, title, redraw_func)
+
+        self.timeline_canvas.get_tk_widget().bind('<Double-Button-1>', on_double_click)
+
+    def _draw_total_findings_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw total findings over time chart for pop-out."""
+        hist_df = self.historical_df
+
+        if hist_df.empty or 'scan_date' not in hist_df.columns:
+            ax.text(0.5, 0.5, 'No historical data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Group by scan date
+        scan_counts = hist_df.groupby('scan_date').size().reset_index(name='count')
+        scan_counts = scan_counts.sort_values('scan_date')
+
+        if len(scan_counts) < 2:
+            ax.text(0.5, 0.5, 'Need 2+ scans for timeline', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        dates = scan_counts['scan_date']
+        counts = scan_counts['count']
+
+        # Plot
+        ax.plot(range(len(dates)), counts, marker='o', color='#007bff',
+               linewidth=2, markersize=8 if enlarged else 5)
+        ax.fill_between(range(len(dates)), counts, alpha=0.3, color='#007bff')
+
+        if show_labels:
+            for i, (x, y) in enumerate(zip(range(len(dates)), counts)):
+                if not enlarged and len(dates) > 8 and i % 2 != 0:
+                    continue
+                ax.annotate(f'{int(y)}', xy=(x, y), xytext=(0, 8), textcoords='offset points',
+                           ha='center', va='bottom', fontsize=9, color='white')
+
+        # Format x-axis
+        if len(dates) > 8:
+            step = max(1, len(dates) // 8)
+            tick_positions = list(range(0, len(dates), step))
+            ax.set_xticks(tick_positions)
+            tick_labels = [str(dates.iloc[i])[:10] for i in tick_positions]
+            ax.set_xticklabels(tick_labels, fontsize=9, rotation=45, ha='right')
+        else:
+            ax.set_xticks(range(len(dates)))
+            ax.set_xticklabels([str(d)[:10] for d in dates], fontsize=9, rotation=45, ha='right')
+
+        ax.set_title('Total Findings Over Time')
+        ax.set_ylabel('Finding Count')
+        ax.set_xlabel('Scan Date')
+
+        if enlarged:
+            change = counts.iloc[-1] - counts.iloc[0]
+            pct = change / counts.iloc[0] * 100 if counts.iloc[0] > 0 else 0
+            color = '#28a745' if change < 0 else '#dc3545'
+            symbol = '↓' if change < 0 else '↑'
+            ax.text(0.98, 0.98, f'{symbol} {abs(pct):.1f}%', transform=ax.transAxes,
+                   fontsize=12, va='top', ha='right', color=color, fontweight='bold')
+
+    def _draw_severity_timeline_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw findings by severity over time for pop-out."""
+        hist_df = self.historical_df
+
+        if hist_df.empty or 'scan_date' not in hist_df.columns or 'severity' not in hist_df.columns:
+            ax.text(0.5, 0.5, 'No historical data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Group by scan date and severity
+        pivot = hist_df.groupby(['scan_date', 'severity']).size().unstack(fill_value=0)
+
+        if len(pivot) < 2:
+            ax.text(0.5, 0.5, 'Need 2+ scans for timeline', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        dates = pivot.index
+        severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff', 'Info': '#6c757d'}
+
+        for sev in ['Critical', 'High', 'Medium', 'Low']:
+            if sev in pivot.columns:
+                values = pivot[sev].values
+                ax.plot(range(len(dates)), values, marker='o', label=sev,
+                       color=severity_colors.get(sev, '#6c757d'),
+                       linewidth=2, markersize=6 if enlarged else 4)
+
+        ax.legend(loc='upper right', fontsize=9)
+
+        # Format x-axis
+        if len(dates) > 8:
+            step = max(1, len(dates) // 8)
+            tick_positions = list(range(0, len(dates), step))
+            ax.set_xticks(tick_positions)
+            tick_labels = [str(dates[i])[:10] for i in tick_positions]
+            ax.set_xticklabels(tick_labels, fontsize=9, rotation=45, ha='right')
+        else:
+            ax.set_xticks(range(len(dates)))
+            ax.set_xticklabels([str(d)[:10] for d in dates], fontsize=9, rotation=45, ha='right')
+
+        ax.set_title('Findings by Severity Over Time')
+        ax.set_ylabel('Finding Count')
+        ax.set_xlabel('Scan Date')
+
+    def _draw_new_vs_resolved_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw new vs resolved findings for pop-out."""
+        df = self.lifecycle_df
+
+        if df.empty or 'first_seen' not in df.columns:
+            ax.text(0.5, 0.5, 'No lifecycle data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Count new findings per first_seen date
+        new_counts = df.groupby('first_seen').size().reset_index(name='new')
+        new_counts = new_counts.sort_values('first_seen')
+
+        # Count resolved (last_seen != first_seen and status == 'resolved')
+        resolved_df = df[df['status'] == 'resolved'].copy() if 'status' in df.columns else pd.DataFrame()
+        if not resolved_df.empty and 'last_seen' in resolved_df.columns:
+            resolved_counts = resolved_df.groupby('last_seen').size().reset_index(name='resolved')
+        else:
+            resolved_counts = pd.DataFrame({'last_seen': [], 'resolved': []})
+
+        if len(new_counts) < 2:
+            ax.text(0.5, 0.5, 'Need more data for timeline', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        dates = new_counts['first_seen']
+        new_vals = new_counts['new'].values
+
+        x = range(len(dates))
+        width = 0.35
+
+        bars1 = ax.bar([i - width/2 for i in x], new_vals, width, label='New', color='#dc3545')
+
+        # Try to align resolved with dates
+        if not resolved_counts.empty:
+            resolved_dict = dict(zip(resolved_counts['last_seen'], resolved_counts['resolved']))
+            resolved_vals = [resolved_dict.get(d, 0) for d in dates]
+            bars2 = ax.bar([i + width/2 for i in x], resolved_vals, width, label='Resolved', color='#28a745')
+
+        ax.legend(loc='upper right', fontsize=9)
+
+        # Format x-axis
+        if len(dates) > 8:
+            step = max(1, len(dates) // 8)
+            tick_positions = list(range(0, len(dates), step))
+            ax.set_xticks(tick_positions)
+            tick_labels = [str(dates.iloc[i])[:10] for i in tick_positions]
+            ax.set_xticklabels(tick_labels, fontsize=9, rotation=45, ha='right')
+        else:
+            ax.set_xticks(x)
+            ax.set_xticklabels([str(d)[:10] for d in dates], fontsize=9, rotation=45, ha='right')
+
+        ax.set_title('New vs Resolved Findings')
+        ax.set_ylabel('Count')
+        ax.set_xlabel('Date')
+
+    def _draw_cumulative_risk_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw cumulative risk exposure for pop-out."""
+        hist_df = self.historical_df
+
+        if hist_df.empty or 'scan_date' not in hist_df.columns or 'severity_value' not in hist_df.columns:
+            ax.text(0.5, 0.5, 'No historical data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Calculate cumulative risk by date
+        risk_by_date = hist_df.groupby('scan_date')['severity_value'].sum().reset_index()
+        risk_by_date = risk_by_date.sort_values('scan_date')
+
+        if len(risk_by_date) < 2:
+            ax.text(0.5, 0.5, 'Need 2+ scans for timeline', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        dates = risk_by_date['scan_date']
+        risk_scores = risk_by_date['severity_value']
+
+        # Plot with gradient fill
+        ax.fill_between(range(len(dates)), risk_scores, alpha=0.5, color='#dc3545')
+        ax.plot(range(len(dates)), risk_scores, color='#dc3545', linewidth=2,
+               marker='o', markersize=6 if enlarged else 4)
+
+        if show_labels:
+            for i, (x, y) in enumerate(zip(range(len(dates)), risk_scores)):
+                if not enlarged and len(dates) > 6 and i % 2 != 0:
+                    continue
+                ax.annotate(f'{int(y)}', xy=(x, y), xytext=(0, 8), textcoords='offset points',
+                           ha='center', va='bottom', fontsize=9, color='white')
+
+        # Format x-axis
+        if len(dates) > 8:
+            step = max(1, len(dates) // 8)
+            tick_positions = list(range(0, len(dates), step))
+            ax.set_xticks(tick_positions)
+            tick_labels = [str(dates.iloc[i])[:10] for i in tick_positions]
+            ax.set_xticklabels(tick_labels, fontsize=9, rotation=45, ha='right')
+        else:
+            ax.set_xticks(range(len(dates)))
+            ax.set_xticklabels([str(d)[:10] for d in dates], fontsize=9, rotation=45, ha='right')
+
+        ax.set_title('Cumulative Risk Exposure')
+        ax.set_ylabel('Total Risk Score')
+        ax.set_xlabel('Scan Date')
+
+        if enlarged:
+            peak = risk_scores.max()
+            current = risk_scores.iloc[-1]
+            ax.text(0.02, 0.98, f'Current: {int(current)} | Peak: {int(peak)}',
+                   transform=ax.transAxes, fontsize=10, va='top', color='#dc3545')
+
+    # ==================== OPDIR Tab Pop-outs ====================
+
+    def _bind_chart_popouts_opdir(self):
+        """Bind double-click pop-out for OPDIR tab charts."""
+        if not hasattr(self, 'opdir_canvas'):
+            return
+
+        def get_click_quadrant(event):
+            widget = event.widget
+            w, h = widget.winfo_width(), widget.winfo_height()
+            x, y = event.x, event.y
+            col = 0 if x < w / 2 else 1
+            row = 0 if y < h / 2 else 1
+            return row * 2 + col
+
+        def on_double_click(event):
+            quadrant = get_click_quadrant(event)
+            chart_info = [
+                ('OPDIR Mapping Coverage', self._draw_opdir_coverage_popout),
+                ('OPDIR Status Distribution', self._draw_opdir_status_popout),
+                ('Finding Age (OPDIR Mapped)', self._draw_opdir_age_popout),
+                ('Compliance by OPDIR Year', self._draw_opdir_year_popout),
+            ]
+            title, redraw_func = chart_info[quadrant]
+            ChartPopoutModal(self.window, title, redraw_func)
+
+        self.opdir_canvas.get_tk_widget().bind('<Double-Button-1>', on_double_click)
+
+    def _draw_opdir_coverage_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw OPDIR coverage pie chart for pop-out."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+
+        if df.empty or 'opdir_number' not in df.columns:
+            ax.text(0.5, 0.5, 'No OPDIR data available\n(Load OPDIR mapping first)', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        mapped = df['opdir_number'].notna() & (df['opdir_number'] != '')
+        mapped_count = mapped.sum()
+        unmapped_count = (~mapped).sum()
+        total = len(df)
+
+        if total == 0:
+            ax.text(0.5, 0.5, 'No data', ha='center', va='center', color='white', fontsize=12)
+            return
+
+        # Enhanced pie chart
+        sizes = [mapped_count, unmapped_count]
+        labels = [f'Mapped\n({mapped_count})', f'Unmapped\n({unmapped_count})']
+        colors = ['#28a745', '#6c757d']
+        explode = (0.05, 0) if mapped_count > unmapped_count else (0, 0.05)
+
+        wedges, texts, autotexts = ax.pie(sizes, labels=labels, colors=colors,
+                                          autopct='%1.1f%%', explode=explode,
+                                          textprops={'color': 'white', 'fontsize': 10})
+
+        ax.set_title('OPDIR Mapping Coverage')
+
+        if enlarged:
+            ax.text(0.5, -0.1, f'Total Findings: {total}', transform=ax.transAxes,
+                   ha='center', fontsize=10, color='gray')
+
+    def _draw_opdir_status_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw OPDIR status distribution for pop-out."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+
+        if df.empty or 'opdir_status' not in df.columns:
+            ax.text(0.5, 0.5, 'No OPDIR status data\n(Load OPDIR mapping first)', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        status_counts = df['opdir_status'].value_counts()
+
+        if len(status_counts) == 0:
+            ax.text(0.5, 0.5, 'No status data', ha='center', va='center', color='white', fontsize=12)
+            return
+
+        colors = {'Overdue': '#dc3545', 'Due Soon': '#ffc107', 'On Track': '#28a745', 'No OPDIR': '#6c757d'}
+        bar_colors = [colors.get(s, '#6c757d') for s in status_counts.index]
+
+        bars = ax.bar(range(len(status_counts)), status_counts.values, color=bar_colors)
+        ax.set_xticks(range(len(status_counts)))
+        ax.set_xticklabels(status_counts.index, fontsize=10)
+
+        if show_labels:
+            for bar, val in zip(bars, status_counts.values):
+                ax.annotate(f'{int(val)}', xy=(bar.get_x() + bar.get_width()/2, val),
+                           xytext=(0, 3), textcoords='offset points',
+                           ha='center', va='bottom', fontsize=10, color='white')
+
+        ax.set_title('OPDIR Status Distribution')
+        ax.set_ylabel('Count')
+
+        if enlarged:
+            total = status_counts.sum()
+            overdue = status_counts.get('Overdue', 0)
+            pct = overdue / total * 100 if total > 0 else 0
+            ax.text(0.02, 0.98, f'Overdue: {pct:.1f}%', transform=ax.transAxes,
+                   fontsize=10, va='top', color='#dc3545' if pct > 20 else '#28a745')
+
+    def _draw_opdir_age_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw finding age for OPDIR mapped items for pop-out."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+
+        if df.empty or 'days_open' not in df.columns or 'opdir_number' not in df.columns:
+            ax.text(0.5, 0.5, 'No data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        mapped_df = df[df['opdir_number'].notna() & (df['opdir_number'] != '')]
+
+        if mapped_df.empty:
+            ax.text(0.5, 0.5, 'No OPDIR-mapped findings', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        days = mapped_df['days_open'].values
+
+        # Histogram with age buckets
+        bins = [0, 7, 30, 60, 90, 180, 365, max(days.max() + 1, 366)]
+        bin_labels = ['0-7', '8-30', '31-60', '61-90', '91-180', '181-365', '365+']
+        hist, bin_edges = np.histogram(days, bins=bins)
+
+        colors = ['#28a745', '#28a745', '#ffc107', '#ffc107', '#fd7e14', '#dc3545', '#dc3545']
+        bars = ax.bar(range(len(hist)), hist, color=colors[:len(hist)])
+        ax.set_xticks(range(len(hist)))
+        ax.set_xticklabels(bin_labels[:len(hist)], fontsize=9)
+
+        if show_labels:
+            for bar, val in zip(bars, hist):
+                if val > 0:
+                    ax.annotate(f'{int(val)}', xy=(bar.get_x() + bar.get_width()/2, val),
+                               xytext=(0, 3), textcoords='offset points',
+                               ha='center', va='bottom', fontsize=9, color='white')
+
+        ax.set_title('Finding Age Distribution (OPDIR Mapped)')
+        ax.set_ylabel('Count')
+        ax.set_xlabel('Days Open')
+
+        if enlarged:
+            avg_age = days.mean()
+            median_age = np.median(days)
+            ax.text(0.98, 0.98, f'Avg: {avg_age:.0f}d | Median: {median_age:.0f}d',
+                   transform=ax.transAxes, fontsize=10, va='top', ha='right', color='#17a2b8')
+
+    def _draw_opdir_year_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw compliance by OPDIR year for pop-out."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+
+        if df.empty or 'opdir_year' not in df.columns:
+            ax.text(0.5, 0.5, 'No OPDIR year data\n(Load OPDIR mapping with year info)',
+                   ha='center', va='center', color='white', fontsize=12)
+            return
+
+        year_df = df[df['opdir_year'].notna()]
+        if year_df.empty:
+            ax.text(0.5, 0.5, 'No year data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Group by year and status
+        if 'opdir_status' in year_df.columns:
+            year_status = year_df.groupby(['opdir_year', 'opdir_status']).size().unstack(fill_value=0)
+        else:
+            year_status = year_df.groupby('opdir_year').size().reset_index(name='count')
+            ax.bar(range(len(year_status)), year_status['count'].values, color='#007bff')
+            ax.set_xticks(range(len(year_status)))
+            ax.set_xticklabels([int(y) for y in year_status['opdir_year']], fontsize=10)
+            ax.set_title('Findings by OPDIR Year')
+            ax.set_ylabel('Count')
+            return
+
+        years = year_status.index
+        x = range(len(years))
+
+        # Stacked bar chart
+        bottom = np.zeros(len(years))
+        colors = {'Overdue': '#dc3545', 'Due Soon': '#ffc107', 'On Track': '#28a745'}
+
+        for status in ['On Track', 'Due Soon', 'Overdue']:
+            if status in year_status.columns:
+                values = year_status[status].values
+                ax.bar(x, values, bottom=bottom, label=status, color=colors.get(status, '#6c757d'))
+                bottom += values
+
+        ax.set_xticks(x)
+        ax.set_xticklabels([int(y) for y in years], fontsize=10)
+        ax.legend(loc='upper right', fontsize=9)
+        ax.set_title('Compliance by OPDIR Year')
+        ax.set_ylabel('Count')
+        ax.set_xlabel('OPDIR Year')
+
+    # ==================== SLA Tab Pop-outs ====================
+
+    def _bind_chart_popouts_sla(self):
+        """Bind double-click pop-out for SLA tab charts."""
+        if not hasattr(self, 'sla_canvas'):
+            return
+
+        def get_click_quadrant(event):
+            widget = event.widget
+            w, h = widget.winfo_width(), widget.winfo_height()
+            x, y = event.x, event.y
+            col = 0 if x < w / 2 else 1
+            row = 0 if y < h / 2 else 1
+            return row * 2 + col
+
+        def on_double_click(event):
+            quadrant = get_click_quadrant(event)
+            chart_info = [
+                ('SLA Compliance Status', self._draw_sla_compliance_popout),
+                ('Overdue Findings by Severity', self._draw_sla_overdue_popout),
+                ('Approaching SLA Deadline', self._draw_sla_approaching_popout),
+                ('Days Until/Past SLA', self._draw_sla_days_popout),
+            ]
+            title, redraw_func = chart_info[quadrant]
+            ChartPopoutModal(self.window, title, redraw_func)
+
+        self.sla_canvas.get_tk_widget().bind('<Double-Button-1>', on_double_click)
+
+    def _draw_sla_compliance_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw SLA compliance status pie chart for pop-out."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+
+        if df.empty or 'sla_status' not in df.columns:
+            ax.text(0.5, 0.5, 'No SLA data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        status_counts = df['sla_status'].value_counts()
+
+        if len(status_counts) == 0:
+            ax.text(0.5, 0.5, 'No SLA status data', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        colors = {'Overdue': '#dc3545', 'At Risk': '#ffc107', 'On Track': '#28a745'}
+        pie_colors = [colors.get(s, '#6c757d') for s in status_counts.index]
+
+        labels = [f'{s}\n({c})' for s, c in zip(status_counts.index, status_counts.values)]
+        wedges, texts, autotexts = ax.pie(status_counts.values, labels=labels, colors=pie_colors,
+                                          autopct='%1.1f%%',
+                                          textprops={'color': 'white', 'fontsize': 10})
+
+        ax.set_title('SLA Compliance Status')
+
+        if enlarged:
+            total = status_counts.sum()
+            compliant = status_counts.get('On Track', 0)
+            pct = compliant / total * 100 if total > 0 else 0
+            ax.text(0.5, -0.1, f'Compliance Rate: {pct:.1f}%', transform=ax.transAxes,
+                   ha='center', fontsize=11, color='#28a745' if pct >= 80 else '#dc3545')
+
+    def _draw_sla_overdue_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw overdue findings by severity for pop-out."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+
+        if df.empty or 'sla_status' not in df.columns or 'severity' not in df.columns:
+            ax.text(0.5, 0.5, 'No SLA data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        overdue_df = df[df['sla_status'] == 'Overdue']
+
+        if overdue_df.empty:
+            ax.text(0.5, 0.5, 'No overdue findings', ha='center', va='center',
+                   color='#28a745', fontsize=14)
+            ax.set_title('Overdue Findings by Severity')
+            return
+
+        sev_counts = overdue_df['severity'].value_counts()
+        severity_order = ['Critical', 'High', 'Medium', 'Low']
+        sev_counts = sev_counts.reindex([s for s in severity_order if s in sev_counts.index])
+
+        severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff'}
+        colors = [severity_colors.get(s, '#6c757d') for s in sev_counts.index]
+
+        bars = ax.bar(range(len(sev_counts)), sev_counts.values, color=colors)
+        ax.set_xticks(range(len(sev_counts)))
+        ax.set_xticklabels(sev_counts.index, fontsize=10)
+
+        if show_labels:
+            for bar, val in zip(bars, sev_counts.values):
+                ax.annotate(f'{int(val)}', xy=(bar.get_x() + bar.get_width()/2, val),
+                           xytext=(0, 3), textcoords='offset points',
+                           ha='center', va='bottom', fontsize=10, color='white')
+
+        ax.set_title('Overdue Findings by Severity')
+        ax.set_ylabel('Count')
+
+        if enlarged:
+            total_overdue = len(overdue_df)
+            crit_high = sev_counts.get('Critical', 0) + sev_counts.get('High', 0)
+            ax.text(0.02, 0.98, f'Total Overdue: {total_overdue} | Critical+High: {crit_high}',
+                   transform=ax.transAxes, fontsize=10, va='top', color='#dc3545')
+
+    def _draw_sla_approaching_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw findings approaching SLA deadline for pop-out."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+
+        if df.empty or 'days_until_sla' not in df.columns:
+            ax.text(0.5, 0.5, 'No SLA timeline data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Get findings due within 30 days
+        approaching_df = df[(df['days_until_sla'] >= 0) & (df['days_until_sla'] <= 30)]
+
+        if approaching_df.empty:
+            ax.text(0.5, 0.5, 'No findings approaching deadline\n(within 30 days)',
+                   ha='center', va='center', color='#28a745', fontsize=12)
+            ax.set_title('Approaching SLA Deadline')
+            return
+
+        # Bucket by days
+        bins = [0, 7, 14, 21, 30]
+        labels = ['0-7 days', '8-14 days', '15-21 days', '22-30 days']
+        approaching_df = approaching_df.copy()
+        approaching_df['bucket'] = pd.cut(approaching_df['days_until_sla'], bins=bins, labels=labels, include_lowest=True)
+        bucket_counts = approaching_df['bucket'].value_counts().reindex(labels)
+
+        colors = ['#dc3545', '#fd7e14', '#ffc107', '#28a745']
+        bars = ax.bar(range(len(bucket_counts)), bucket_counts.values, color=colors)
+        ax.set_xticks(range(len(bucket_counts)))
+        ax.set_xticklabels(labels, fontsize=9)
+
+        if show_labels:
+            for bar, val in zip(bars, bucket_counts.values):
+                if pd.notna(val) and val > 0:
+                    ax.annotate(f'{int(val)}', xy=(bar.get_x() + bar.get_width()/2, val),
+                               xytext=(0, 3), textcoords='offset points',
+                               ha='center', va='bottom', fontsize=10, color='white')
+
+        ax.set_title('Findings Approaching SLA Deadline (Next 30 Days)')
+        ax.set_ylabel('Count')
+        ax.set_xlabel('Days Until SLA')
+
+        if enlarged:
+            urgent = bucket_counts.iloc[0] if pd.notna(bucket_counts.iloc[0]) else 0
+            ax.text(0.02, 0.98, f'Urgent (0-7 days): {int(urgent)}',
+                   transform=ax.transAxes, fontsize=10, va='top', color='#dc3545')
+
+    def _draw_sla_days_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw days until/past SLA scatter plot for pop-out."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+
+        if df.empty or 'days_until_sla' not in df.columns or 'severity' not in df.columns:
+            ax.text(0.5, 0.5, 'No SLA data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Filter to reasonable range
+        plot_df = df[df['days_until_sla'].notna()].copy()
+        if plot_df.empty:
+            ax.text(0.5, 0.5, 'No SLA timeline data', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Limit for performance
+        if len(plot_df) > 500:
+            plot_df = plot_df.sample(500, random_state=42)
+
+        severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff'}
+
+        for sev in ['Critical', 'High', 'Medium', 'Low']:
+            sev_df = plot_df[plot_df['severity'] == sev]
+            if not sev_df.empty:
+                ax.scatter(range(len(sev_df)), sev_df['days_until_sla'].values,
+                          c=severity_colors.get(sev, '#6c757d'), label=sev,
+                          alpha=0.6, s=30 if enlarged else 15)
+
+        # Add zero line (SLA deadline)
+        ax.axhline(y=0, color='white', linestyle='--', linewidth=1, alpha=0.7)
+        ax.text(ax.get_xlim()[1] * 0.98, 2, 'SLA Deadline', ha='right', va='bottom',
+               fontsize=8, color='white', alpha=0.7)
+
+        ax.legend(loc='upper right', fontsize=9)
+        ax.set_title('Days Until/Past SLA by Finding')
+        ax.set_ylabel('Days (negative = overdue)')
+        ax.set_xlabel('Finding Index')
+
+        if enlarged:
+            overdue = (plot_df['days_until_sla'] < 0).sum()
+            total = len(plot_df)
+            pct = overdue / total * 100 if total > 0 else 0
+            ax.text(0.02, 0.98, f'Overdue: {overdue}/{total} ({pct:.1f}%)',
+                   transform=ax.transAxes, fontsize=10, va='top',
+                   color='#dc3545' if pct > 20 else '#28a745')
 
     def _update_opdir_charts(self):
         """Update OPDIR compliance visualizations."""
