@@ -45,6 +45,7 @@ from ..export.sqlite_export import export_to_sqlite
 from ..export.excel_export import export_to_excel
 from ..export.json_export import export_to_json
 from ..settings import SettingsManager, UserSettings
+from .chart_utils import add_data_labels, add_horizontal_data_labels, add_line_data_labels
 
 
 class NessusHistoryTrackerApp:
@@ -2027,6 +2028,9 @@ class NessusHistoryTrackerApp:
         self.risk_ax1.set_title('CVSS Score Distribution', color=GUI_DARK_THEME['fg'])
         self.risk_ax1.set_xlabel('CVSS Score', color=GUI_DARK_THEME['fg'])
 
+        # Check if data labels are enabled
+        show_labels = self.settings_manager.settings.show_data_labels
+
         # Chart 2: MTTR by severity
         if 'severity_text' in df.columns and 'days_open' in df.columns:
             resolved = df[df['status'] == 'Resolved']
@@ -2036,6 +2040,8 @@ class NessusHistoryTrackerApp:
                 bars = self.risk_ax2.bar(range(len(mttr)), mttr.values, color=colors[:len(mttr)])
                 self.risk_ax2.set_xticks(range(len(mttr)))
                 self.risk_ax2.set_xticklabels(mttr.index, fontsize=8)
+                if show_labels:
+                    add_data_labels(self.risk_ax2, bars, fmt='{:.1f}', fontsize=6)
         self.risk_ax2.set_title('Mean Time to Remediation', color=GUI_DARK_THEME['fg'])
         self.risk_ax2.set_ylabel('Days', color=GUI_DARK_THEME['fg'])
 
@@ -2045,18 +2051,22 @@ class NessusHistoryTrackerApp:
             buckets = [0, 30, 60, 90, 120, float('inf')]
             labels = ['0-30', '31-60', '61-90', '91-120', '121+']
             age_counts = pd.cut(active['days_open'], bins=buckets, labels=labels).value_counts().sort_index()
-            self.risk_ax3.bar(range(len(age_counts)), age_counts.values, color='#fd7e14')
+            bars = self.risk_ax3.bar(range(len(age_counts)), age_counts.values, color='#fd7e14')
             self.risk_ax3.set_xticks(range(len(age_counts)))
             self.risk_ax3.set_xticklabels(labels, fontsize=8)
+            if show_labels:
+                add_data_labels(self.risk_ax3, bars, fontsize=6)
         self.risk_ax3.set_title('Findings by Age (Days)', color=GUI_DARK_THEME['fg'])
 
         # Chart 4: Top risky hosts
         if 'hostname' in df.columns and 'severity_value' in df.columns:
             host_risk = df.groupby('hostname')['severity_value'].sum().nlargest(10)
             if len(host_risk) > 0:
-                self.risk_ax4.barh(range(len(host_risk)), host_risk.values, color='#dc3545')
+                bars = self.risk_ax4.barh(range(len(host_risk)), host_risk.values, color='#dc3545')
                 self.risk_ax4.set_yticks(range(len(host_risk)))
                 self.risk_ax4.set_yticklabels([h[:15] for h in host_risk.index], fontsize=7)
+                if show_labels:
+                    add_horizontal_data_labels(self.risk_ax4, bars, fontsize=6)
         self.risk_ax4.set_title('Top 10 Risky Hosts', color=GUI_DARK_THEME['fg'])
 
         for ax in [self.risk_ax1, self.risk_ax2, self.risk_ax3, self.risk_ax4]:
@@ -2671,6 +2681,9 @@ class NessusHistoryTrackerApp:
         coverage_pct = calculate_coverage_metrics(hist_df).get('coverage_pct', 100.0)
         self.kpi_labels['coverage'].config(text=f"{coverage_pct}%")
 
+        # Check if data labels are enabled
+        show_labels = self.settings_manager.settings.show_data_labels
+
         # Chart 1: Remediation Rate by Severity (stacked bar)
         by_sev = remediation_metrics.get('by_severity', {})
         if by_sev:
@@ -2681,11 +2694,17 @@ class NessusHistoryTrackerApp:
 
             x = range(len(severities))
             width = 0.35
-            self.metrics_ax1.bar([i - width/2 for i in x], remediated, width, label='Remediated', color='#28a745')
-            self.metrics_ax1.bar([i + width/2 for i in x], active, width, label='Active', color='#dc3545')
+            bars1 = self.metrics_ax1.bar([i - width/2 for i in x], remediated, width, label='Remediated', color='#28a745')
+            bars2 = self.metrics_ax1.bar([i + width/2 for i in x], active, width, label='Active', color='#dc3545')
             self.metrics_ax1.set_xticks(x)
             self.metrics_ax1.set_xticklabels(severities, fontsize=8)
             self.metrics_ax1.legend(loc='upper right', fontsize=7)
+
+            # Add data labels if enabled
+            if show_labels:
+                add_data_labels(self.metrics_ax1, bars1, fontsize=6)
+                add_data_labels(self.metrics_ax1, bars2, fontsize=6)
+
         self.metrics_ax1.set_title('Remediation Status by Severity', color=GUI_DARK_THEME['fg'])
         self.metrics_ax1.set_ylabel('Count', color=GUI_DARK_THEME['fg'])
 
