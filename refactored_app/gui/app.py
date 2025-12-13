@@ -1071,6 +1071,11 @@ class NessusHistoryTrackerApp:
             self.advanced_canvas1 = FigureCanvasTkAgg(self.advanced_fig1, master=risk_page)
             self.advanced_canvas1.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
+            hint1 = ttk.Label(risk_page, text="Double-click chart to pop-out",
+                             font=('Arial', 8), foreground='gray')
+            hint1.pack(anchor=tk.SE, padx=5)
+            self._bind_chart_popouts_advanced_risk()
+
             # Page 2: Sankey & Treemap (Composition)
             comp_page = ttk.Frame(self.advanced_notebook)
             self.advanced_notebook.add(comp_page, text="Composition")
@@ -1087,6 +1092,11 @@ class NessusHistoryTrackerApp:
                     spine.set_color(GUI_DARK_THEME['fg'])
             self.advanced_canvas2 = FigureCanvasTkAgg(self.advanced_fig2, master=comp_page)
             self.advanced_canvas2.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+            hint2 = ttk.Label(comp_page, text="Double-click chart to pop-out",
+                             font=('Arial', 8), foreground='gray')
+            hint2.pack(anchor=tk.SE, padx=5)
+            self._bind_chart_popouts_advanced_comp()
 
             # Page 3: Radar & Gauge (Health Indicators)
             health_page = ttk.Frame(self.advanced_notebook)
@@ -1105,6 +1115,11 @@ class NessusHistoryTrackerApp:
             self.advanced_canvas3 = FigureCanvasTkAgg(self.advanced_fig3, master=health_page)
             self.advanced_canvas3.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
+            hint3 = ttk.Label(health_page, text="Double-click chart to pop-out",
+                             font=('Arial', 8), foreground='gray')
+            hint3.pack(anchor=tk.SE, padx=5)
+            self._bind_chart_popouts_advanced_health()
+
             # Page 4: Prediction & Comparison (Trends)
             trend_page = ttk.Frame(self.advanced_notebook)
             self.advanced_notebook.add(trend_page, text="Trends & Prediction")
@@ -1121,6 +1136,11 @@ class NessusHistoryTrackerApp:
                     spine.set_color(GUI_DARK_THEME['fg'])
             self.advanced_canvas4 = FigureCanvasTkAgg(self.advanced_fig4, master=trend_page)
             self.advanced_canvas4.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+            hint4 = ttk.Label(trend_page, text="Double-click chart to pop-out",
+                             font=('Arial', 8), foreground='gray')
+            hint4.pack(anchor=tk.SE, padx=5)
+            self._bind_chart_popouts_advanced_trends()
 
             hint = ttk.Label(advanced_frame, text="Advanced analytics - switch tabs for different visualizations",
                             font=('Arial', 8), foreground='gray')
@@ -4316,6 +4336,505 @@ class NessusHistoryTrackerApp:
             ax.text(0.5, -0.1, f'Consistent Coverage: {pct:.1f}%', transform=ax.transAxes,
                    ha='center', fontsize=10, color='#28a745' if pct >= 70 else '#dc3545')
 
+    # ===== Advanced Tab Pop-out Methods =====
+
+    def _bind_chart_popouts_advanced_risk(self):
+        """Bind double-click pop-out for Advanced Risk Analysis charts."""
+        if not hasattr(self, 'advanced_canvas1'):
+            return
+
+        def get_click_half(event):
+            widget = event.widget
+            w = widget.winfo_width()
+            return 0 if event.x < w / 2 else 1
+
+        def on_double_click(event):
+            idx = get_click_half(event)
+            chart_info = [
+                ('Risk Heatmap by Subnet/Time', self._draw_heatmap_popout),
+                ('CVSS vs Age vs Impact', self._draw_bubble_popout),
+            ]
+            title, redraw_func = chart_info[idx]
+            ChartPopoutModal(self.window, title, redraw_func)
+
+        self.advanced_canvas1.get_tk_widget().bind('<Double-Button-1>', on_double_click)
+
+    def _bind_chart_popouts_advanced_comp(self):
+        """Bind double-click pop-out for Advanced Composition charts."""
+        if not hasattr(self, 'advanced_canvas2'):
+            return
+
+        def get_click_half(event):
+            widget = event.widget
+            w = widget.winfo_width()
+            return 0 if event.x < w / 2 else 1
+
+        def on_double_click(event):
+            idx = get_click_half(event)
+            chart_info = [
+                ('Vulnerability Lifecycle Flow', self._draw_sankey_popout),
+                ('Plugin Family Distribution', self._draw_treemap_popout),
+            ]
+            title, redraw_func = chart_info[idx]
+            ChartPopoutModal(self.window, title, redraw_func)
+
+        self.advanced_canvas2.get_tk_widget().bind('<Double-Button-1>', on_double_click)
+
+    def _bind_chart_popouts_advanced_health(self):
+        """Bind double-click pop-out for Advanced Health Indicator charts."""
+        if not hasattr(self, 'advanced_canvas3'):
+            return
+
+        def get_click_half(event):
+            widget = event.widget
+            w = widget.winfo_width()
+            return 0 if event.x < w / 2 else 1
+
+        def on_double_click(event):
+            idx = get_click_half(event)
+            chart_info = [
+                ('Subnet Risk Profile', self._draw_radar_popout),
+                ('Remediation Velocity', self._draw_gauge_popout),
+            ]
+            title, redraw_func = chart_info[idx]
+            ChartPopoutModal(self.window, title, redraw_func)
+
+        self.advanced_canvas3.get_tk_widget().bind('<Double-Button-1>', on_double_click)
+
+    def _bind_chart_popouts_advanced_trends(self):
+        """Bind double-click pop-out for Advanced Trends charts."""
+        if not hasattr(self, 'advanced_canvas4'):
+            return
+
+        def get_click_half(event):
+            widget = event.widget
+            w = widget.winfo_width()
+            return 0 if event.x < w / 2 else 1
+
+        def on_double_click(event):
+            idx = get_click_half(event)
+            chart_info = [
+                ('SLA Breach Prediction', self._draw_sla_prediction_popout),
+                ('Period Comparison', self._draw_period_comparison_popout),
+            ]
+            title, redraw_func = chart_info[idx]
+            ChartPopoutModal(self.window, title, redraw_func)
+
+        self.advanced_canvas4.get_tk_widget().bind('<Double-Button-1>', on_double_click)
+
+    def _draw_heatmap_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw Risk Heatmap for pop-out."""
+        hist_df = self.historical_df
+
+        if hist_df.empty or 'scan_date' not in hist_df.columns:
+            ax.text(0.5, 0.5, 'Insufficient historical data for heatmap', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        ip_col = 'ip_address' if 'ip_address' in hist_df.columns else 'ip' if 'ip' in hist_df.columns else None
+        if not ip_col:
+            ax.text(0.5, 0.5, 'No IP address data', ha='center', va='center', color='white', fontsize=12)
+            return
+
+        hist_copy = hist_df.copy()
+        hist_copy['scan_date'] = pd.to_datetime(hist_copy['scan_date'])
+        hist_copy['month'] = hist_copy['scan_date'].dt.to_period('M').astype(str)
+        hist_copy['subnet'] = hist_copy[ip_col].apply(
+            lambda x: '.'.join(str(x).split('.')[:3]) + '.0/24' if pd.notna(x) and '.' in str(x) else 'Unknown'
+        )
+
+        top_subnets = hist_copy['subnet'].value_counts().head(15 if enlarged else 10).index.tolist()
+        filtered = hist_copy[hist_copy['subnet'].isin(top_subnets)]
+
+        if filtered.empty:
+            ax.text(0.5, 0.5, 'No subnet data', ha='center', va='center', color='white', fontsize=12)
+            return
+
+        pivot = filtered.pivot_table(index='subnet', columns='month', aggfunc='size', fill_value=0)
+
+        im = ax.imshow(pivot.values, cmap='YlOrRd', aspect='auto')
+        ax.set_xticks(range(len(pivot.columns)))
+        ax.set_xticklabels(pivot.columns, fontsize=8 if enlarged else 7, rotation=45, ha='right')
+        ax.set_yticks(range(len(pivot.index)))
+        ax.set_yticklabels(pivot.index, fontsize=8 if enlarged else 7)
+
+        if show_labels and enlarged:
+            for i in range(len(pivot.index)):
+                for j in range(len(pivot.columns)):
+                    val = pivot.values[i, j]
+                    if val > 0:
+                        color = 'white' if val > pivot.values.max() * 0.5 else 'black'
+                        ax.text(j, i, str(int(val)), ha='center', va='center', fontsize=7, color=color)
+
+        ax.set_title('Risk Heatmap by Subnet/Time')
+        cbar = fig.colorbar(im, ax=ax, shrink=0.8)
+        cbar.set_label('Vulnerability Count', fontsize=9)
+
+    def _draw_bubble_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw Bubble Chart for pop-out."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+
+        if df.empty or 'days_open' not in df.columns:
+            ax.text(0.5, 0.5, 'No vulnerability age data', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        active = df[df['status'] == 'Active'].copy() if 'status' in df.columns else df.copy()
+        if active.empty:
+            ax.text(0.5, 0.5, 'No active findings', ha='center', va='center', color='white', fontsize=12)
+            return
+
+        cvss_col = 'cvss3_base_score' if 'cvss3_base_score' in active.columns else 'cvss_base_score' if 'cvss_base_score' in active.columns else None
+        if not cvss_col:
+            if 'severity_value' in active.columns:
+                active['cvss_proxy'] = active['severity_value'] * 2.5
+                cvss_col = 'cvss_proxy'
+            else:
+                ax.text(0.5, 0.5, 'No CVSS data available', ha='center', va='center', color='white', fontsize=12)
+                return
+
+        if 'plugin_id' in active.columns:
+            grouped = active.groupby('plugin_id').agg({
+                cvss_col: 'mean',
+                'days_open': 'mean',
+                'hostname': 'nunique' if 'hostname' in active.columns else 'count'
+            }).reset_index()
+            grouped.columns = ['plugin_id', 'cvss', 'age', 'hosts']
+        else:
+            grouped = pd.DataFrame({
+                'cvss': active[cvss_col].values,
+                'age': active['days_open'].values,
+                'hosts': [1] * len(active)
+            })
+
+        grouped = grouped.dropna(subset=['cvss', 'age'])
+        if grouped.empty:
+            ax.text(0.5, 0.5, 'No data after filtering', ha='center', va='center', color='white', fontsize=12)
+            return
+
+        colors = grouped['cvss'].apply(
+            lambda x: '#dc3545' if x >= 9 else '#fd7e14' if x >= 7 else '#ffc107' if x >= 4 else '#007bff'
+        )
+        sizes = (grouped['hosts'] * 80 + 30).clip(upper=800) if enlarged else (grouped['hosts'] * 50 + 20).clip(upper=500)
+
+        ax.scatter(grouped['age'], grouped['cvss'], s=sizes, c=colors, alpha=0.6, edgecolors='white', linewidth=0.5)
+
+        if show_labels and enlarged and len(grouped) <= 30:
+            for _, row in grouped.head(20).iterrows():
+                ax.annotate(f'{int(row["hosts"])}h', xy=(row['age'], row['cvss']),
+                           fontsize=7, ha='center', va='center', color='white')
+
+        ax.set_xlabel('Days Open', fontsize=10)
+        ax.set_ylabel('CVSS Score', fontsize=10)
+        ax.set_title('CVSS vs Age vs Impact (Bubble = Hosts Affected)')
+        ax.axhline(y=7, color='#fd7e14', linestyle='--', alpha=0.5, linewidth=1, label='High Threshold')
+        ax.axvline(x=30, color='#ffc107', linestyle='--', alpha=0.5, linewidth=1, label='30-Day Mark')
+        ax.legend(fontsize=8)
+
+    def _draw_sankey_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw Sankey-style lifecycle flow for pop-out."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        hist_df = self.historical_df
+
+        if df.empty or 'status' not in df.columns:
+            ax.text(0.5, 0.5, 'No lifecycle data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        status_counts = df['status'].value_counts()
+        total = len(df)
+        active = status_counts.get('Active', 0)
+        resolved = status_counts.get('Resolved', 0)
+        reopened = df['reappearances'].sum() if 'reappearances' in df.columns else 0
+
+        ax.set_xlim(0, 10)
+        ax.set_ylim(0, 10)
+        ax.axis('off')
+
+        # Draw boxes
+        box_style = dict(boxstyle='round,pad=0.3', facecolor='#2d2d2d', edgecolor='white')
+        ax.text(1, 5, f'Discovered\n{total}', ha='center', va='center', fontsize=11 if enlarged else 9,
+               color='white', bbox=box_style)
+        ax.text(5, 7, f'Active\n{active}', ha='center', va='center', fontsize=11 if enlarged else 9,
+               color='#dc3545', bbox=box_style)
+        ax.text(5, 3, f'Resolved\n{resolved}', ha='center', va='center', fontsize=11 if enlarged else 9,
+               color='#28a745', bbox=box_style)
+        ax.text(9, 5, f'Reopened\n{int(reopened)}', ha='center', va='center', fontsize=11 if enlarged else 9,
+               color='#ffc107', bbox=box_style)
+
+        # Draw arrows
+        from matplotlib.patches import FancyArrowPatch
+        arrow_style = dict(arrowstyle='->', color='white', lw=2, mutation_scale=15)
+        ax.annotate('', xy=(4, 6.5), xytext=(2, 5.5), arrowprops=arrow_style)
+        ax.annotate('', xy=(4, 3.5), xytext=(2, 4.5), arrowprops=arrow_style)
+        if reopened > 0:
+            ax.annotate('', xy=(8, 5.5), xytext=(6, 7), arrowprops=dict(arrowstyle='->', color='#ffc107', lw=2))
+
+        if show_labels:
+            active_pct = active / total * 100 if total > 0 else 0
+            resolved_pct = resolved / total * 100 if total > 0 else 0
+            ax.text(3, 7.5, f'{active_pct:.1f}%', fontsize=9, color='#dc3545')
+            ax.text(3, 2.5, f'{resolved_pct:.1f}%', fontsize=9, color='#28a745')
+
+        ax.set_title('Vulnerability Lifecycle Flow')
+
+    def _draw_treemap_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw Plugin Family Distribution for pop-out."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+
+        if df.empty or 'plugin_family' not in df.columns:
+            ax.text(0.5, 0.5, 'No plugin family data', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        family_counts = df['plugin_family'].value_counts().head(20 if enlarged else 12)
+        if family_counts.empty:
+            ax.text(0.5, 0.5, 'No plugin families found', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Try squarify, fallback to bar chart
+        try:
+            import squarify
+            colors = plt.cm.Set3(range(len(family_counts)))
+            squarify.plot(sizes=family_counts.values, label=[f[:15] for f in family_counts.index],
+                         alpha=0.8, ax=ax, color=colors, text_kwargs={'fontsize': 8 if enlarged else 6})
+            ax.axis('off')
+        except ImportError:
+            bars = ax.barh(range(len(family_counts)), family_counts.values, color='#007bff')
+            ax.set_yticks(range(len(family_counts)))
+            ax.set_yticklabels([f[:25] for f in family_counts.index], fontsize=8)
+            ax.invert_yaxis()
+            if show_labels:
+                for bar, val in zip(bars, family_counts.values):
+                    ax.annotate(f'{int(val)}', xy=(val, bar.get_y() + bar.get_height()/2),
+                               xytext=(3, 0), textcoords='offset points',
+                               ha='left', va='center', fontsize=8, color='white')
+            ax.set_xlabel('Count')
+
+        ax.set_title('Plugin Family Distribution')
+
+    def _draw_radar_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw Radar Chart for pop-out (requires polar projection)."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+
+        if df.empty:
+            ax.text(0.5, 0.5, 'No data available', ha='center', va='center',
+                   transform=ax.transAxes, color='white', fontsize=12)
+            return
+
+        # Clear and recreate with polar projection
+        ax.clear()
+
+        ip_col = 'ip_address' if 'ip_address' in df.columns else 'ip' if 'ip' in df.columns else None
+        if not ip_col:
+            ax.text(0.5, 0.5, 'No IP data for subnet analysis', ha='center', va='center',
+                   transform=ax.transAxes, color='white', fontsize=12)
+            return
+
+        df_copy = df.copy()
+        df_copy['subnet'] = df_copy[ip_col].apply(
+            lambda x: '.'.join(str(x).split('.')[:3]) + '.0/24' if pd.notna(x) and '.' in str(x) else 'Unknown'
+        )
+
+        top_subnets = df_copy['subnet'].value_counts().head(5 if enlarged else 3).index.tolist()
+
+        metrics = ['Critical', 'High', 'Medium', 'Active', 'Old (30d+)']
+        num_metrics = len(metrics)
+        angles = [n / float(num_metrics) * 2 * 3.14159 for n in range(num_metrics)]
+        angles += angles[:1]
+
+        colors = ['#dc3545', '#fd7e14', '#007bff', '#17a2b8', '#28a745']
+
+        for i, subnet in enumerate(top_subnets):
+            subnet_data = df_copy[df_copy['subnet'] == subnet]
+            crit = len(subnet_data[subnet_data['severity_text'] == 'Critical']) if 'severity_text' in subnet_data.columns else 0
+            high = len(subnet_data[subnet_data['severity_text'] == 'High']) if 'severity_text' in subnet_data.columns else 0
+            med = len(subnet_data[subnet_data['severity_text'] == 'Medium']) if 'severity_text' in subnet_data.columns else 0
+            active_count = len(subnet_data[subnet_data['status'] == 'Active']) if 'status' in subnet_data.columns else 0
+            old = len(subnet_data[subnet_data['days_open'] > 30]) if 'days_open' in subnet_data.columns else 0
+
+            values = [crit, high, med, active_count, old]
+            max_val = max(values) if max(values) > 0 else 1
+            values_norm = [v / max_val * 100 for v in values]
+            values_norm += values_norm[:1]
+
+            ax.plot(angles, values_norm, 'o-', linewidth=2, label=subnet[:15], color=colors[i % len(colors)])
+            ax.fill(angles, values_norm, alpha=0.15, color=colors[i % len(colors)])
+
+        ax.set_xticks(angles[:-1])
+        ax.set_xticklabels(metrics, fontsize=9 if enlarged else 7)
+        ax.set_title('Subnet Risk Profile', pad=20)
+        ax.legend(loc='upper right', bbox_to_anchor=(1.3, 1), fontsize=8)
+
+    def _draw_gauge_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw Remediation Velocity Gauge for pop-out."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        hist_df = self.historical_df
+
+        if df.empty:
+            ax.text(0.5, 0.5, 'No data for velocity calculation', ha='center', va='center',
+                   color='white', fontsize=12)
+            ax.axis('off')
+            return
+
+        status_counts = df['status'].value_counts() if 'status' in df.columns else pd.Series()
+        resolved = status_counts.get('Resolved', 0)
+        total = len(df)
+        velocity_pct = (resolved / total * 100) if total > 0 else 0
+
+        ax.set_xlim(-1.5, 1.5)
+        ax.set_ylim(-0.5, 1.2)
+        ax.set_aspect('equal')
+        ax.axis('off')
+
+        # Draw gauge arcs
+        import numpy as np
+        theta_range = np.linspace(np.pi, 0, 100)
+        colors_zones = [('#dc3545', 0, 30), ('#ffc107', 30, 60), ('#28a745', 60, 100)]
+
+        for color, start_pct, end_pct in colors_zones:
+            start_angle = np.pi - (start_pct / 100) * np.pi
+            end_angle = np.pi - (end_pct / 100) * np.pi
+            theta = np.linspace(start_angle, end_angle, 50)
+            for r in [0.8, 0.85, 0.9, 0.95, 1.0]:
+                ax.plot(r * np.cos(theta), r * np.sin(theta), color=color, linewidth=3 if enlarged else 2)
+
+        # Draw needle
+        needle_angle = np.pi - (velocity_pct / 100) * np.pi
+        ax.arrow(0, 0, 0.7 * np.cos(needle_angle), 0.7 * np.sin(needle_angle),
+                head_width=0.08, head_length=0.05, fc='white', ec='white')
+        ax.plot(0, 0, 'o', markersize=10 if enlarged else 8, color='white')
+
+        # Labels
+        ax.text(0, -0.25, f'{velocity_pct:.1f}%', ha='center', va='center',
+               fontsize=18 if enlarged else 14, color='white', fontweight='bold')
+        ax.text(0, -0.4, 'Remediation Velocity', ha='center', va='center',
+               fontsize=11 if enlarged else 9, color='#888888')
+
+        if show_labels:
+            ax.text(-1.1, 0, '0%', ha='center', fontsize=9, color='white')
+            ax.text(0, 1.1, '50%', ha='center', fontsize=9, color='white')
+            ax.text(1.1, 0, '100%', ha='center', fontsize=9, color='white')
+
+        ax.set_title('Remediation Velocity Gauge')
+
+    def _draw_sla_prediction_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw SLA Breach Prediction for pop-out."""
+        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+
+        if df.empty or 'days_until_sla' not in df.columns:
+            ax.text(0.5, 0.5, 'No SLA data for prediction', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        active = df[df['status'] == 'Active'] if 'status' in df.columns else df
+        if active.empty:
+            ax.text(0.5, 0.5, 'No active findings', ha='center', va='center', color='white', fontsize=12)
+            return
+
+        days_ahead = 45 if enlarged else 30
+        cumulative = []
+        for day in range(days_ahead + 1):
+            breaching = len(active[active['days_until_sla'] <= day])
+            cumulative.append(breaching)
+
+        ax.plot(range(len(cumulative)), cumulative, color='#dc3545', linewidth=2, marker='o',
+               markersize=4 if enlarged else 2)
+        ax.fill_between(range(len(cumulative)), cumulative, alpha=0.3, color='#dc3545')
+
+        if show_labels:
+            key_days = [0, 7, 14, 30] if enlarged else [0, 7, 14, 30]
+            for day in key_days:
+                if day < len(cumulative):
+                    ax.annotate(f'{cumulative[day]}', xy=(day, cumulative[day]),
+                               xytext=(0, 8), textcoords='offset points',
+                               ha='center', fontsize=9 if enlarged else 7, color='white')
+
+        ax.axvline(x=7, color='#ffc107', linestyle='--', alpha=0.7, label='1 Week')
+        ax.axvline(x=14, color='#fd7e14', linestyle='--', alpha=0.7, label='2 Weeks')
+
+        ax.set_xlabel('Days from Now', fontsize=10)
+        ax.set_ylabel('Cumulative SLA Breaches', fontsize=10)
+        ax.set_title('SLA Breach Prediction (Next 30 Days)')
+        ax.legend(fontsize=8)
+
+        if enlarged:
+            current_breach = cumulative[0]
+            week_breach = cumulative[7] if len(cumulative) > 7 else 0
+            ax.text(0.02, 0.98, f'Currently Breached: {current_breach}\nBreached by Day 7: {week_breach}',
+                   transform=ax.transAxes, fontsize=10, va='top', color='white',
+                   bbox=dict(boxstyle='round', facecolor='#2d2d2d', alpha=0.8))
+
+    def _draw_period_comparison_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw Period Comparison for pop-out."""
+        hist_df = self.historical_df
+
+        if hist_df.empty or 'scan_date' not in hist_df.columns:
+            ax.text(0.5, 0.5, 'Insufficient historical data', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        hist_copy = hist_df.copy()
+        hist_copy['scan_date'] = pd.to_datetime(hist_copy['scan_date'])
+        mid_date = hist_copy['scan_date'].median()
+        earlier = hist_copy[hist_copy['scan_date'] < mid_date]
+        recent = hist_copy[hist_copy['scan_date'] >= mid_date]
+
+        if earlier.empty or recent.empty:
+            ax.text(0.5, 0.5, 'Need data across time periods', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Compare metrics
+        metrics = ['Total', 'Critical', 'High', 'Hosts']
+
+        earlier_vals = [
+            len(earlier),
+            len(earlier[earlier['severity_text'] == 'Critical']) if 'severity_text' in earlier.columns else 0,
+            len(earlier[earlier['severity_text'] == 'High']) if 'severity_text' in earlier.columns else 0,
+            earlier['hostname'].nunique() if 'hostname' in earlier.columns else 0
+        ]
+
+        recent_vals = [
+            len(recent),
+            len(recent[recent['severity_text'] == 'Critical']) if 'severity_text' in recent.columns else 0,
+            len(recent[recent['severity_text'] == 'High']) if 'severity_text' in recent.columns else 0,
+            recent['hostname'].nunique() if 'hostname' in recent.columns else 0
+        ]
+
+        x = range(len(metrics))
+        width = 0.35
+
+        bars1 = ax.bar([i - width/2 for i in x], earlier_vals, width, label='Earlier Period', color='#6c757d')
+        bars2 = ax.bar([i + width/2 for i in x], recent_vals, width, label='Recent Period', color='#007bff')
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(metrics, fontsize=10 if enlarged else 8)
+        ax.set_ylabel('Count', fontsize=10)
+        ax.set_title('Period Comparison: Earlier vs Recent')
+        ax.legend(fontsize=9)
+
+        if show_labels:
+            for bar, val in zip(bars1, earlier_vals):
+                ax.annotate(f'{int(val)}', xy=(bar.get_x() + bar.get_width()/2, val),
+                           xytext=(0, 3), textcoords='offset points',
+                           ha='center', fontsize=8, color='white')
+            for bar, val in zip(bars2, recent_vals):
+                ax.annotate(f'{int(val)}', xy=(bar.get_x() + bar.get_width()/2, val),
+                           xytext=(0, 3), textcoords='offset points',
+                           ha='center', fontsize=8, color='white')
+
+        if enlarged:
+            # Add trend indicators
+            for i, (e, r) in enumerate(zip(earlier_vals, recent_vals)):
+                if e > 0:
+                    change = ((r - e) / e) * 100
+                    color = '#28a745' if change < 0 else '#dc3545'
+                    symbol = '▼' if change < 0 else '▲'
+                    ax.text(i, max(e, r) * 1.1, f'{symbol}{abs(change):.0f}%',
+                           ha='center', fontsize=9, color=color)
+
     def _update_opdir_charts(self):
         """Update OPDIR compliance visualizations."""
         if not HAS_MATPLOTLIB or not hasattr(self, 'opdir_ax1'):
@@ -5471,6 +5990,7 @@ class NessusHistoryTrackerApp:
 
         df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
         hist_df = self.historical_df
+        show_labels = self.settings_manager.settings.show_data_labels
 
         # Clear all axes
         for ax in [self.heatmap_ax, self.bubble_ax, self.sankey_ax, self.treemap_ax,
@@ -5494,45 +6014,45 @@ class NessusHistoryTrackerApp:
 
         # ===== PAGE 1: Risk Analysis =====
         # Chart 1: Risk Heatmap by Subnet/Time
-        self._draw_risk_heatmap(df, hist_df)
+        self._draw_risk_heatmap(df, hist_df, show_labels)
 
         # Chart 2: Bubble Chart (CVSS vs Age vs Count)
-        self._draw_bubble_chart(df)
+        self._draw_bubble_chart(df, show_labels)
 
         self.advanced_fig1.tight_layout()
         self.advanced_canvas1.draw()
 
         # ===== PAGE 2: Composition =====
         # Chart 3: Vulnerability Lifecycle Sankey
-        self._draw_sankey_diagram(df, hist_df)
+        self._draw_sankey_diagram(df, hist_df, show_labels)
 
         # Chart 4: Plugin Family Treemap
-        self._draw_treemap(df)
+        self._draw_treemap(df, show_labels)
 
         self.advanced_fig2.tight_layout()
         self.advanced_canvas2.draw()
 
         # ===== PAGE 3: Health Indicators =====
         # Chart 5: Radar Chart per Subnet
-        self._draw_radar_chart(df)
+        self._draw_radar_chart(df, show_labels)
 
         # Chart 6: Remediation Velocity Gauge
-        self._draw_velocity_gauge(df, hist_df)
+        self._draw_velocity_gauge(df, hist_df, show_labels)
 
         self.advanced_fig3.tight_layout()
         self.advanced_canvas3.draw()
 
         # ===== PAGE 4: Trends & Prediction =====
         # Chart 7: SLA Breach Prediction
-        self._draw_sla_prediction(df)
+        self._draw_sla_prediction(df, show_labels)
 
         # Chart 8: Period Comparison
-        self._draw_period_comparison(hist_df)
+        self._draw_period_comparison(hist_df, show_labels)
 
         self.advanced_fig4.tight_layout()
         self.advanced_canvas4.draw()
 
-    def _draw_risk_heatmap(self, df, hist_df):
+    def _draw_risk_heatmap(self, df, hist_df, show_labels=True):
         """Draw Risk Heatmap by Subnet/Time."""
         ax = self.heatmap_ax
 
@@ -5577,6 +6097,15 @@ class NessusHistoryTrackerApp:
         ax.set_yticks(range(len(pivot.index)))
         ax.set_yticklabels([s[:15] for s in pivot.index], fontsize=7)
 
+        # Add data labels on heatmap cells
+        if show_labels and len(pivot.index) <= 8 and len(pivot.columns) <= 8:
+            for i in range(len(pivot.index)):
+                for j in range(len(pivot.columns)):
+                    val = pivot.values[i, j]
+                    if val > 0:
+                        color = 'white' if val > pivot.values.max() * 0.5 else 'black'
+                        ax.text(j, i, str(int(val)), ha='center', va='center', fontsize=6, color=color)
+
         ax.set_title('Risk Heatmap by Subnet/Time', color=GUI_DARK_THEME['fg'], fontsize=10)
         ax.text(0.5, 1.02, 'Vulnerability density: darker = more findings',
             transform=ax.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
@@ -5586,7 +6115,7 @@ class NessusHistoryTrackerApp:
         cbar.ax.tick_params(colors=GUI_DARK_THEME['fg'], labelsize=7)
         cbar.set_label('Count', color=GUI_DARK_THEME['fg'], fontsize=8)
 
-    def _draw_bubble_chart(self, df):
+    def _draw_bubble_chart(self, df, show_labels=True):
         """Draw Bubble Chart: CVSS vs Age vs Impact."""
         ax = self.bubble_ax
 
@@ -5651,6 +6180,12 @@ class NessusHistoryTrackerApp:
 
         scatter = ax.scatter(grouped['age'], grouped['cvss'], s=sizes, c=colors, alpha=0.6, edgecolors='white', linewidth=0.5)
 
+        # Add data labels for top items
+        if show_labels and len(grouped) <= 20:
+            for _, row in grouped.nlargest(10, 'hosts').iterrows():
+                ax.annotate(f'{int(row["hosts"])}h', xy=(row['age'], row['cvss']),
+                           fontsize=6, ha='center', va='center', color='white')
+
         ax.set_xlabel('Days Open', color=GUI_DARK_THEME['fg'], fontsize=8)
         ax.set_ylabel('CVSS Score', color=GUI_DARK_THEME['fg'], fontsize=8)
         ax.set_title('CVSS vs Age vs Impact', color=GUI_DARK_THEME['fg'], fontsize=10)
@@ -5665,7 +6200,7 @@ class NessusHistoryTrackerApp:
         ax.text(0.02, 0.98, 'Monitor', transform=ax.transAxes, fontsize=7, color='#28a745', va='top')
         ax.text(0.98, 0.98, 'URGENT', transform=ax.transAxes, fontsize=7, color='#dc3545', va='top', ha='right')
 
-    def _draw_sankey_diagram(self, df, hist_df):
+    def _draw_sankey_diagram(self, df, hist_df, show_labels=True):
         """Draw Vulnerability Lifecycle Flow (simplified Sankey-style)."""
         ax = self.sankey_ax
 
@@ -5711,11 +6246,16 @@ class NessusHistoryTrackerApp:
             ax.text(5, 2, f'Reopened\n{int(reopened):,}', ha='center', va='center', fontsize=9,
                    color='white', bbox=dict(boxstyle='round,pad=0.3', facecolor='#ffc107', edgecolor='white'))
 
-        # Arrows
+        # Arrows with flow percentage labels
         ax.annotate('', xy=(3.5, 5), xytext=(2, 5),
                    arrowprops=dict(arrowstyle='->', color='#007bff', lw=2))
         ax.annotate('', xy=(7.5, 5), xytext=(6, 5),
                    arrowprops=dict(arrowstyle='->', color='#28a745', lw=2))
+
+        # Add percentage labels on arrows if enabled
+        if show_labels:
+            ax.text(2.75, 5.4, f'{new_to_active:.0f}%', fontsize=7, color='#007bff', ha='center')
+            ax.text(6.75, 5.4, f'{active_to_resolved:.0f}%', fontsize=7, color='#28a745', ha='center')
 
         if reopened > 0:
             ax.annotate('', xy=(5, 3.5), xytext=(7.5, 4.5),
@@ -5725,10 +6265,12 @@ class NessusHistoryTrackerApp:
 
         ax.axis('off')
         ax.set_title('Vulnerability Lifecycle Flow', color=GUI_DARK_THEME['fg'], fontsize=10)
+        ax.text(0.5, 1.02, 'Lifecycle status flow from discovery to resolution',
+            transform=ax.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         ax.text(0.5, -0.02, f'Resolution rate: {active_to_resolved:.1f}%',
             transform=ax.transAxes, ha='center', va='top', fontsize=8, color='#28a745')
 
-    def _draw_treemap(self, df):
+    def _draw_treemap(self, df, show_labels=True):
         """Draw Plugin Family Treemap."""
         ax = self.treemap_ax
 
@@ -5770,8 +6312,8 @@ class NessusHistoryTrackerApp:
                 color = cmap(i / len(rects))
                 ax.add_patch(plt.Rectangle((rect['x'], rect['y']), rect['dx'], rect['dy'],
                             facecolor=color, edgecolor='white', linewidth=1))
-                # Add label if box is big enough
-                if rect['dx'] > 15 and rect['dy'] > 10:
+                # Add label if box is big enough and labels enabled
+                if show_labels and rect['dx'] > 15 and rect['dy'] > 10:
                     ax.text(rect['x'] + rect['dx']/2, rect['y'] + rect['dy']/2,
                            f'{label[:12]}\n{size}', ha='center', va='center',
                            fontsize=6, color='black', fontweight='bold')
@@ -5782,9 +6324,10 @@ class NessusHistoryTrackerApp:
             ax.set_yticks(range(len(family_counts)))
             ax.set_yticklabels([str(l)[:15] for l in labels], fontsize=7)
             ax.invert_yaxis()
-            for bar, val in zip(bars, family_counts.values):
-                ax.text(val + 1, bar.get_y() + bar.get_height()/2, f'{int(val)}',
-                       va='center', fontsize=6, color='white')
+            if show_labels:
+                for bar, val in zip(bars, family_counts.values):
+                    ax.text(val + 1, bar.get_y() + bar.get_height()/2, f'{int(val)}',
+                           va='center', fontsize=6, color='white')
 
         ax.set_xlim(0, 100)
         ax.set_ylim(0, 100)
@@ -5793,7 +6336,7 @@ class NessusHistoryTrackerApp:
         ax.text(0.5, 1.02, 'Vulnerability distribution by plugin category',
             transform=ax.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
 
-    def _draw_radar_chart(self, df):
+    def _draw_radar_chart(self, df, show_labels=True):
         """Draw Radar/Spider Chart for top subnets."""
         ax = self.radar_ax
 
@@ -5854,8 +6397,10 @@ class NessusHistoryTrackerApp:
         ax.set_ylim(0, 100)
         ax.legend(loc='upper right', bbox_to_anchor=(1.3, 1.0), fontsize=6)
         ax.set_title('Subnet Risk Profile', color=GUI_DARK_THEME['fg'], fontsize=10, pad=20)
+        ax.text(0.5, -0.1, 'Multi-dimensional risk comparison across subnets',
+            transform=ax.transAxes, ha='center', va='top', fontsize=7, color='#888888')
 
-    def _draw_velocity_gauge(self, df, hist_df):
+    def _draw_velocity_gauge(self, df, hist_df, show_labels=True):
         """Draw Remediation Velocity Gauge."""
         ax = self.gauge_ax
 
@@ -5910,20 +6455,27 @@ class NessusHistoryTrackerApp:
         circle = plt.Circle((0, 0), 0.15, color='#2d2d2d', ec='white', linewidth=2)
         ax.add_patch(circle)
 
-        # Labels
+        # Labels (always show main rate)
         ax.text(0, 0.5, f'{rate:.1f}%', ha='center', va='center', fontsize=16,
                color='white', fontweight='bold')
         ax.text(0, 0.25, 'Remediation\nRate', ha='center', va='center', fontsize=8, color='#888888')
 
-        # Velocity indicator
+        # Velocity indicator and scale labels
         velocity_color = '#28a745' if velocity > 1 else '#ffc107' if velocity > 0.5 else '#dc3545'
         ax.text(0, -0.3, f'Velocity: {velocity:.1f}/day', ha='center', fontsize=9, color=velocity_color)
+
+        if show_labels:
+            ax.text(-1.0, 0.1, '0%', ha='center', fontsize=7, color='white')
+            ax.text(0, 1.1, '50%', ha='center', fontsize=7, color='white')
+            ax.text(1.0, 0.1, '100%', ha='center', fontsize=7, color='white')
 
         ax.axis('off')
         ax.set_aspect('equal')
         ax.set_title('Remediation Velocity', color=GUI_DARK_THEME['fg'], fontsize=10)
+        ax.text(0.5, -0.15, 'Percentage of findings resolved',
+            transform=ax.transAxes, ha='center', va='top', fontsize=7, color='#888888')
 
-    def _draw_sla_prediction(self, df):
+    def _draw_sla_prediction(self, df, show_labels=True):
         """Draw SLA Breach Prediction Chart."""
         ax = self.prediction_ax
 
@@ -5966,6 +6518,15 @@ class NessusHistoryTrackerApp:
         ax.fill_between(x, breach_timeline, alpha=0.3, color='#dc3545')
         ax.plot(x, breach_timeline, color='#dc3545', linewidth=2, marker='o', markersize=3)
 
+        # Add data labels at key points
+        if show_labels:
+            key_days = [0, 7, 14, 30]
+            for day in key_days:
+                if day < len(breach_timeline):
+                    ax.annotate(f'{breach_timeline[day]}', xy=(day, breach_timeline[day]),
+                               xytext=(0, 5), textcoords='offset points',
+                               ha='center', fontsize=7, color='white')
+
         # Highlight critical zone
         ax.axhline(y=current_breaches, color='#ffc107', linestyle='--', linewidth=1, alpha=0.7)
         ax.axvline(x=7, color='#fd7e14', linestyle=':', linewidth=1, alpha=0.7)
@@ -5979,7 +6540,7 @@ class NessusHistoryTrackerApp:
 
         ax.tick_params(colors=GUI_DARK_THEME['fg'], labelsize=7)
 
-    def _draw_period_comparison(self, hist_df):
+    def _draw_period_comparison(self, hist_df, show_labels=True):
         """Draw Period Comparison Chart."""
         ax = self.comparison_ax
 
@@ -6033,6 +6594,22 @@ class NessusHistoryTrackerApp:
 
         bars1 = ax.bar(x - width/2, p1_values, width, label='Earlier Period', color='#6c757d', alpha=0.8)
         bars2 = ax.bar(x + width/2, p2_values, width, label='Recent Period', color='#007bff', alpha=0.8)
+
+        # Add data labels on bars
+        if show_labels:
+            for bar, val in zip(bars1, p1_values):
+                if val > 0:
+                    label_text = f'{int(val)}' if i < 4 else f'{val:.1f}'
+                    ax.annotate(f'{int(val) if isinstance(val, int) or val == int(val) else val:.1f}',
+                               xy=(bar.get_x() + bar.get_width()/2, val),
+                               xytext=(0, 2), textcoords='offset points',
+                               ha='center', fontsize=6, color='white')
+            for bar, val in zip(bars2, p2_values):
+                if val > 0:
+                    ax.annotate(f'{int(val) if isinstance(val, int) or val == int(val) else val:.1f}',
+                               xy=(bar.get_x() + bar.get_width()/2, val),
+                               xytext=(0, 2), textcoords='offset points',
+                               ha='center', fontsize=6, color='white')
 
         # Add change indicators
         for i, (v1, v2) in enumerate(zip(p1_values, p2_values)):
