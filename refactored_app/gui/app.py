@@ -1346,6 +1346,7 @@ class NessusHistoryTrackerApp:
             self.plugins_db_path = path
             self.plugins_label.config(text=self._truncate_filename(os.path.basename(path)), foreground="white")
             self._log(f"Selected plugins DB: {os.path.basename(path)}")
+            self.settings_manager.update_recent_file('plugins_db', path)
 
     def _select_existing_db(self):
         """Select existing database file."""
@@ -1356,6 +1357,7 @@ class NessusHistoryTrackerApp:
             self.existing_db_path = path
             self.existing_db_label.config(text=self._truncate_filename(os.path.basename(path)), foreground="white")
             self._log(f"Selected existing DB: {os.path.basename(path)}")
+            self.settings_manager.update_recent_file('sqlite', path)
 
     def _select_opdir_file(self):
         """Select OPDIR mapping file."""
@@ -1366,6 +1368,7 @@ class NessusHistoryTrackerApp:
             self.opdir_file_path = path
             self.opdir_label.config(text=self._truncate_filename(os.path.basename(path)), foreground="white")
             self._log(f"Selected OPDIR file: {os.path.basename(path)}")
+            self.settings_manager.update_recent_file('opdir', path)
 
     def _select_iavm_file(self):
         """Select IAVM Notice Summaries file."""
@@ -1376,6 +1379,7 @@ class NessusHistoryTrackerApp:
             self.iavm_file_path = path
             self.iavm_label.config(text=self._truncate_filename(os.path.basename(path)), foreground="white")
             self._log(f"Selected IAVM file: {os.path.basename(path)}")
+            self.settings_manager.update_recent_file('iavm', path)
 
     # Processing methods
     def _process_archives(self):
@@ -7254,10 +7258,16 @@ class NessusHistoryTrackerApp:
         # Load recent files if they exist
         if settings.recent_plugins_db and os.path.exists(settings.recent_plugins_db):
             self.plugins_db_path = settings.recent_plugins_db
+            self.plugins_label.config(text=self._truncate_filename(os.path.basename(settings.recent_plugins_db)), foreground="white")
         if settings.recent_opdir_file and os.path.exists(settings.recent_opdir_file):
             self.opdir_file_path = settings.recent_opdir_file
+            self.opdir_label.config(text=self._truncate_filename(os.path.basename(settings.recent_opdir_file)), foreground="white")
+        if settings.recent_iavm_file and os.path.exists(settings.recent_iavm_file):
+            self.iavm_file_path = settings.recent_iavm_file
+            self.iavm_label.config(text=self._truncate_filename(os.path.basename(settings.recent_iavm_file)), foreground="white")
         if settings.recent_sqlite_db and os.path.exists(settings.recent_sqlite_db):
             self.existing_db_path = settings.recent_sqlite_db
+            self.existing_db_label.config(text=self._truncate_filename(os.path.basename(settings.recent_sqlite_db)), foreground="white")
 
     def _show_settings_dialog(self):
         """Show settings configuration dialog."""

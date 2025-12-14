@@ -128,13 +128,19 @@ class MenuBar:
                 command=lambda: self._load_recent('opdir', settings.recent_opdir_file)
             )
 
+        if settings.recent_iavm_file:
+            self.recent_menu.add_command(
+                label=f"IAVM: {settings.recent_iavm_file[-50:]}",
+                command=lambda: self._load_recent('iavm', settings.recent_iavm_file)
+            )
+
         if settings.recent_sqlite_db:
             self.recent_menu.add_command(
                 label=f"SQLite: {settings.recent_sqlite_db[-50:]}",
                 command=lambda: self._load_recent('sqlite', settings.recent_sqlite_db)
             )
 
-        if not any([settings.recent_plugins_db, settings.recent_opdir_file, settings.recent_sqlite_db]):
+        if not any([settings.recent_plugins_db, settings.recent_opdir_file, settings.recent_iavm_file, settings.recent_sqlite_db]):
             self.recent_menu.add_command(label="(No recent files)", state=tk.DISABLED)
 
     def _load_recent(self, file_type: str, path: str):
@@ -146,13 +152,20 @@ class MenuBar:
 
         if file_type == 'plugins_db':
             self.app.plugins_db_path = path
+            self.app.plugins_label.config(text=self.app._truncate_filename(os.path.basename(path)), foreground="white")
             self.app._log(f"Loaded plugins database: {path}")
         elif file_type == 'opdir':
             self.app.opdir_file_path = path
+            self.app.opdir_label.config(text=self.app._truncate_filename(os.path.basename(path)), foreground="white")
             self.app._log(f"Loaded OPDIR file: {path}")
+        elif file_type == 'iavm':
+            self.app.iavm_file_path = path
+            self.app.iavm_label.config(text=self.app._truncate_filename(os.path.basename(path)), foreground="white")
+            self.app._log(f"Loaded IAVM file: {path}")
         elif file_type == 'sqlite':
             self.app.existing_db_path = path
-            self.app._load_existing_database(path)
+            self.app.existing_db_label.config(text=self.app._truncate_filename(os.path.basename(path)), foreground="white")
+            self.app._log(f"Loaded SQLite database: {path}")
 
     def _build_analysis_menu(self):
         """Build Analysis menu."""
