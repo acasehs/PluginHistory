@@ -46,14 +46,32 @@ def export_to_sqlite(historical_df: pd.DataFrame,
                     df[col] = df[col].dt.strftime('%Y-%m-%d %H:%M:%S')
             return df
 
-        # Export each DataFrame
-        if not historical_df.empty:
-            prepare_df(historical_df).to_sql('historical_findings', conn, if_exists='replace', index=False)
-            print(f"Exported {len(historical_df)} rows to historical_findings")
+        # Filter out Info findings from historical data (saved separately to yearly DBs)
+        info_excluded_count = 0
+        if not historical_df.empty and 'severity_text' in historical_df.columns:
+            info_excluded_count = len(historical_df[historical_df['severity_text'] == 'Info'])
+            historical_df_export = historical_df[historical_df['severity_text'] != 'Info']
+        else:
+            historical_df_export = historical_df
 
-        if not lifecycle_df.empty:
-            prepare_df(lifecycle_df).to_sql('finding_lifecycle', conn, if_exists='replace', index=False)
-            print(f"Exported {len(lifecycle_df)} rows to finding_lifecycle")
+        # Filter out Info from lifecycle data as well
+        if not lifecycle_df.empty and 'severity_text' in lifecycle_df.columns:
+            lifecycle_df_export = lifecycle_df[lifecycle_df['severity_text'] != 'Info']
+        else:
+            lifecycle_df_export = lifecycle_df
+
+        # Export each DataFrame
+        if not historical_df_export.empty:
+            prepare_df(historical_df_export).to_sql('historical_findings', conn, if_exists='replace', index=False)
+            print(f"Exported {len(historical_df_export)} rows to historical_findings (excluded {info_excluded_count} Info)")
+        elif not historical_df.empty:
+            # Original had data but all was Info
+            prepare_df(historical_df_export).to_sql('historical_findings', conn, if_exists='replace', index=False)
+            print(f"Exported 0 rows to historical_findings (excluded {info_excluded_count} Info)")
+
+        if not lifecycle_df_export.empty:
+            prepare_df(lifecycle_df_export).to_sql('finding_lifecycle', conn, if_exists='replace', index=False)
+            print(f"Exported {len(lifecycle_df_export)} rows to finding_lifecycle")
 
         if not host_presence_df.empty:
             prepare_df(host_presence_df).to_sql('host_presence', conn, if_exists='replace', index=False)
@@ -72,15 +90,16 @@ def export_to_sqlite(historical_df: pd.DataFrame,
             prepare_df(iavm_df).to_sql('iavm_notices', conn, if_exists='replace', index=False)
             print(f"Exported {len(iavm_df)} rows to iavm_notices")
 
-        # Create summary table
+        # Create summary table (counts exclude Info findings)
         summary_data = {
             'export_timestamp': [datetime.now().strftime('%Y-%m-%d %H:%M:%S')],
-            'total_historical_findings': [len(historical_df)],
-            'total_lifecycle_records': [len(lifecycle_df)],
+            'total_historical_findings': [len(historical_df_export)],
+            'total_lifecycle_records': [len(lifecycle_df_export)],
             'total_hosts': [len(host_presence_df)],
             'total_scans': [len(scan_changes_df) + 1 if not scan_changes_df.empty else 0],
             'total_opdir_entries': [len(opdir_df) if not opdir_df.empty else 0],
-            'total_iavm_notices': [len(iavm_df) if iavm_df is not None and not iavm_df.empty else 0]
+            'total_iavm_notices': [len(iavm_df) if iavm_df is not None and not iavm_df.empty else 0],
+            'info_findings_excluded': [info_excluded_count]
         }
         pd.DataFrame(summary_data).to_sql('export_summary', conn, if_exists='replace', index=False)
 
