@@ -17,8 +17,9 @@ This guide documents all visualizations available in the Plugin History Analysis
 9. [Host Tracking Tab](#host-tracking-tab)
 10. [Metrics Tab](#metrics-tab)
 11. [Advanced Charts](#advanced-charts)
-12. [Environment Filtering](#environment-filtering)
-13. [Using the Visualizations](#using-the-visualizations)
+12. [Smart Filtering](#smart-filtering)
+13. [Environment Filtering](#environment-filtering)
+14. [Using the Visualizations](#using-the-visualizations)
 
 ---
 
@@ -1081,6 +1082,50 @@ Demonstrates program improvement for reporting and audits. Shows trend direction
 - Use for quarterly/annual reporting
 
 **Available Filters:** Date Range Selection
+
+---
+
+## Smart Filtering
+
+### Overview
+
+Smart filtering automatically overrides the UI status filter for specific visualizations that require certain data regardless of user selection. This ensures accurate metrics even when the user has filtered to view only Active or Remediated findings.
+
+### Why Smart Filtering Matters
+
+Some metrics can only be calculated with specific data:
+- **Remediation Rate**: Requires BOTH Active and Remediated findings to calculate the percentage
+- **MTTR (Mean Time to Remediation)**: Requires only Remediated findings (can't measure time to fix if not fixed)
+- **Reopen Rate**: Requires both statuses to track findings that were remediated then reappeared
+
+Without smart filtering, viewing only "Active" findings would show 0% remediation rate, which is misleading.
+
+### Visualizations Using Smart Filtering
+
+| Visualization | Smart Filter | Reason |
+|---------------|--------------|--------|
+| **MTTR by Severity** | Remediated Only | Can only calculate fix time for fixed items |
+| **Remediation Rate** | Both Statuses | Need both to calculate Active vs Remediated ratio |
+| **Remediation Status by Severity** | Both Statuses | Compares Active vs Remediated counts |
+| **Reopen Rate** | Both Statuses | Tracks remediated items that became active again |
+| **Resolution Velocity** | Remediated Only | Distribution of time-to-fix |
+
+### Filter Behavior
+
+When smart filtering is active:
+- **Date Range**: Still respected (metrics are within selected date range)
+- **Severity Filter**: Still respected (can filter to Critical only, etc.)
+- **Environment Filter**: Still respected (can filter to Production only)
+- **Status Filter**: Overridden to ensure accurate metrics
+
+### User Experience
+
+Smart filtering is automatic and transparent. When viewing a chart that uses smart filtering:
+1. The data shown reflects accurate metrics regardless of the Status filter selection
+2. Other filters (date, severity, environment) still apply normally
+3. No user action is required - the system handles this automatically
+
+This ensures that executive dashboards and compliance reports always show accurate remediation metrics, even if an analyst has temporarily filtered to view only active findings for triage work.
 
 ---
 
