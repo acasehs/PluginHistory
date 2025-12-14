@@ -843,9 +843,9 @@ class NessusHistoryTrackerApp:
             self.risk_ax3 = self.risk_fig.add_subplot(223)
             self.risk_ax3.set_title('Findings by Age', color=GUI_DARK_THEME['fg'])
 
-            # Top risky hosts
+            # Top risky hosts by environment
             self.risk_ax4 = self.risk_fig.add_subplot(224)
-            self.risk_ax4.set_title('Top 10 Risky Hosts', color=GUI_DARK_THEME['fg'])
+            self.risk_ax4.set_title('Top Risky Hosts by Environment', color=GUI_DARK_THEME['fg'])
 
             for ax in [self.risk_ax1, self.risk_ax2, self.risk_ax3, self.risk_ax4]:
                 ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
@@ -999,9 +999,9 @@ class NessusHistoryTrackerApp:
         if HAS_MATPLOTLIB:
             self.plugin_fig = Figure(figsize=(10, 8), dpi=100, facecolor=GUI_DARK_THEME['bg'])
 
-            # Top recurring plugins
+            # Top recurring plugins by environment
             self.plugin_ax1 = self.plugin_fig.add_subplot(221)
-            self.plugin_ax1.set_title('Top 15 Most Common Plugins', color=GUI_DARK_THEME['fg'])
+            self.plugin_ax1.set_title('Top Plugins by Environment', color=GUI_DARK_THEME['fg'])
 
             # Plugin severity distribution
             self.plugin_ax2 = self.plugin_fig.add_subplot(222)
@@ -3776,30 +3776,42 @@ class NessusHistoryTrackerApp:
         self.risk_ax3.set_title('Active Findings by Age', color=GUI_DARK_THEME['fg'], fontsize=10)
         self.risk_ax3.set_xlabel('Days Open', color=GUI_DARK_THEME['fg'])
 
-        # Chart 4: Top risky hosts colored by environment type
+        # Chart 4: Top risky hosts - Top 5 per environment (embedded view)
         if 'hostname' in df.columns and 'severity_value' in df.columns:
-            host_risk = df.groupby('hostname')['severity_value'].sum().nlargest(10)
-            if len(host_risk) > 0:
-                # Color by environment type
-                env_colors = {'Production': '#28a745', 'PSS': '#007bff', 'Shared': '#ffc107', 'Unknown': '#6c757d'}
-                colors = [env_colors.get(self._get_environment_type(h), '#6c757d') for h in host_risk.index]
-                bars = self.risk_ax4.barh(range(len(host_risk)), host_risk.values, color=colors)
-                self.risk_ax4.set_yticks(range(len(host_risk)))
-                self.risk_ax4.set_yticklabels([h[:15] for h in host_risk.index], fontsize=7)
+            env_colors = {'Production': '#28a745', 'PSS': '#007bff', 'Shared': '#ffc107', 'Unknown': '#6c757d'}
+            env_types = self.settings_manager.settings.environment_types if hasattr(self, 'settings_manager') else ['Production', 'PSS', 'Shared']
+
+            all_hosts = []
+            for env in env_types:
+                env_hosts = df[df['hostname'].apply(lambda h: self._get_environment_type(h) == env)]
+                if not env_hosts.empty:
+                    host_risk = env_hosts.groupby('hostname')['severity_value'].sum().nlargest(5)
+                    for h, r in host_risk.items():
+                        all_hosts.append({'hostname': h, 'risk': r, 'env': env})
+
+            if all_hosts:
+                # Sort by environment then by risk descending
+                all_hosts.sort(key=lambda x: (env_types.index(x['env']) if x['env'] in env_types else 99, -x['risk']))
+                hostnames = [h['hostname'] for h in all_hosts]
+                risks = [h['risk'] for h in all_hosts]
+                colors = [env_colors.get(h['env'], '#6c757d') for h in all_hosts]
+
+                bars = self.risk_ax4.barh(range(len(all_hosts)), risks, color=colors)
+                self.risk_ax4.set_yticks(range(len(all_hosts)))
+                self.risk_ax4.set_yticklabels([h[:12] for h in hostnames], fontsize=6)
                 if show_labels:
-                    for bar, val in zip(bars, host_risk.values):
+                    for bar, val in zip(bars, risks):
                         self.risk_ax4.annotate(f'{int(val)}', xy=(val, bar.get_y() + bar.get_height()/2),
                                               xytext=(3, 0), textcoords='offset points',
-                                              ha='left', va='center', fontsize=6, color='white')
+                                              ha='left', va='center', fontsize=5, color='white')
                 self.risk_ax4.invert_yaxis()
                 # Add legend for environment colors
                 from matplotlib.patches import Patch
-                legend_elements = [Patch(facecolor='#28a745', label='Prod'),
-                                   Patch(facecolor='#007bff', label='PSS'),
-                                   Patch(facecolor='#ffc107', label='Shared')]
-                self.risk_ax4.legend(handles=legend_elements, loc='lower right', fontsize=6,
-                                    facecolor=GUI_DARK_THEME['bg'], labelcolor=GUI_DARK_THEME['fg'])
-        self.risk_ax4.set_title('Top 10 Risky Hosts by Environment', color=GUI_DARK_THEME['fg'], fontsize=10)
+                legend_elements = [Patch(facecolor=env_colors.get(e, '#6c757d'), label=e[:4]) for e in env_types if e in [h['env'] for h in all_hosts]]
+                if legend_elements:
+                    self.risk_ax4.legend(handles=legend_elements, loc='lower right', fontsize=5,
+                                        facecolor=GUI_DARK_THEME['bg'], labelcolor=GUI_DARK_THEME['fg'])
+        self.risk_ax4.set_title('Top Risky Hosts by Environment', color=GUI_DARK_THEME['fg'], fontsize=10)
         self.risk_ax4.set_xlabel('Risk Score', color=GUI_DARK_THEME['fg'])
 
         for ax in [self.risk_ax1, self.risk_ax2, self.risk_ax3, self.risk_ax4]:
@@ -3950,39 +3962,54 @@ class NessusHistoryTrackerApp:
         ax.set_ylabel('Count')
 
     def _draw_risky_hosts_popout(self, fig, ax, enlarged=False, show_labels=True):
-        """Draw top risky hosts chart for pop-out."""
+        """Draw top risky hosts chart for pop-out - Top 10 per environment."""
         df = self._get_chart_data('lifecycle')
         if df.empty or 'hostname' not in df.columns or 'severity_value' not in df.columns:
             ax.text(0.5, 0.5, 'No host risk data available', ha='center', va='center',
                    color='white', fontsize=12)
             return
 
-        # Show more hosts in pop-out
-        num_hosts = 15 if enlarged else 10
-        host_risk = df.groupby('hostname')['severity_value'].sum().nlargest(num_hosts)
+        env_colors = {'Production': '#28a745', 'PSS': '#007bff', 'Shared': '#ffc107', 'Unknown': '#6c757d'}
+        env_types = self.settings_manager.settings.environment_types if hasattr(self, 'settings_manager') else ['Production', 'PSS', 'Shared']
+        num_per_env = 10
 
-        if len(host_risk) == 0:
+        all_hosts = []
+        for env in env_types:
+            env_hosts = df[df['hostname'].apply(lambda h: self._get_environment_type(h) == env)]
+            if not env_hosts.empty:
+                host_risk = env_hosts.groupby('hostname')['severity_value'].sum().nlargest(num_per_env)
+                for h, r in host_risk.items():
+                    all_hosts.append({'hostname': h, 'risk': r, 'env': env})
+
+        if not all_hosts:
             ax.text(0.5, 0.5, 'No host data', ha='center', va='center',
                    color='white', fontsize=12)
             return
 
-        # Color gradient
-        max_risk = host_risk.max()
-        colors = ['#dc3545' if r > max_risk * 0.7 else '#fd7e14' if r > max_risk * 0.4 else '#ffc107'
-                 for r in host_risk.values]
+        # Sort by environment then by risk descending
+        all_hosts.sort(key=lambda x: (env_types.index(x['env']) if x['env'] in env_types else 99, -x['risk']))
+        hostnames = [h['hostname'] for h in all_hosts]
+        risks = [h['risk'] for h in all_hosts]
+        colors = [env_colors.get(h['env'], '#6c757d') for h in all_hosts]
 
-        bars = ax.barh(range(len(host_risk)), host_risk.values, color=colors)
-        ax.set_yticks(range(len(host_risk)))
-        ax.set_yticklabels([h[:20] for h in host_risk.index], fontsize=9)
+        bars = ax.barh(range(len(all_hosts)), risks, color=colors)
+        ax.set_yticks(range(len(all_hosts)))
+        ax.set_yticklabels([h[:20] for h in hostnames], fontsize=8)
 
         if show_labels:
-            for bar, val in zip(bars, host_risk.values):
+            for bar, val in zip(bars, risks):
                 ax.annotate(f'{int(val)}',
                            xy=(val, bar.get_y() + bar.get_height() / 2),
                            xytext=(3, 0), textcoords='offset points',
-                           ha='left', va='center', fontsize=9, color='white')
+                           ha='left', va='center', fontsize=8, color='white')
 
-        ax.set_title(f'Top {num_hosts} Risky Hosts (by Severity Score)')
+        # Add legend
+        from matplotlib.patches import Patch
+        legend_elements = [Patch(facecolor=env_colors.get(e, '#6c757d'), label=e) for e in env_types if e in [h['env'] for h in all_hosts]]
+        if legend_elements:
+            ax.legend(handles=legend_elements, loc='lower right', fontsize=9)
+
+        ax.set_title(f'Top {num_per_env} Risky Hosts per Environment (by Severity Score)')
         ax.set_xlabel('Risk Score')
         ax.invert_yaxis()
 
@@ -5404,40 +5431,60 @@ class NessusHistoryTrackerApp:
         self.plugin_canvas.get_tk_widget().bind('<Double-Button-1>', on_double_click)
 
     def _draw_top_plugins_popout(self, fig, ax, enlarged=False, show_labels=True):
-        """Draw top most common plugins for pop-out."""
+        """Draw top most common plugins for pop-out - Top 10 per environment."""
         df = self._get_chart_data('lifecycle')
 
-        if df.empty or 'plugin_id' not in df.columns:
+        if df.empty or 'plugin_id' not in df.columns or 'hostname' not in df.columns:
             ax.text(0.5, 0.5, 'No plugin data available', ha='center', va='center',
                    color='white', fontsize=12)
             return
 
-        num_plugins = 20 if enlarged else 15
-        plugin_counts = df['plugin_id'].value_counts().head(num_plugins)
+        env_colors = {'Production': '#28a745', 'PSS': '#007bff', 'Shared': '#ffc107', 'Unknown': '#6c757d'}
+        env_types = self.settings_manager.settings.environment_types if hasattr(self, 'settings_manager') else ['Production', 'PSS', 'Shared']
+        num_per_env = 10
 
-        if len(plugin_counts) == 0:
+        # Get plugin names for labels
+        plugin_names = {}
+        if 'plugin_name' in df.columns:
+            plugin_names = df.groupby('plugin_id')['plugin_name'].first().to_dict()
+
+        all_plugins = []
+        for env in env_types:
+            env_df = df[df['hostname'].apply(lambda h: self._get_environment_type(h) == env)]
+            if not env_df.empty:
+                plugin_counts = env_df.groupby('plugin_id').size().nlargest(num_per_env)
+                for pid, count in plugin_counts.items():
+                    all_plugins.append({'plugin_id': pid, 'count': count, 'env': env})
+
+        if not all_plugins:
             ax.text(0.5, 0.5, 'No plugin data', ha='center', va='center', color='white', fontsize=12)
             return
 
-        bars = ax.barh(range(len(plugin_counts)), plugin_counts.values, color='#17a2b8')
-        ax.set_yticks(range(len(plugin_counts)))
+        # Sort by environment then by count descending
+        all_plugins.sort(key=lambda x: (env_types.index(x['env']) if x['env'] in env_types else 99, -x['count']))
+        counts = [p['count'] for p in all_plugins]
+        colors = [env_colors.get(p['env'], '#6c757d') for p in all_plugins]
 
-        # Try to get plugin names if available
-        if 'plugin_name' in df.columns:
-            plugin_names = df.groupby('plugin_id')['plugin_name'].first()
-            labels = [str(plugin_names.get(pid, pid))[:30] for pid in plugin_counts.index]
-        else:
-            labels = [str(pid) for pid in plugin_counts.index]
+        # Use plugin name if available, otherwise ID
+        labels = [str(plugin_names.get(p['plugin_id'], p['plugin_id']))[:30] for p in all_plugins]
 
+        bars = ax.barh(range(len(all_plugins)), counts, color=colors)
+        ax.set_yticks(range(len(all_plugins)))
         ax.set_yticklabels(labels, fontsize=7)
 
         if show_labels:
-            for bar, val in zip(bars, plugin_counts.values):
+            for bar, val in zip(bars, counts):
                 ax.annotate(f'{int(val)}', xy=(val, bar.get_y() + bar.get_height()/2),
                            xytext=(3, 0), textcoords='offset points',
                            ha='left', va='center', fontsize=7, color='white')
 
-        ax.set_title(f'Top {num_plugins} Most Common Plugins')
+        # Add legend
+        from matplotlib.patches import Patch
+        legend_elements = [Patch(facecolor=env_colors.get(e, '#6c757d'), label=e) for e in env_types if e in [p['env'] for p in all_plugins]]
+        if legend_elements:
+            ax.legend(handles=legend_elements, loc='lower right', fontsize=9)
+
+        ax.set_title(f'Top {num_per_env} Plugins per Environment')
         ax.set_xlabel('Finding Count')
         ax.invert_yaxis()
 
@@ -6824,33 +6871,50 @@ class NessusHistoryTrackerApp:
             self.plugin_canvas.draw()
             return
 
-        # Chart 1: Top 15 most common plugins with data labels
+        # Chart 1: Top 5 plugins per environment (embedded view)
         # Store plugin ID -> name mapping for hover tooltips
         self._plugin_name_map = {}
-        if 'plugin_id' in df.columns:
-            plugin_counts = df.groupby('plugin_id').size().nlargest(15)
-            if len(plugin_counts) > 0:
-                # Get plugin names if available for tooltip lookup
-                if 'plugin_name' in df.columns:
-                    names = df.groupby('plugin_id')['plugin_name'].first()
-                    for pid in plugin_counts.index:
-                        self._plugin_name_map[str(pid)] = str(names.get(pid, 'Unknown'))
-                # Use plugin IDs as labels (cleaner, non-truncated)
-                labels = [str(pid) for pid in plugin_counts.index]
-                bars = self.plugin_ax1.barh(range(len(plugin_counts)), plugin_counts.values, color='#007bff')
-                self.plugin_ax1.set_yticks(range(len(plugin_counts)))
-                self.plugin_ax1.set_yticklabels(labels, fontsize=6)
+        if 'plugin_id' in df.columns and 'hostname' in df.columns:
+            env_colors = {'Production': '#28a745', 'PSS': '#007bff', 'Shared': '#ffc107', 'Unknown': '#6c757d'}
+            env_types = self.settings_manager.settings.environment_types if hasattr(self, 'settings_manager') else ['Production', 'PSS', 'Shared']
+
+            # Get plugin names for tooltip lookup
+            if 'plugin_name' in df.columns:
+                names = df.groupby('plugin_id')['plugin_name'].first()
+                for pid in df['plugin_id'].unique():
+                    self._plugin_name_map[str(pid)] = str(names.get(pid, 'Unknown'))
+
+            all_plugins = []
+            for env in env_types:
+                env_df = df[df['hostname'].apply(lambda h: self._get_environment_type(h) == env)]
+                if not env_df.empty:
+                    plugin_counts = env_df.groupby('plugin_id').size().nlargest(5)
+                    for pid, count in plugin_counts.items():
+                        all_plugins.append({'plugin_id': pid, 'count': count, 'env': env})
+
+            if all_plugins:
+                # Sort by environment then by count descending
+                all_plugins.sort(key=lambda x: (env_types.index(x['env']) if x['env'] in env_types else 99, -x['count']))
+                labels = [str(p['plugin_id']) for p in all_plugins]
+                counts = [p['count'] for p in all_plugins]
+                colors = [env_colors.get(p['env'], '#6c757d') for p in all_plugins]
+
+                bars = self.plugin_ax1.barh(range(len(all_plugins)), counts, color=colors)
+                self.plugin_ax1.set_yticks(range(len(all_plugins)))
+                self.plugin_ax1.set_yticklabels(labels, fontsize=5)
                 self.plugin_ax1.invert_yaxis()
                 if show_labels:
-                    for bar, val in zip(bars, plugin_counts.values):
+                    for bar, val in zip(bars, counts):
                         self.plugin_ax1.annotate(f'{int(val)}', xy=(val, bar.get_y() + bar.get_height()/2),
                                                 xytext=(3, 0), textcoords='offset points',
                                                 ha='left', va='center', fontsize=5, color='white')
-                # Total unique plugins
-                total_plugins = df['plugin_id'].nunique()
-                self.plugin_ax1.text(0.98, 0.98, f'Total: {total_plugins}', transform=self.plugin_ax1.transAxes,
-                                    fontsize=7, va='top', ha='right', color='white')
-        self.plugin_ax1.set_title('Top 15 Plugins (hover for name)', color=GUI_DARK_THEME['fg'], fontsize=10)
+                # Add legend
+                from matplotlib.patches import Patch
+                legend_elements = [Patch(facecolor=env_colors.get(e, '#6c757d'), label=e[:4]) for e in env_types if e in [p['env'] for p in all_plugins]]
+                if legend_elements:
+                    self.plugin_ax1.legend(handles=legend_elements, loc='lower right', fontsize=5,
+                                          facecolor=GUI_DARK_THEME['bg'], labelcolor=GUI_DARK_THEME['fg'])
+        self.plugin_ax1.set_title('Top Plugins by Environment', color=GUI_DARK_THEME['fg'], fontsize=10)
         self.plugin_ax1.set_xlabel('Finding Count', color=GUI_DARK_THEME['fg'])
 
         # Chart 2: Plugin severity distribution with data labels
