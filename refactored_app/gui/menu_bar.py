@@ -53,6 +53,10 @@ class MenuBar:
             command=self.app._select_opdir_file
         )
         file_menu.add_command(
+            label="Load IAVM Summaries...",
+            command=self.app._select_iavm_file
+        )
+        file_menu.add_command(
             label="Load Existing Database...",
             command=self.app._select_existing_db
         )

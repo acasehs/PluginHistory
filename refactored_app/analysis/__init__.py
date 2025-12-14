@@ -32,6 +32,15 @@ from .opdir_compliance import (
     match_opdir
 )
 
+from .iavm_parser import (
+    load_iavm_summaries,
+    enrich_findings_with_iavm,
+    normalize_iavm_number,
+    create_iavm_lookup,
+    get_iavm_summary_stats,
+    merge_opdir_and_iavm
+)
+
 from .advanced_metrics import (
     get_all_advanced_metrics,
     calculate_reopen_rate,
@@ -62,6 +71,12 @@ __all__ = [
     'normalize_opdir_number',
     'create_opdir_lookup',
     'match_opdir',
+    'load_iavm_summaries',
+    'enrich_findings_with_iavm',
+    'normalize_iavm_number',
+    'create_iavm_lookup',
+    'get_iavm_summary_stats',
+    'merge_opdir_and_iavm',
     'get_all_advanced_metrics',
     'calculate_reopen_rate',
     'calculate_coverage_metrics',

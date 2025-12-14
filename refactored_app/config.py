@@ -179,7 +179,9 @@ SQLITE_INDEXES = {
     'historical_findings': ['hostname', 'plugin_id', 'scan_date', 'ip_address'],
     'finding_lifecycle': ['hostname', 'plugin_id', 'status', 'opdir_number', 'opdir_status'],
     'host_presence': ['hostname', 'status'],
-    'scan_changes': ['scan_date']
+    'scan_changes': ['scan_date'],
+    'opdir_mapping': ['opdir_number', 'opdir_number_normalized', 'opdir_year'],
+    'iavm_notices': ['iavm_number', 'iavm_number_normalized', 'iavm_year', 'iavm_type', 'status']
 }
 
 # Date formats
