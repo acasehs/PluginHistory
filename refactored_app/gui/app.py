@@ -6,6 +6,7 @@ Tkinter-based GUI for the Nessus Historical Analysis application.
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import pandas as pd
+import numpy as np
 import os
 from datetime import datetime
 from typing import List, Optional, Dict, Any
