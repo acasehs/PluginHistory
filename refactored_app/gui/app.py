@@ -1364,6 +1364,38 @@ class NessusHistoryTrackerApp:
         # Default to monthly
         return DATE_INTERVAL_MONTHLY
 
+    def _get_chart_data(self, data_type: str = 'lifecycle') -> pd.DataFrame:
+        """
+        Get the appropriate data for charts, ensuring filtered data is used when available.
+
+        Args:
+            data_type: Type of data to get - 'lifecycle', 'historical', 'scan_changes', 'host'
+
+        Returns:
+            DataFrame with the requested data
+        """
+        if data_type == 'lifecycle':
+            if hasattr(self, 'filtered_lifecycle_df') and not self.filtered_lifecycle_df.empty:
+                return self.filtered_lifecycle_df
+            elif hasattr(self, 'lifecycle_df') and not self.lifecycle_df.empty:
+                return self.lifecycle_df
+        elif data_type == 'historical':
+            if hasattr(self, 'filtered_historical_df') and not self.filtered_historical_df.empty:
+                return self.filtered_historical_df
+            elif hasattr(self, 'historical_df') and not self.historical_df.empty:
+                return self.historical_df
+        elif data_type == 'scan_changes':
+            if hasattr(self, 'filtered_scan_changes_df') and not self.filtered_scan_changes_df.empty:
+                return self.filtered_scan_changes_df
+            elif hasattr(self, 'scan_changes_df') and not self.scan_changes_df.empty:
+                return self.scan_changes_df
+        elif data_type == 'host':
+            if hasattr(self, 'filtered_host_df') and not self.filtered_host_df.empty:
+                return self.filtered_host_df
+            elif hasattr(self, 'host_presence_df') and not self.host_presence_df.empty:
+                return self.host_presence_df
+        return pd.DataFrame()
+
     def _get_environment_type(self, hostname: str) -> str:
         """
         Classify hostname by environment type using settings-based mappings.
@@ -1815,6 +1847,18 @@ class NessusHistoryTrackerApp:
         # Initialize filtered data and update displays
         self.filtered_lifecycle_df = self.lifecycle_df.copy()
         self.filtered_host_df = self.host_presence_df.copy()
+        self.filtered_historical_df = self.historical_df.copy()
+        self.filtered_scan_changes_df = self.scan_changes_df.copy()
+
+        # Add environment type to lifecycle data for grouping
+        if not self.filtered_lifecycle_df.empty and 'hostname' in self.filtered_lifecycle_df.columns:
+            self.filtered_lifecycle_df['environment_type'] = self.filtered_lifecycle_df['hostname'].apply(
+                self._get_environment_type
+            )
+            self.lifecycle_df['environment_type'] = self.lifecycle_df['hostname'].apply(
+                self._get_environment_type
+            )
+
         self._update_dashboard()
         self._update_lifecycle_tree()
         self._update_host_tree()
@@ -2515,7 +2559,7 @@ class NessusHistoryTrackerApp:
 
     def _update_dashboard(self):
         """Update dashboard statistics from filtered data."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty:
             return
@@ -2586,7 +2630,7 @@ class NessusHistoryTrackerApp:
         for item in self.lifecycle_tree.get_children():
             self.lifecycle_tree.delete(item)
 
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty:
             self.lifecycle_count_label.config(text="Showing 0 findings")
@@ -2791,7 +2835,7 @@ class NessusHistoryTrackerApp:
 
     def _lifecycle_next_page(self):
         """Navigate to next page."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
         total = len(df)
         page_size = self.lifecycle_page_size.get()
         if page_size > 0:
@@ -2802,7 +2846,7 @@ class NessusHistoryTrackerApp:
 
     def _lifecycle_last_page(self):
         """Navigate to last page."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
         total = len(df)
         page_size = self.lifecycle_page_size.get()
         if page_size > 0:
@@ -2815,7 +2859,7 @@ class NessusHistoryTrackerApp:
         """Jump to specific row number."""
         try:
             target = int(self.lifecycle_jump_to.get()) - 1  # Convert to 0-based index
-            df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+            df = self._get_chart_data('lifecycle')
             total = len(df)
             if 0 <= target < total:
                 self.lifecycle_current_start = target
@@ -2852,7 +2896,7 @@ class NessusHistoryTrackerApp:
         interval_label = get_interval_label(interval)
 
         # Use filtered scan_changes_df to show trends over time
-        scan_df = self.filtered_scan_changes_df if not self.filtered_scan_changes_df.empty else self.scan_changes_df
+        scan_df = self._get_chart_data('scan_changes')
         if not scan_df.empty and 'scan_date' in scan_df.columns:
             df = scan_df.copy()
             df['scan_date'] = pd.to_datetime(df['scan_date'])
@@ -2874,7 +2918,7 @@ class NessusHistoryTrackerApp:
                                      labelcolor=GUI_DARK_THEME['fg'])
 
         # If no scan_changes, try to use historical_df to show cumulative counts
-        hist_df = self.filtered_historical_df if not self.filtered_historical_df.empty else self.historical_df
+        hist_df = self._get_chart_data('historical')
         if scan_df.empty and not hist_df.empty and 'scan_date' in hist_df.columns:
             df = hist_df.copy()
             df['scan_date'] = pd.to_datetime(df['scan_date'])
@@ -2902,8 +2946,8 @@ class NessusHistoryTrackerApp:
         if not HAS_MATPLOTLIB or not hasattr(self, 'timeline_ax1'):
             return
 
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
-        hist_df = self.filtered_historical_df if not self.filtered_historical_df.empty else self.historical_df
+        df = self._get_chart_data('lifecycle')
+        hist_df = self._get_chart_data('historical')
         show_labels = self.settings_manager.settings.show_data_labels
 
         # Get the appropriate date interval based on date range
@@ -2961,7 +3005,7 @@ class NessusHistoryTrackerApp:
         self.timeline_ax2.set_title('Findings by Severity', color=GUI_DARK_THEME['fg'], fontsize=10)
 
         # Chart 3: New vs Resolved with data labels (grouped by interval)
-        scan_df = self.filtered_scan_changes_df if not self.filtered_scan_changes_df.empty else self.scan_changes_df
+        scan_df = self._get_chart_data('scan_changes')
         if not scan_df.empty and 'change_type' in scan_df.columns:
             changes = scan_df.copy()
             changes['scan_date'] = pd.to_datetime(changes['scan_date'])
@@ -3021,7 +3065,7 @@ class NessusHistoryTrackerApp:
         if not HAS_MATPLOTLIB or not hasattr(self, 'risk_ax1'):
             return
 
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         for ax in [self.risk_ax1, self.risk_ax2, self.risk_ax3, self.risk_ax4]:
             ax.clear()
@@ -3169,9 +3213,9 @@ class NessusHistoryTrackerApp:
 
         self.risk_canvas.get_tk_widget().bind('<Double-Button-1>', on_double_click)
 
-    def _draw_cvss_popout(self, fig, ax, enlarged=False, show_labels=True):
+    def _draw_cvss_popout(self, fig, ax, enlarged=False, show_labels=True, filter_settings=None):
         """Draw CVSS distribution chart for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
         if df.empty or 'cvss3_base_score' not in df.columns:
             ax.text(0.5, 0.5, 'No CVSS data available', ha='center', va='center',
                    color='white', fontsize=12)
@@ -3215,7 +3259,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_mttr_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw MTTR by severity chart for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
         if df.empty or 'severity_text' not in df.columns or 'days_open' not in df.columns:
             ax.text(0.5, 0.5, 'No MTTR data available', ha='center', va='center',
                    color='white', fontsize=12)
@@ -3252,7 +3296,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_age_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw findings by age chart for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
         if df.empty or 'days_open' not in df.columns:
             ax.text(0.5, 0.5, 'No age data available', ha='center', va='center',
                    color='white', fontsize=12)
@@ -3286,7 +3330,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_risky_hosts_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw top risky hosts chart for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
         if df.empty or 'hostname' not in df.columns or 'severity_value' not in df.columns:
             ax.text(0.5, 0.5, 'No host risk data available', ha='center', va='center',
                    color='white', fontsize=12)
@@ -3350,8 +3394,8 @@ class NessusHistoryTrackerApp:
 
     def _draw_remediation_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw remediation status chart for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
-        hist_df = self.filtered_historical_df if not self.filtered_historical_df.empty else self.historical_df
+        df = self._get_chart_data('lifecycle')
+        hist_df = self._get_chart_data('historical')
 
         if df.empty:
             ax.text(0.5, 0.5, 'No data available', ha='center', va='center',
@@ -3415,7 +3459,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_risk_trend_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw risk score trend chart for pop-out."""
-        hist_df = self.filtered_historical_df if not self.filtered_historical_df.empty else self.historical_df
+        hist_df = self._get_chart_data('historical')
 
         risk_trend = calculate_risk_reduction_trend(hist_df)
 
@@ -3469,7 +3513,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_sla_status_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw SLA status chart for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty:
             ax.text(0.5, 0.5, 'No data available', ha='center', va='center',
@@ -3528,8 +3572,8 @@ class NessusHistoryTrackerApp:
 
     def _draw_vulns_per_host_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw vulnerabilities per host trend chart for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
-        hist_df = self.filtered_historical_df if not self.filtered_historical_df.empty else self.historical_df
+        df = self._get_chart_data('lifecycle')
+        hist_df = self._get_chart_data('historical')
 
         normalized_metrics = calculate_normalized_metrics(hist_df, df)
         norm_trend = normalized_metrics.get('trend', [])
@@ -3612,7 +3656,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_total_findings_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw total findings over time chart for pop-out."""
-        hist_df = self.filtered_historical_df if not self.filtered_historical_df.empty else self.historical_df
+        hist_df = self._get_chart_data('historical')
 
         if hist_df.empty or 'scan_date' not in hist_df.columns:
             ax.text(0.5, 0.5, 'No historical data available', ha='center', va='center',
@@ -3668,7 +3712,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_severity_timeline_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw findings by severity over time for pop-out."""
-        hist_df = self.filtered_historical_df if not self.filtered_historical_df.empty else self.historical_df
+        hist_df = self._get_chart_data('historical')
 
         if hist_df.empty or 'scan_date' not in hist_df.columns or 'severity' not in hist_df.columns:
             ax.text(0.5, 0.5, 'No historical data available', ha='center', va='center',
@@ -3768,7 +3812,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_cumulative_risk_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw cumulative risk exposure for pop-out."""
-        hist_df = self.filtered_historical_df if not self.filtered_historical_df.empty else self.historical_df
+        hist_df = self._get_chart_data('historical')
 
         if hist_df.empty or 'scan_date' not in hist_df.columns or 'severity_value' not in hist_df.columns:
             ax.text(0.5, 0.5, 'No historical data available', ha='center', va='center',
@@ -3850,7 +3894,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_opdir_coverage_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw OPDIR coverage pie chart for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'opdir_number' not in df.columns:
             ax.text(0.5, 0.5, 'No OPDIR data available\n(Load OPDIR mapping first)', ha='center', va='center',
@@ -3884,7 +3928,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_opdir_status_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw OPDIR status distribution for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'opdir_status' not in df.columns:
             ax.text(0.5, 0.5, 'No OPDIR status data\n(Load OPDIR mapping first)', ha='center', va='center',
@@ -3922,7 +3966,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_opdir_age_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw finding age for OPDIR mapped items for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'days_open' not in df.columns or 'opdir_number' not in df.columns:
             ax.text(0.5, 0.5, 'No data available', ha='center', va='center',
@@ -3968,7 +4012,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_opdir_year_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw compliance by OPDIR year for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'opdir_year' not in df.columns:
             ax.text(0.5, 0.5, 'No OPDIR year data\n(Load OPDIR mapping with year info)',
@@ -4043,7 +4087,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_sla_compliance_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw SLA compliance status pie chart for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'sla_status' not in df.columns:
             ax.text(0.5, 0.5, 'No SLA data available', ha='center', va='center',
@@ -4076,7 +4120,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_sla_overdue_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw overdue findings by severity for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'sla_status' not in df.columns or 'severity' not in df.columns:
             ax.text(0.5, 0.5, 'No SLA data available', ha='center', va='center',
@@ -4119,7 +4163,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_sla_approaching_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw findings approaching SLA deadline for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'days_until_sla' not in df.columns:
             ax.text(0.5, 0.5, 'No SLA timeline data available', ha='center', va='center',
@@ -4165,7 +4209,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_sla_days_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw days until/past SLA scatter plot for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'days_until_sla' not in df.columns or 'severity' not in df.columns:
             ax.text(0.5, 0.5, 'No SLA data available', ha='center', va='center',
@@ -4275,7 +4319,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_reappearance_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw reappearance analysis for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'appearance_count' not in df.columns:
             ax.text(0.5, 0.5, 'No reappearance data available', ha='center', va='center',
@@ -4316,7 +4360,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_host_burden_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw host vulnerability burden for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'hostname' not in df.columns:
             ax.text(0.5, 0.5, 'No host data available', ha='center', va='center',
@@ -4411,7 +4455,7 @@ class NessusHistoryTrackerApp:
                 ('Top Subnets by Vulnerability', self._draw_top_subnets_popout),
                 ('Subnet Risk Scores', self._draw_subnet_risk_popout),
                 ('Host Criticality Distribution', self._draw_host_criticality_popout),
-                ('Network Segment Analysis', self._draw_network_segment_popout),
+                ('Environment Distribution', self._draw_environment_breakdown_popout),
             ]
             title, redraw_func = chart_info[quadrant]
             ChartPopoutModal(self.window, title, redraw_func)
@@ -4420,7 +4464,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_top_subnets_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw top subnets by vulnerability count for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'ip' not in df.columns:
             ax.text(0.5, 0.5, 'No IP data available', ha='center', va='center',
@@ -4461,7 +4505,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_subnet_risk_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw subnet risk scores for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'ip' not in df.columns or 'severity_value' not in df.columns:
             ax.text(0.5, 0.5, 'No IP/severity data available', ha='center', va='center',
@@ -4506,7 +4550,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_host_criticality_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw host criticality distribution for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'hostname' not in df.columns or 'severity_value' not in df.columns:
             ax.text(0.5, 0.5, 'No host severity data available', ha='center', va='center',
@@ -4537,7 +4581,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_network_segment_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw network segment analysis for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'ip' not in df.columns or 'severity' not in df.columns:
             ax.text(0.5, 0.5, 'No network segment data available', ha='center', va='center',
@@ -4580,6 +4624,136 @@ class NessusHistoryTrackerApp:
         ax.set_title('Network Segment Analysis')
         ax.set_ylabel('Vulnerability Count')
 
+    def _draw_environment_breakdown_popout(self, fig, ax, enlarged=False, show_labels=True, filter_settings=None):
+        """Draw environment breakdown analysis for pop-out."""
+        df = self._get_chart_data('lifecycle')
+
+        if df.empty:
+            ax.text(0.5, 0.5, 'No data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Ensure environment_type column exists
+        if 'environment_type' not in df.columns and 'hostname' in df.columns:
+            df = df.copy()
+            df['environment_type'] = df['hostname'].apply(self._get_environment_type)
+
+        if 'environment_type' not in df.columns:
+            ax.text(0.5, 0.5, 'No environment data', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Count by environment and severity
+        env_colors = {'Production': '#28a745', 'PSS': '#007bff', 'Shared': '#ffc107', 'Unknown': '#6c757d'}
+        env_order = self.settings_manager.settings.environment_types
+
+        if 'severity_text' in df.columns:
+            # Create grouped bar chart by environment and severity
+            env_sev = df.groupby(['environment_type', 'severity_text']).size().unstack(fill_value=0)
+            env_sev = env_sev.reindex([e for e in env_order if e in env_sev.index])
+
+            if not env_sev.empty:
+                x = np.arange(len(env_sev))
+                width = 0.15
+                severity_order = ['Critical', 'High', 'Medium', 'Low', 'Info']
+                severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107',
+                                  'Low': '#28a745', 'Info': '#17a2b8'}
+
+                for i, sev in enumerate(severity_order):
+                    if sev in env_sev.columns:
+                        offset = (i - len(severity_order)/2) * width
+                        bars = ax.bar(x + offset, env_sev[sev], width, label=sev,
+                                      color=severity_colors.get(sev, '#6c757d'))
+                        if show_labels and enlarged:
+                            for bar in bars:
+                                height = bar.get_height()
+                                if height > 0:
+                                    ax.annotate(f'{int(height)}',
+                                               xy=(bar.get_x() + bar.get_width()/2, height),
+                                               ha='center', va='bottom', fontsize=7, color='white')
+
+                ax.set_xticks(x)
+                ax.set_xticklabels(env_sev.index, fontsize=9)
+                ax.legend(loc='upper right', fontsize=8)
+        else:
+            # Simple count by environment
+            env_counts = df['environment_type'].value_counts()
+            env_counts = env_counts.reindex([e for e in env_order if e in env_counts.index])
+
+            if len(env_counts) > 0:
+                colors = [env_colors.get(e, '#6c757d') for e in env_counts.index]
+                bars = ax.bar(range(len(env_counts)), env_counts.values, color=colors)
+                ax.set_xticks(range(len(env_counts)))
+                ax.set_xticklabels(env_counts.index, fontsize=9)
+                if show_labels:
+                    for bar, val in zip(bars, env_counts.values):
+                        ax.annotate(f'{int(val)}', xy=(bar.get_x() + bar.get_width()/2, val),
+                                   ha='center', va='bottom', fontsize=9, color='white')
+
+        ax.set_title('Findings by Environment', fontsize=12)
+        ax.set_ylabel('Finding Count')
+
+        # Add summary stats
+        total = len(df)
+        active = len(df[df['status'] == 'Active']) if 'status' in df.columns else total
+        ax.text(0.98, 0.98, f'Total: {total} | Active: {active}',
+               transform=ax.transAxes, fontsize=9, va='top', ha='right', color='white')
+
+    def _draw_env_severity_matrix_popout(self, fig, ax, enlarged=False, show_labels=True, filter_settings=None):
+        """Draw environment vs severity matrix heatmap for pop-out."""
+        df = self._get_chart_data('lifecycle')
+
+        if df.empty:
+            ax.text(0.5, 0.5, 'No data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Ensure environment_type column exists
+        if 'environment_type' not in df.columns and 'hostname' in df.columns:
+            df = df.copy()
+            df['environment_type'] = df['hostname'].apply(self._get_environment_type)
+
+        if 'environment_type' not in df.columns or 'severity_text' not in df.columns:
+            ax.text(0.5, 0.5, 'Missing required data', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Create pivot table
+        pivot = df.groupby(['environment_type', 'severity_text']).size().unstack(fill_value=0)
+
+        # Order by environment and severity
+        env_order = self.settings_manager.settings.environment_types
+        sev_order = ['Critical', 'High', 'Medium', 'Low', 'Info']
+
+        pivot = pivot.reindex([e for e in env_order if e in pivot.index])
+        pivot = pivot.reindex(columns=[s for s in sev_order if s in pivot.columns])
+
+        if pivot.empty:
+            ax.text(0.5, 0.5, 'No data for matrix', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Create heatmap
+        cmap = plt.cm.YlOrRd
+        im = ax.imshow(pivot.values, cmap=cmap, aspect='auto')
+
+        ax.set_xticks(range(len(pivot.columns)))
+        ax.set_yticks(range(len(pivot.index)))
+        ax.set_xticklabels(pivot.columns, fontsize=9)
+        ax.set_yticklabels(pivot.index, fontsize=9)
+
+        # Add text annotations
+        if show_labels:
+            for i in range(len(pivot.index)):
+                for j in range(len(pivot.columns)):
+                    val = pivot.iloc[i, j]
+                    text_color = 'white' if val > pivot.values.max() * 0.5 else 'black'
+                    ax.text(j, i, f'{int(val)}', ha='center', va='center',
+                           color=text_color, fontsize=10, fontweight='bold')
+
+        ax.set_title('Environment vs Severity Matrix', fontsize=12)
+        fig.colorbar(im, ax=ax, label='Finding Count')
+
     # ==================== Plugin Tab Pop-outs ====================
 
     def _bind_chart_popouts_plugin(self):
@@ -4610,7 +4784,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_top_plugins_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw top most common plugins for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'plugin_id' not in df.columns:
             ax.text(0.5, 0.5, 'No plugin data available', ha='center', va='center',
@@ -4648,7 +4822,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_plugin_severity_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw plugin severity distribution for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'plugin_id' not in df.columns or 'severity' not in df.columns:
             ax.text(0.5, 0.5, 'No plugin severity data available', ha='center', va='center',
@@ -4683,7 +4857,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_plugins_by_hosts_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw plugins affecting most hosts for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'plugin_id' not in df.columns or 'hostname' not in df.columns:
             ax.text(0.5, 0.5, 'No plugin/host data available', ha='center', va='center',
@@ -4720,7 +4894,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_plugin_age_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw plugin average age for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'plugin_id' not in df.columns or 'days_open' not in df.columns:
             ax.text(0.5, 0.5, 'No plugin age data available', ha='center', va='center',
@@ -4790,7 +4964,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_priority_matrix_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw remediation priority matrix (CVSS vs Age) for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'cvss' not in df.columns or 'days_open' not in df.columns:
             ax.text(0.5, 0.5, 'No CVSS/age data available', ha='center', va='center',
@@ -4839,7 +5013,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_priority_distribution_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw priority distribution pie for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'cvss' not in df.columns or 'days_open' not in df.columns:
             ax.text(0.5, 0.5, 'No priority data available', ha='center', va='center',
@@ -4881,7 +5055,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_top_priority_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw top priority findings for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'cvss' not in df.columns or 'days_open' not in df.columns:
             ax.text(0.5, 0.5, 'No priority data available', ha='center', va='center',
@@ -4918,7 +5092,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_priority_by_severity_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw priority score by severity for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'severity' not in df.columns or 'cvss' not in df.columns or 'days_open' not in df.columns:
             ax.text(0.5, 0.5, 'No priority data available', ha='center', va='center',
@@ -5020,7 +5194,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_host_presence_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw host presence over time for pop-out."""
-        hist_df = self.filtered_historical_df if not self.filtered_historical_df.empty else self.historical_df
+        hist_df = self._get_chart_data('historical')
 
         if hist_df.empty or 'scan_date' not in hist_df.columns or 'hostname' not in hist_df.columns:
             ax.text(0.5, 0.5, 'No historical host data available', ha='center', va='center',
@@ -5234,7 +5408,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_heatmap_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw Risk Heatmap for pop-out."""
-        hist_df = self.filtered_historical_df if not self.filtered_historical_df.empty else self.historical_df
+        hist_df = self._get_chart_data('historical')
 
         if hist_df.empty or 'scan_date' not in hist_df.columns:
             ax.text(0.5, 0.5, 'Insufficient historical data for heatmap', ha='center', va='center',
@@ -5282,7 +5456,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_bubble_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw Bubble Chart for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'days_open' not in df.columns:
             ax.text(0.5, 0.5, 'No vulnerability age data', ha='center', va='center',
@@ -5347,8 +5521,8 @@ class NessusHistoryTrackerApp:
 
     def _draw_sankey_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw Sankey-style lifecycle flow for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
-        hist_df = self.filtered_historical_df if not self.filtered_historical_df.empty else self.historical_df
+        df = self._get_chart_data('lifecycle')
+        hist_df = self._get_chart_data('historical')
 
         if df.empty or 'status' not in df.columns:
             ax.text(0.5, 0.5, 'No lifecycle data available', ha='center', va='center',
@@ -5394,7 +5568,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_treemap_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw Plugin Family Distribution for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'plugin_family' not in df.columns:
             ax.text(0.5, 0.5, 'No plugin family data', ha='center', va='center',
@@ -5430,7 +5604,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_radar_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw Radar Chart for pop-out (requires polar projection)."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty:
             ax.text(0.5, 0.5, 'No data available', ha='center', va='center',
@@ -5483,8 +5657,8 @@ class NessusHistoryTrackerApp:
 
     def _draw_gauge_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw Remediation Velocity Gauge for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
-        hist_df = self.filtered_historical_df if not self.filtered_historical_df.empty else self.historical_df
+        df = self._get_chart_data('lifecycle')
+        hist_df = self._get_chart_data('historical')
 
         if df.empty:
             ax.text(0.5, 0.5, 'No data for velocity calculation', ha='center', va='center',
@@ -5535,7 +5709,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_sla_prediction_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw SLA Breach Prediction for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'days_until_sla' not in df.columns:
             ax.text(0.5, 0.5, 'No SLA data for prediction', ha='center', va='center',
@@ -5582,7 +5756,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_period_comparison_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw Period Comparison for pop-out."""
-        hist_df = self.filtered_historical_df if not self.filtered_historical_df.empty else self.historical_df
+        hist_df = self._get_chart_data('historical')
 
         if hist_df.empty or 'scan_date' not in hist_df.columns:
             ax.text(0.5, 0.5, 'Insufficient historical data', ha='center', va='center',
@@ -5654,7 +5828,7 @@ class NessusHistoryTrackerApp:
         if not HAS_MATPLOTLIB or not hasattr(self, 'opdir_ax1'):
             return
 
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         for ax in [self.opdir_ax1, self.opdir_ax2, self.opdir_ax3, self.opdir_ax4]:
             ax.clear()
@@ -5800,7 +5974,7 @@ class NessusHistoryTrackerApp:
         if not HAS_MATPLOTLIB or not hasattr(self, 'efficiency_ax1'):
             return
 
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
         host_df = self.filtered_host_df if not self.filtered_host_df.empty else self.host_presence_df
         show_labels = self.settings_manager.settings.show_data_labels
 
@@ -5915,7 +6089,7 @@ class NessusHistoryTrackerApp:
         if not HAS_MATPLOTLIB or not hasattr(self, 'network_ax1'):
             return
 
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
         show_labels = self.settings_manager.settings.show_data_labels
 
         for ax in [self.network_ax1, self.network_ax2, self.network_ax3, self.network_ax4]:
@@ -6018,7 +6192,7 @@ class NessusHistoryTrackerApp:
         if not HAS_MATPLOTLIB or not hasattr(self, 'plugin_ax1'):
             return
 
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
         show_labels = self.settings_manager.settings.show_data_labels
 
         for ax in [self.plugin_ax1, self.plugin_ax2, self.plugin_ax3, self.plugin_ax4]:
@@ -6173,7 +6347,7 @@ class NessusHistoryTrackerApp:
         if not HAS_MATPLOTLIB or not hasattr(self, 'priority_ax1'):
             return
 
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
         show_labels = self.settings_manager.settings.show_data_labels
 
         for ax in [self.priority_ax1, self.priority_ax2, self.priority_ax3, self.priority_ax4]:
@@ -6320,7 +6494,7 @@ class NessusHistoryTrackerApp:
         if not HAS_MATPLOTLIB or not hasattr(self, 'sla_ax1'):
             return
 
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         for ax in [self.sla_ax1, self.sla_ax2, self.sla_ax3, self.sla_ax4]:
             ax.clear()
@@ -6489,7 +6663,7 @@ class NessusHistoryTrackerApp:
             return
 
         host_df = self.filtered_host_df if not self.filtered_host_df.empty else self.host_presence_df
-        hist_df = self.filtered_historical_df if not self.filtered_historical_df.empty else self.historical_df
+        hist_df = self._get_chart_data('historical')
 
         for ax in [self.host_tracking_ax1, self.host_tracking_ax2, self.host_tracking_ax3, self.host_tracking_ax4]:
             ax.clear()
@@ -6646,8 +6820,8 @@ class NessusHistoryTrackerApp:
         if not HAS_MATPLOTLIB or not hasattr(self, 'metrics_ax1'):
             return
 
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
-        hist_df = self.filtered_historical_df if not self.filtered_historical_df.empty else self.historical_df
+        df = self._get_chart_data('lifecycle')
+        hist_df = self._get_chart_data('historical')
 
         for ax in [self.metrics_ax1, self.metrics_ax2, self.metrics_ax3, self.metrics_ax4]:
             ax.clear()
@@ -6780,8 +6954,8 @@ class NessusHistoryTrackerApp:
         if not HAS_MATPLOTLIB or not hasattr(self, 'heatmap_ax'):
             return
 
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
-        hist_df = self.filtered_historical_df if not self.filtered_historical_df.empty else self.historical_df
+        df = self._get_chart_data('lifecycle')
+        hist_df = self._get_chart_data('historical')
         show_labels = self.settings_manager.settings.show_data_labels
 
         # Clear all axes
