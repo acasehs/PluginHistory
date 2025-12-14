@@ -49,6 +49,11 @@ from ..export.sqlite_export import (
 from ..export.excel_export import export_to_excel
 from ..export.json_export import export_to_json
 from ..settings import SettingsManager, UserSettings
+from ..visualization.charts import (
+    get_date_interval, get_interval_label, get_period_format,
+    group_by_interval, get_period_labels, calculate_date_range_from_df,
+    DATE_INTERVAL_WEEKLY, DATE_INTERVAL_MONTHLY, DATE_INTERVAL_QUARTERLY, DATE_INTERVAL_YEARLY
+)
 from .chart_utils import (
     add_data_labels, add_horizontal_data_labels, add_line_data_labels,
     ChartPopoutModal
@@ -1229,6 +1234,35 @@ class NessusHistoryTrackerApp:
             hint.pack(anchor=tk.SE, padx=5)
         else:
             ttk.Label(advanced_frame, text="Install matplotlib for advanced visualizations").pack(pady=50)
+
+    # Helper methods
+    def _get_current_date_interval(self) -> str:
+        """
+        Get the appropriate date interval for visualizations based on current filter settings.
+
+        Returns:
+            Interval type: 'weekly', 'monthly', 'quarterly', or 'yearly'
+        """
+        # Try to get dates from filter settings first
+        start_str = self.filter_start_date.get().strip()
+        end_str = self.filter_end_date.get().strip()
+
+        if start_str and end_str:
+            try:
+                start_date = pd.to_datetime(start_str)
+                end_date = pd.to_datetime(end_str)
+                return get_date_interval(start_date, end_date)
+            except:
+                pass
+
+        # Fall back to actual data range
+        if not self.historical_df.empty and 'scan_date' in self.historical_df.columns:
+            start_date, end_date = calculate_date_range_from_df(self.historical_df, 'scan_date')
+            if start_date and end_date:
+                return get_date_interval(start_date, end_date)
+
+        # Default to monthly
+        return DATE_INTERVAL_MONTHLY
 
     # File selection methods
     def _truncate_filename(self, name: str, max_len: int = 20) -> str:
@@ -2412,20 +2446,29 @@ class NessusHistoryTrackerApp:
         self.trends_ax.clear()
         self.trends_ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
 
+        # Get the appropriate date interval based on date range
+        interval = self._get_current_date_interval()
+        period_format = get_period_format(interval)
+        interval_label = get_interval_label(interval)
+
         # Use scan_changes_df to show trends over time
         if not self.scan_changes_df.empty and 'scan_date' in self.scan_changes_df.columns:
             df = self.scan_changes_df.copy()
             df['scan_date'] = pd.to_datetime(df['scan_date'])
 
-            # Group by date and count new/resolved
+            # Group by interval and count new/resolved
             if 'change_type' in df.columns:
-                trends = df.groupby([df['scan_date'].dt.date, 'change_type']).size().unstack(fill_value=0)
+                df['period'] = df['scan_date'].dt.to_period(period_format)
+                trends = df.groupby(['period', 'change_type']).size().unstack(fill_value=0)
+                labels = get_period_labels(trends.index, interval)
 
                 if 'New' in trends.columns:
-                    self.trends_ax.plot(trends.index, trends['New'], 'r-', label='New', marker='o', markersize=4)
+                    self.trends_ax.plot(range(len(trends)), trends['New'], 'r-', label='New', marker='o', markersize=4)
                 if 'Resolved' in trends.columns:
-                    self.trends_ax.plot(trends.index, trends['Resolved'], 'g-', label='Resolved', marker='s', markersize=4)
+                    self.trends_ax.plot(range(len(trends)), trends['Resolved'], 'g-', label='Resolved', marker='s', markersize=4)
 
+                self.trends_ax.set_xticks(range(len(trends)))
+                self.trends_ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=8)
                 self.trends_ax.legend(loc='upper right', facecolor=GUI_DARK_THEME['bg'],
                                      labelcolor=GUI_DARK_THEME['fg'])
 
@@ -2434,15 +2477,16 @@ class NessusHistoryTrackerApp:
             df = self.historical_df.copy()
             df['scan_date'] = pd.to_datetime(df['scan_date'])
 
-            # Count findings per scan date
-            counts = df.groupby(df['scan_date'].dt.date).size()
+            # Count findings per interval
+            counts = group_by_interval(df, 'scan_date', interval)
+            labels = get_period_labels(counts.index, interval)
 
             self.trends_ax.bar(range(len(counts)), counts.values, color='#007bff', alpha=0.7)
             self.trends_ax.set_xticks(range(len(counts)))
-            self.trends_ax.set_xticklabels([str(d) for d in counts.index], rotation=45, ha='right', fontsize=8)
+            self.trends_ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=8)
 
         # Style the chart
-        self.trends_ax.set_xlabel('Date', color=GUI_DARK_THEME['fg'])
+        self.trends_ax.set_xlabel(interval_label, color=GUI_DARK_THEME['fg'])
         self.trends_ax.set_ylabel('Count', color=GUI_DARK_THEME['fg'])
         self.trends_ax.tick_params(colors=GUI_DARK_THEME['fg'])
         for spine in self.trends_ax.spines.values():
@@ -2460,6 +2504,11 @@ class NessusHistoryTrackerApp:
         hist_df = self.historical_df
         show_labels = self.settings_manager.settings.show_data_labels
 
+        # Get the appropriate date interval based on date range
+        interval = self._get_current_date_interval()
+        period_format = get_period_format(interval)
+        interval_label = get_interval_label(interval)
+
         # Clear all axes
         for ax in [self.timeline_ax1, self.timeline_ax2, self.timeline_ax3, self.timeline_ax4]:
             ax.clear()
@@ -2472,10 +2521,13 @@ class NessusHistoryTrackerApp:
         hist_df = hist_df.copy()
         hist_df['scan_date'] = pd.to_datetime(hist_df['scan_date'])
 
-        # Chart 1: Total findings over time with data labels
-        counts = hist_df.groupby(hist_df['scan_date'].dt.date).size()
+        # Chart 1: Total findings over time with data labels (grouped by interval)
+        counts = group_by_interval(hist_df, 'scan_date', interval)
+        labels = get_period_labels(counts.index, interval)
         line, = self.timeline_ax1.plot(range(len(counts)), counts.values, 'c-', marker='o', markersize=5)
         self.timeline_ax1.fill_between(range(len(counts)), counts.values, alpha=0.2, color='cyan')
+        self.timeline_ax1.set_xticks(range(len(counts)))
+        self.timeline_ax1.set_xticklabels(labels, rotation=45, ha='right', fontsize=7)
         if show_labels and len(counts) <= 15:
             for i, (x, y) in enumerate(zip(range(len(counts)), counts.values)):
                 self.timeline_ax1.annotate(f'{int(y)}', xy=(x, y), xytext=(0, 5),
@@ -2489,34 +2541,39 @@ class NessusHistoryTrackerApp:
             symbol = '↓' if change < 0 else '↑'
             self.timeline_ax1.text(0.98, 0.98, f'{symbol}{abs(pct):.0f}%', transform=self.timeline_ax1.transAxes,
                                   fontsize=9, va='top', ha='right', color=color, fontweight='bold')
-        self.timeline_ax1.set_title('Total Findings Over Time', color=GUI_DARK_THEME['fg'], fontsize=10)
-        self.timeline_ax1.text(0.5, 1.02, 'Vulnerability count trend across scan history',
+        self.timeline_ax1.set_title(f'Total Findings by {interval_label}', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.timeline_ax1.text(0.5, 1.02, f'Vulnerability count trend ({interval_label.lower()}ly grouping)',
             transform=self.timeline_ax1.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         self.timeline_ax1.set_ylabel('Count', color=GUI_DARK_THEME['fg'])
 
-        # Chart 2: Severity breakdown over time with markers
+        # Chart 2: Severity breakdown over time with markers (grouped by interval)
         if 'severity_text' in hist_df.columns:
             severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff', 'Info': '#6c757d'}
             for sev in ['Critical', 'High', 'Medium', 'Low']:
                 sev_df = hist_df[hist_df['severity_text'] == sev]
                 if not sev_df.empty:
-                    sev_counts = sev_df.groupby(sev_df['scan_date'].dt.date).size()
-                    self.timeline_ax2.plot(range(len(sev_counts)), sev_counts.values, color=severity_colors.get(sev, 'gray'),
-                                          label=f'{sev} ({sev_counts.iloc[-1] if len(sev_counts) > 0 else 0})',
-                                          marker='o', markersize=4, linewidth=2)
+                    sev_counts = group_by_interval(sev_df, 'scan_date', interval)
+                    if len(sev_counts) > 0:
+                        self.timeline_ax2.plot(range(len(sev_counts)), sev_counts.values, color=severity_colors.get(sev, 'gray'),
+                                              label=f'{sev} ({sev_counts.iloc[-1] if len(sev_counts) > 0 else 0})',
+                                              marker='o', markersize=4, linewidth=2)
             self.timeline_ax2.legend(fontsize=7, facecolor=GUI_DARK_THEME['bg'], labelcolor=GUI_DARK_THEME['fg'])
         self.timeline_ax2.set_title('Findings by Severity', color=GUI_DARK_THEME['fg'], fontsize=10)
         self.timeline_ax2.text(0.5, 1.02, 'Critical/High/Medium/Low breakdown over time',
             transform=self.timeline_ax2.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
 
-        # Chart 3: New vs Resolved with data labels
+        # Chart 3: New vs Resolved with data labels (grouped by interval)
         if not self.scan_changes_df.empty and 'change_type' in self.scan_changes_df.columns:
             changes = self.scan_changes_df.copy()
             changes['scan_date'] = pd.to_datetime(changes['scan_date'])
-            new_counts = changes[changes['change_type'] == 'New'].groupby(changes['scan_date'].dt.to_period('M')).size()
-            resolved_counts = changes[changes['change_type'] == 'Resolved'].groupby(changes['scan_date'].dt.to_period('M')).size()
+            changes['period'] = changes['scan_date'].dt.to_period(period_format)
+            new_counts = changes[changes['change_type'] == 'New'].groupby('period').size()
+            resolved_counts = changes[changes['change_type'] == 'Resolved'].groupby('period').size()
+            period_labels = get_period_labels(new_counts.index, interval) if len(new_counts) > 0 else []
             if len(new_counts) > 0:
                 bars1 = self.timeline_ax3.bar([i - 0.2 for i in range(len(new_counts))], new_counts.values, 0.4, label='New', color='#dc3545')
+                self.timeline_ax3.set_xticks(range(len(new_counts)))
+                self.timeline_ax3.set_xticklabels(period_labels, rotation=45, ha='right', fontsize=7)
                 if show_labels:
                     for bar, val in zip(bars1, new_counts.values):
                         self.timeline_ax3.annotate(f'{int(val)}', xy=(bar.get_x() + bar.get_width()/2, val),
@@ -2531,14 +2588,18 @@ class NessusHistoryTrackerApp:
                                                   ha='center', va='bottom', fontsize=6, color='white')
             self.timeline_ax3.legend(fontsize=7, facecolor=GUI_DARK_THEME['bg'], labelcolor=GUI_DARK_THEME['fg'])
         self.timeline_ax3.set_title('New vs Resolved', color=GUI_DARK_THEME['fg'], fontsize=10)
-        self.timeline_ax3.text(0.5, 1.02, 'Monthly new vs resolved vulnerability comparison',
+        self.timeline_ax3.text(0.5, 1.02, f'{interval_label}ly new vs resolved vulnerability comparison',
             transform=self.timeline_ax3.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
 
-        # Chart 4: Cumulative risk with current value label
+        # Chart 4: Cumulative risk with current value label (grouped by interval)
         if 'severity_value' in hist_df.columns:
-            risk = hist_df.groupby(hist_df['scan_date'].dt.date)['severity_value'].sum().cumsum()
+            hist_df['period'] = hist_df['scan_date'].dt.to_period(period_format)
+            risk = hist_df.groupby('period')['severity_value'].sum().cumsum()
+            risk_labels = get_period_labels(risk.index, interval)
             self.timeline_ax4.fill_between(range(len(risk)), risk.values, alpha=0.5, color='#dc3545')
             self.timeline_ax4.plot(range(len(risk)), risk.values, 'r-', linewidth=2, marker='o', markersize=4)
+            self.timeline_ax4.set_xticks(range(len(risk)))
+            self.timeline_ax4.set_xticklabels(risk_labels, rotation=45, ha='right', fontsize=7)
             if len(risk) > 0:
                 # Show current and peak values
                 current = risk.iloc[-1]
