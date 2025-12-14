@@ -3643,8 +3643,9 @@ class NessusHistoryTrackerApp:
         ax.set_xlabel('Days Open')
 
         if enlarged:
-            avg_age = days.mean()
-            median_age = np.median(days)
+            days_numeric = pd.to_numeric(days, errors='coerce')
+            avg_age = days_numeric.mean()
+            median_age = np.median(days_numeric.dropna())
             ax.text(0.98, 0.98, f'Avg: {avg_age:.0f}d | Median: {median_age:.0f}d',
                    transform=ax.transAxes, fontsize=10, va='top', ha='right', color='#17a2b8')
 
@@ -4020,8 +4021,9 @@ class NessusHistoryTrackerApp:
         ax.set_ylabel('Host Count')
 
         if enlarged:
-            avg = vuln_per_host.mean()
-            max_vulns = vuln_per_host.max()
+            vuln_numeric = pd.to_numeric(vuln_per_host, errors='coerce')
+            avg = vuln_numeric.mean()
+            max_vulns = vuln_numeric.max()
             ax.text(0.02, 0.98, f'Avg: {avg:.1f} vulns/host | Max: {max_vulns}',
                    transform=ax.transAxes, fontsize=10, va='top', color='#17a2b8')
 
@@ -4064,8 +4066,9 @@ class NessusHistoryTrackerApp:
         ax.set_ylabel('Finding Count')
 
         if enlarged:
-            avg = days.mean()
-            median = np.median(days)
+            days_numeric = pd.to_numeric(pd.Series(days), errors='coerce').dropna()
+            avg = days_numeric.mean() if len(days_numeric) > 0 else 0
+            median = np.median(days_numeric) if len(days_numeric) > 0 else 0
             ax.text(0.98, 0.98, f'Avg: {avg:.0f}d | Median: {median:.0f}d',
                    transform=ax.transAxes, fontsize=10, va='top', ha='right', color='#28a745')
 
@@ -4208,8 +4211,9 @@ class NessusHistoryTrackerApp:
         ax.set_ylabel('Host Count')
 
         if enlarged:
-            avg = host_risk.mean()
-            high_risk = (host_risk > host_risk.quantile(0.9)).sum()
+            risk_numeric = pd.to_numeric(host_risk, errors='coerce')
+            avg = risk_numeric.mean()
+            high_risk = (risk_numeric > risk_numeric.quantile(0.9)).sum()
             ax.text(0.02, 0.98, f'Avg Risk: {avg:.0f} | High Risk Hosts: {high_risk}',
                    transform=ax.transAxes, fontsize=10, va='top', color='#dc3545')
 
@@ -5504,7 +5508,8 @@ class NessusHistoryTrackerApp:
                 else:
                     patch.set_facecolor('#dc3545')
             # Summary stats
-            avg_presence = presence.mean()
+            presence_numeric = pd.to_numeric(pd.Series(presence), errors='coerce')
+            avg_presence = presence_numeric.mean()
             self.efficiency_ax1.axvline(x=avg_presence, color='white', linestyle='--', linewidth=1, alpha=0.7)
             self.efficiency_ax1.text(0.98, 0.98, f'Avg: {avg_presence:.1f}%', transform=self.efficiency_ax1.transAxes,
                                     fontsize=8, va='top', ha='right', color='white')
@@ -5545,8 +5550,9 @@ class NessusHistoryTrackerApp:
             if len(host_burden) > 0:
                 n, bins, patches = self.efficiency_ax3.hist(host_burden, bins=15, color='#6f42c1', edgecolor='white', alpha=0.8)
                 # Summary stats
-                avg_burden = host_burden.mean()
-                max_burden = host_burden.max()
+                burden_numeric = pd.to_numeric(host_burden, errors='coerce')
+                avg_burden = burden_numeric.mean()
+                max_burden = burden_numeric.max()
                 self.efficiency_ax3.axvline(x=avg_burden, color='white', linestyle='--', linewidth=1, alpha=0.7)
                 self.efficiency_ax3.text(0.98, 0.98, f'Avg: {avg_burden:.1f} | Max: {max_burden}',
                                         transform=self.efficiency_ax3.transAxes, fontsize=8, va='top', ha='right', color='white')
@@ -5576,7 +5582,8 @@ class NessusHistoryTrackerApp:
                                                             xytext=(0, 2), textcoords='offset points',
                                                             ha='center', va='bottom', fontsize=7, color='white')
                     # Average resolution time
-                    avg_days = days.mean()
+                    days_numeric = pd.to_numeric(days, errors='coerce')
+                    avg_days = days_numeric.mean()
                     self.efficiency_ax4.text(0.98, 0.98, f'Avg: {avg_days:.0f}d', transform=self.efficiency_ax4.transAxes,
                                             fontsize=8, va='top', ha='right', color='white')
         self.efficiency_ax4.set_title('Resolution Velocity', color=GUI_DARK_THEME['fg'], fontsize=10)
@@ -5666,8 +5673,9 @@ class NessusHistoryTrackerApp:
             host_crit = df.groupby('hostname')['severity_value'].sum()
             if len(host_crit) > 0:
                 n, bins, patches = self.network_ax3.hist(host_crit, bins=15, color='#17a2b8', edgecolor='white', alpha=0.8)
-                avg_risk = host_crit.mean()
-                high_risk = (host_crit > host_crit.quantile(0.9)).sum()
+                crit_numeric = pd.to_numeric(host_crit, errors='coerce')
+                avg_risk = crit_numeric.mean()
+                high_risk = (crit_numeric > crit_numeric.quantile(0.9)).sum()
                 self.network_ax3.axvline(x=avg_risk, color='white', linestyle='--', linewidth=1, alpha=0.7)
                 self.network_ax3.text(0.98, 0.98, f'Avg: {avg_risk:.0f} | High Risk: {high_risk}',
                                      transform=self.network_ax3.transAxes, fontsize=7, va='top', ha='right', color='white')
@@ -5939,7 +5947,9 @@ class NessusHistoryTrackerApp:
         # Chart 4: Priority by severity with data labels
         sev_col = 'severity_text' if 'severity_text' in active_df.columns else 'severity' if 'severity' in active_df.columns else None
         if 'priority_score' in active_df.columns and sev_col:
-            sev_priority = active_df.groupby(sev_col)['priority_score'].mean()
+            active_df_numeric = active_df.copy()
+            active_df_numeric['priority_score'] = pd.to_numeric(active_df_numeric['priority_score'], errors='coerce')
+            sev_priority = active_df_numeric.groupby(sev_col)['priority_score'].mean()
             sev_order = ['Critical', 'High', 'Medium', 'Low', 'Info']
             sev_priority = sev_priority.reindex([s for s in sev_order if s in sev_priority.index])
             if len(sev_priority) > 0:
@@ -6201,7 +6211,8 @@ class NessusHistoryTrackerApp:
 
                     # Add summary stats
                     total_missing = len(host_df[host_df['status'] != 'Active'])
-                    avg_days = days_missing.mean() if len(days_missing) > 0 else 0
+                    days_missing_numeric = pd.to_numeric(days_missing, errors='coerce')
+                    avg_days = days_missing_numeric.mean() if len(days_missing_numeric) > 0 else 0
                     self.host_tracking_ax1.text(0.98, 0.98, f'Total: {total_missing} | Avg: {avg_days:.0f}d',
                         transform=self.host_tracking_ax1.transAxes, fontsize=7, color='#ff6b6b',
                         ha='right', va='top')
