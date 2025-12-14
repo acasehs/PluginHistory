@@ -4354,7 +4354,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_new_vs_resolved_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw new vs resolved findings for pop-out."""
-        df = self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'first_seen' not in df.columns:
             ax.text(0.5, 0.5, 'No lifecycle data available', ha='center', va='center',
@@ -4989,7 +4989,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_resolution_velocity_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw resolution velocity for pop-out."""
-        df = self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'status' not in df.columns or 'days_to_remediation' not in df.columns:
             ax.text(0.5, 0.5, 'No resolution data available', ha='center', va='center',
