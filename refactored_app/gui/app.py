@@ -115,7 +115,8 @@ class NessusHistoryTrackerApp:
         self.filter_cvss_min = tk.StringVar(value="0.0")
         self.filter_cvss_max = tk.StringVar(value="10.0")
         self.filter_opdir_status = tk.StringVar(value="All")
-        self.filter_env_type = tk.StringVar(value="All")  # Production/Pre-Production
+        self.filter_env_type = tk.StringVar(value="All Combined")  # All Combined, All Separate, or specific env
+        self.show_env_breakdown = False  # Flag for visualizations to group by environment
         self.filter_cve = tk.StringVar()  # CVE filter (e.g., CVE-2024-1234)
         self.filter_iavx = tk.StringVar()  # IAVA/B/T filter (e.g., 2024-A-0001)
 
@@ -289,6 +290,13 @@ class NessusHistoryTrackerApp:
         filter_frame = ttk.LabelFrame(parent, text="Filters", padding=5)
         filter_frame.pack(fill=tk.X, pady=(0, 5))
 
+        # Store references to filter labels for color updating
+        self.filter_labels = {}
+
+        # Default label colors
+        self.filter_label_default_bg = GUI_DARK_THEME['button_bg']
+        self.filter_label_active_bg = '#1a3a5c'
+
         # Calculate default 180-day date range
         end_date = datetime.now()
         start_date = end_date - timedelta(days=self.settings_manager.settings.default_date_range_days)
@@ -298,17 +306,29 @@ class NessusHistoryTrackerApp:
         # Row 1: Date Range (full width)
         date_row = ttk.Frame(filter_frame)
         date_row.pack(fill=tk.X, pady=3)
-        date_label = tk.Label(date_row, text="Dates:", width=8, bg='#1a3a5c', fg='white', anchor='w')
+        date_label = tk.Label(date_row, text="Dates:", width=8, bg=self.filter_label_default_bg, fg='white', anchor='w')
         date_label.pack(side=tk.LEFT)
-        ttk.Entry(date_row, textvariable=self.filter_start_date, width=12).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
+        self.filter_labels['dates'] = date_label
+
+        # Date entry with picker button
+        start_entry = ttk.Entry(date_row, textvariable=self.filter_start_date, width=10)
+        start_entry.pack(side=tk.LEFT, padx=1)
+        tk.Button(date_row, text="📅", command=lambda: self._show_date_picker(self.filter_start_date),
+                 bg=GUI_DARK_THEME['button_bg'], fg='white', relief='flat', width=2).pack(side=tk.LEFT)
+
         ttk.Label(date_row, text="to").pack(side=tk.LEFT, padx=2)
-        ttk.Entry(date_row, textvariable=self.filter_end_date, width=12).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
+
+        end_entry = ttk.Entry(date_row, textvariable=self.filter_end_date, width=10)
+        end_entry.pack(side=tk.LEFT, padx=1)
+        tk.Button(date_row, text="📅", command=lambda: self._show_date_picker(self.filter_end_date),
+                 bg=GUI_DARK_THEME['button_bg'], fg='white', relief='flat', width=2).pack(side=tk.LEFT)
 
         # Row 2: Severity toggle buttons (full width)
         sev_row = ttk.Frame(filter_frame)
         sev_row.pack(fill=tk.X, pady=3)
-        sev_label = tk.Label(sev_row, text="Severity:", width=8, bg='#1a3a5c', fg='white', anchor='w')
+        sev_label = tk.Label(sev_row, text="Severity:", width=8, bg=self.filter_label_default_bg, fg='white', anchor='w')
         sev_label.pack(side=tk.LEFT)
+        self.filter_labels['severity'] = sev_label
 
         # Severity colors (from settings or defaults)
         sev_colors = self.settings_manager.settings.get_severity_colors()
@@ -350,51 +370,62 @@ class NessusHistoryTrackerApp:
         # Left Column Row 1: Status filter
         status_row = ttk.Frame(left_col)
         status_row.pack(fill=tk.X, pady=2)
-        status_label = tk.Label(status_row, text="Status:", width=8, bg='#1a3a5c', fg='white', anchor='w')
+        status_label = tk.Label(status_row, text="Status:", width=8, bg=self.filter_label_default_bg, fg='white', anchor='w')
         status_label.pack(side=tk.LEFT)
+        self.filter_labels['status'] = status_label
         ttk.Combobox(status_row, textvariable=self.filter_status,
                     values=["All", "Active", "Resolved"], state="readonly", width=10).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
 
         # Right Column Row 1: Host Type
         type_row = ttk.Frame(right_col)
         type_row.pack(fill=tk.X, pady=2)
-        type_label = tk.Label(type_row, text="Type:", width=8, bg='#1a3a5c', fg='white', anchor='w')
+        type_label = tk.Label(type_row, text="Type:", width=8, bg=self.filter_label_default_bg, fg='white', anchor='w')
         type_label.pack(side=tk.LEFT)
+        self.filter_labels['type'] = type_label
         ttk.Combobox(type_row, textvariable=self.filter_host_type,
                     values=["All", "Physical", "Virtual", "ILOM"], state="readonly", width=10).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
 
         # Left Column Row 2: Environment
         env_row = ttk.Frame(left_col)
         env_row.pack(fill=tk.X, pady=2)
-        env_label = tk.Label(env_row, text="Env:", width=8, bg='#1a3a5c', fg='white', anchor='w')
+        env_label = tk.Label(env_row, text="Env:", width=8, bg=self.filter_label_default_bg, fg='white', anchor='w')
         env_label.pack(side=tk.LEFT)
+        self.filter_labels['env'] = env_label
         # Get environment types from settings
-        env_types = ["All"] + self.settings_manager.settings.environment_types
+        # "All Combined" = show all environments as single dataset
+        # "All Separate" = show all environments but grouped/broken down by environment
+        env_types = ["All Combined", "All Separate"] + self.settings_manager.settings.environment_types
         self.env_combo = ttk.Combobox(env_row, textvariable=self.filter_env_type,
-                    values=env_types, state="readonly", width=10)
+                    values=env_types, state="readonly", width=12)
         self.env_combo.pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
-        ttk.Button(env_row, text="⚙", command=self._show_environment_config, width=2).pack(side=tk.LEFT, padx=1)
+        # Gear button with proper sizing
+        tk.Button(env_row, text="⚙", command=self._show_environment_config,
+                 bg=GUI_DARK_THEME['button_bg'], fg='white', relief='flat',
+                 font=('Arial', 10), padx=4, pady=0).pack(side=tk.LEFT, padx=1)
 
         # Right Column Row 2: Location
         loc_row = ttk.Frame(right_col)
         loc_row.pack(fill=tk.X, pady=2)
-        loc_label = tk.Label(loc_row, text="Loc:", width=8, bg='#1a3a5c', fg='white', anchor='w')
+        loc_label = tk.Label(loc_row, text="Loc:", width=8, bg=self.filter_label_default_bg, fg='white', anchor='w')
         loc_label.pack(side=tk.LEFT)
+        self.filter_labels['location'] = loc_label
         ttk.Entry(loc_row, textvariable=self.filter_location, width=10).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
 
         # Left Column Row 3: Host Pattern
         host_row = ttk.Frame(left_col)
         host_row.pack(fill=tk.X, pady=2)
-        host_label = tk.Label(host_row, text="Host:", width=8, bg='#1a3a5c', fg='white', anchor='w')
+        host_label = tk.Label(host_row, text="Host:", width=8, bg=self.filter_label_default_bg, fg='white', anchor='w')
         host_label.pack(side=tk.LEFT)
+        self.filter_labels['host'] = host_label
         ttk.Entry(host_row, textvariable=self.filter_host, width=10).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
         ttk.Button(host_row, text="...", command=self._show_host_selector, width=2).pack(side=tk.LEFT, padx=1)
 
         # Right Column Row 3: CVSS Range
         cvss_row = ttk.Frame(right_col)
         cvss_row.pack(fill=tk.X, pady=2)
-        cvss_label = tk.Label(cvss_row, text="CVSS:", width=8, bg='#1a3a5c', fg='white', anchor='w')
+        cvss_label = tk.Label(cvss_row, text="CVSS:", width=8, bg=self.filter_label_default_bg, fg='white', anchor='w')
         cvss_label.pack(side=tk.LEFT)
+        self.filter_labels['cvss'] = cvss_label
         ttk.Entry(cvss_row, textvariable=self.filter_cvss_min, width=5).pack(side=tk.LEFT, padx=1)
         ttk.Label(cvss_row, text="-").pack(side=tk.LEFT)
         ttk.Entry(cvss_row, textvariable=self.filter_cvss_max, width=5).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
@@ -402,8 +433,9 @@ class NessusHistoryTrackerApp:
         # Left Column Row 4: OPDIR Status
         opdir_row = ttk.Frame(left_col)
         opdir_row.pack(fill=tk.X, pady=2)
-        opdir_label = tk.Label(opdir_row, text="OPDIR:", width=8, bg='#1a3a5c', fg='white', anchor='w')
+        opdir_label = tk.Label(opdir_row, text="OPDIR:", width=8, bg=self.filter_label_default_bg, fg='white', anchor='w')
         opdir_label.pack(side=tk.LEFT)
+        self.filter_labels['opdir'] = opdir_label
         opdir_options = ["All", "Overdue", "Due Soon", "On Track", "OPDIR Mapped", "No OPDIR"]
         ttk.Combobox(opdir_row, textvariable=self.filter_opdir_status,
                     values=opdir_options, state="readonly", width=10).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
@@ -411,15 +443,17 @@ class NessusHistoryTrackerApp:
         # Right Column Row 4: CVE filter
         cve_row = ttk.Frame(right_col)
         cve_row.pack(fill=tk.X, pady=2)
-        cve_label = tk.Label(cve_row, text="CVE:", width=8, bg='#1a3a5c', fg='white', anchor='w')
+        cve_label = tk.Label(cve_row, text="CVE:", width=8, bg=self.filter_label_default_bg, fg='white', anchor='w')
         cve_label.pack(side=tk.LEFT)
+        self.filter_labels['cve'] = cve_label
         ttk.Entry(cve_row, textvariable=self.filter_cve, width=15).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
 
         # Full width: IAVX filter
         iavx_row = ttk.Frame(filter_frame)
         iavx_row.pack(fill=tk.X, pady=2)
-        iavx_label = tk.Label(iavx_row, text="IAV:", width=8, bg='#1a3a5c', fg='white', anchor='w')
+        iavx_label = tk.Label(iavx_row, text="IAVx:", width=8, bg=self.filter_label_default_bg, fg='white', anchor='w')
         iavx_label.pack(side=tk.LEFT)
+        self.filter_labels['iavx'] = iavx_label
         ttk.Entry(iavx_row, textvariable=self.filter_iavx, width=15).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
 
         # Host count display
@@ -2080,8 +2114,12 @@ class NessusHistoryTrackerApp:
 
         # Filter: Environment Type (Production/PSS/Shared)
         # Uses hostname parser which checks: 1) Explicit mappings, 2) Shared patterns, 3) Auto-detection
+        # "All Combined" = show all, combined in visualizations
+        # "All Separate" = show all, but grouped by environment in visualizations
         env_type = self.filter_env_type.get()
-        if env_type != "All" and 'hostname' in filtered.columns:
+        self.show_env_breakdown = (env_type == "All Separate")  # Flag for visualizations
+
+        if env_type not in ["All Combined", "All Separate", "All", ""] and 'hostname' in filtered.columns:
             from ..models.hostname_structure import parse_hostname, EnvironmentType
             def check_env_type(hostname):
                 if not isinstance(hostname, str):
@@ -2096,6 +2134,8 @@ class NessusHistoryTrackerApp:
                 return False
             filtered = filtered[filtered['hostname'].apply(check_env_type)]
             filter_descriptions.append(f"Env: {env_type}")
+        elif env_type == "All Separate":
+            filter_descriptions.append("Env: By Environment")
 
         # Filter: Location
         location = self.filter_location.get().strip().upper()
@@ -2214,6 +2254,9 @@ class NessusHistoryTrackerApp:
         else:
             self.filter_status_label.config(text="No filters applied", foreground="gray")
 
+        # Update filter label colors (highlight active filters)
+        self._update_filter_label_colors()
+
         # Update all displays
         self._update_dashboard()
         self._update_lifecycle_tree()
@@ -2271,7 +2314,7 @@ class NessusHistoryTrackerApp:
         self._update_severity_button('Info')
         self.filter_status.set("All")
         self.filter_host_type.set("All")
-        self.filter_env_type.set("All")
+        self.filter_env_type.set("All Combined")
         self.filter_host.set("")
         self.filter_location.set("")
         self.filter_cvss_min.set("0.0")
@@ -2305,6 +2348,234 @@ class NessusHistoryTrackerApp:
         # Apply the reset filters
         self._apply_filters()
         self._log("Filters reset to defaults")
+
+    def _update_filter_label_colors(self):
+        """Update filter label colors based on whether filters are applied."""
+        if not hasattr(self, 'filter_labels'):
+            return
+
+        # Check each filter and update its label color
+        active_bg = self.filter_label_active_bg
+        default_bg = self.filter_label_default_bg
+
+        # Dates - always applied if set
+        if self.filter_start_date.get() or self.filter_end_date.get():
+            self.filter_labels.get('dates', tk.Label()).config(bg=active_bg)
+        else:
+            self.filter_labels.get('dates', tk.Label()).config(bg=default_bg)
+
+        # Severity - check if not all selected
+        selected = [s for s in ['Critical', 'High', 'Medium', 'Low', 'Info'] if self.severity_toggles[s].get()]
+        if len(selected) < 5:
+            self.filter_labels.get('severity', tk.Label()).config(bg=active_bg)
+        else:
+            self.filter_labels.get('severity', tk.Label()).config(bg=default_bg)
+
+        # Status
+        if self.filter_status.get() != "All":
+            self.filter_labels.get('status', tk.Label()).config(bg=active_bg)
+        else:
+            self.filter_labels.get('status', tk.Label()).config(bg=default_bg)
+
+        # Host Type
+        if self.filter_host_type.get() != "All":
+            self.filter_labels.get('type', tk.Label()).config(bg=active_bg)
+        else:
+            self.filter_labels.get('type', tk.Label()).config(bg=default_bg)
+
+        # Environment
+        env_filter = self.filter_env_type.get()
+        if env_filter not in ["All Combined", "All Separate", ""]:
+            self.filter_labels.get('env', tk.Label()).config(bg=active_bg)
+        else:
+            self.filter_labels.get('env', tk.Label()).config(bg=default_bg)
+
+        # Location
+        if self.filter_location.get().strip():
+            self.filter_labels.get('location', tk.Label()).config(bg=active_bg)
+        else:
+            self.filter_labels.get('location', tk.Label()).config(bg=default_bg)
+
+        # Host
+        if self.filter_host.get().strip() or self.filter_host_list:
+            self.filter_labels.get('host', tk.Label()).config(bg=active_bg)
+        else:
+            self.filter_labels.get('host', tk.Label()).config(bg=default_bg)
+
+        # CVSS
+        cvss_min = self.filter_cvss_min.get()
+        cvss_max = self.filter_cvss_max.get()
+        if (cvss_min and cvss_min != "0.0" and cvss_min != "0") or (cvss_max and cvss_max != "10.0" and cvss_max != "10"):
+            self.filter_labels.get('cvss', tk.Label()).config(bg=active_bg)
+        else:
+            self.filter_labels.get('cvss', tk.Label()).config(bg=default_bg)
+
+        # OPDIR
+        if self.filter_opdir_status.get() != "All":
+            self.filter_labels.get('opdir', tk.Label()).config(bg=active_bg)
+        else:
+            self.filter_labels.get('opdir', tk.Label()).config(bg=default_bg)
+
+        # CVE
+        if self.filter_cve.get().strip():
+            self.filter_labels.get('cve', tk.Label()).config(bg=active_bg)
+        else:
+            self.filter_labels.get('cve', tk.Label()).config(bg=default_bg)
+
+        # IAVX
+        if self.filter_iavx.get().strip():
+            self.filter_labels.get('iavx', tk.Label()).config(bg=active_bg)
+        else:
+            self.filter_labels.get('iavx', tk.Label()).config(bg=default_bg)
+
+    def _show_date_picker(self, date_var):
+        """Show a date picker popup for selecting dates."""
+        picker = tk.Toplevel(self.window)
+        picker.title("Select Date")
+        picker.configure(bg=GUI_DARK_THEME['bg'])
+        picker.transient(self.window)
+        picker.grab_set()
+
+        # Get current date or default to today
+        try:
+            current = datetime.strptime(date_var.get(), '%Y-%m-%d')
+        except:
+            current = datetime.now()
+
+        # Calendar state
+        cal_state = {'year': current.year, 'month': current.month}
+
+        # Color definitions
+        today_bg = '#8B0000'  # Burgundy for today
+        selected_bg = '#1a3a5c'  # Dark blue for selected range
+        normal_bg = GUI_DARK_THEME['entry_bg']
+        header_bg = GUI_DARK_THEME['button_bg']
+
+        # Main frame
+        main_frame = ttk.Frame(picker, padding=10)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Month/Year navigation
+        nav_frame = ttk.Frame(main_frame)
+        nav_frame.pack(fill=tk.X, pady=(0, 10))
+
+        def prev_month():
+            cal_state['month'] -= 1
+            if cal_state['month'] < 1:
+                cal_state['month'] = 12
+                cal_state['year'] -= 1
+            draw_calendar()
+
+        def next_month():
+            cal_state['month'] += 1
+            if cal_state['month'] > 12:
+                cal_state['month'] = 1
+                cal_state['year'] += 1
+            draw_calendar()
+
+        ttk.Button(nav_frame, text="<", width=3, command=prev_month).pack(side=tk.LEFT)
+        month_label = ttk.Label(nav_frame, text="", font=('Arial', 11, 'bold'))
+        month_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(nav_frame, text=">", width=3, command=next_month).pack(side=tk.RIGHT)
+
+        # Calendar grid frame
+        cal_frame = ttk.Frame(main_frame)
+        cal_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Day headers
+        days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+        for i, day in enumerate(days):
+            lbl = tk.Label(cal_frame, text=day, width=4, bg=header_bg, fg='white',
+                          font=('Arial', 9, 'bold'))
+            lbl.grid(row=0, column=i, padx=1, pady=1)
+
+        # Day buttons
+        day_buttons = []
+
+        def select_date(day):
+            if day > 0:
+                selected = datetime(cal_state['year'], cal_state['month'], day)
+                date_var.set(selected.strftime('%Y-%m-%d'))
+                picker.destroy()
+
+        def draw_calendar():
+            # Clear existing buttons
+            for btn in day_buttons:
+                btn.destroy()
+            day_buttons.clear()
+
+            # Update month label
+            month_label.config(text=f"{calendar.month_name[cal_state['month']]} {cal_state['year']}")
+
+            # Get calendar for month
+            import calendar
+            cal = calendar.Calendar(firstweekday=0)
+            month_days = cal.monthdayscalendar(cal_state['year'], cal_state['month'])
+
+            today = datetime.now().date()
+
+            # Get selected date range for highlighting
+            try:
+                start = datetime.strptime(self.filter_start_date.get(), '%Y-%m-%d').date()
+            except:
+                start = None
+            try:
+                end = datetime.strptime(self.filter_end_date.get(), '%Y-%m-%d').date()
+            except:
+                end = None
+
+            for row_idx, week in enumerate(month_days):
+                for col_idx, day in enumerate(week):
+                    if day == 0:
+                        # Empty cell
+                        btn = tk.Label(cal_frame, text="", width=4, bg=normal_bg, fg=GUI_DARK_THEME['fg'])
+                    else:
+                        current_date = datetime(cal_state['year'], cal_state['month'], day).date()
+
+                        # Determine background color
+                        if current_date == today:
+                            bg = today_bg
+                        elif start and end and start <= current_date <= end:
+                            bg = selected_bg
+                        else:
+                            bg = normal_bg
+
+                        btn = tk.Button(cal_frame, text=str(day), width=4,
+                                       bg=bg, fg='white', relief='flat',
+                                       activebackground='#3a5a7c',
+                                       command=lambda d=day: select_date(d))
+                    btn.grid(row=row_idx + 1, column=col_idx, padx=1, pady=1)
+                    day_buttons.append(btn)
+
+        # Import calendar module for this function
+        import calendar
+        draw_calendar()
+
+        # Quick select buttons
+        quick_frame = ttk.Frame(main_frame)
+        quick_frame.pack(fill=tk.X, pady=(10, 0))
+
+        def set_today():
+            date_var.set(datetime.now().strftime('%Y-%m-%d'))
+            picker.destroy()
+
+        def set_days_ago(days):
+            date_var.set((datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d'))
+            picker.destroy()
+
+        ttk.Button(quick_frame, text="Today", command=set_today, width=8).pack(side=tk.LEFT, padx=2)
+        ttk.Button(quick_frame, text="-30d", command=lambda: set_days_ago(30), width=5).pack(side=tk.LEFT, padx=2)
+        ttk.Button(quick_frame, text="-90d", command=lambda: set_days_ago(90), width=5).pack(side=tk.LEFT, padx=2)
+        ttk.Button(quick_frame, text="-180d", command=lambda: set_days_ago(180), width=6).pack(side=tk.LEFT, padx=2)
+
+        # Close button
+        ttk.Button(main_frame, text="Cancel", command=picker.destroy).pack(pady=(10, 0))
+
+        # Center the picker
+        picker.update_idletasks()
+        x = self.window.winfo_x() + (self.window.winfo_width() // 2) - (picker.winfo_width() // 2)
+        y = self.window.winfo_y() + (self.window.winfo_height() // 2) - (picker.winfo_height() // 2)
+        picker.geometry(f"+{x}+{y}")
 
     def _update_host_count_label(self):
         """Update the host count label next to the host filter."""
@@ -8030,10 +8301,12 @@ class NessusHistoryTrackerApp:
 
         dialog = tk.Toplevel(self.window)
         dialog.title("Environment Configuration")
-        dialog.geometry("600x550")
+        dialog.geometry("900x650")
         dialog.configure(bg=GUI_DARK_THEME['bg'])
         dialog.transient(self.window)
         dialog.grab_set()
+        dialog.resizable(True, True)
+        dialog.minsize(700, 500)
 
         # Create notebook for tabbed configuration
         notebook = ttk.Notebook(dialog)
@@ -8061,20 +8334,186 @@ class NessusHistoryTrackerApp:
         mappings_frame = ttk.Frame(notebook, padding=10)
         notebook.add(mappings_frame, text="Hostname Mappings")
 
-        ttk.Label(mappings_frame, text="Map specific hostnames to environments:").pack(anchor=tk.W, pady=(0, 5))
-        ttk.Label(mappings_frame, text="Format: hostname = EnvironmentType (e.g., server01 = Production)",
-                 foreground='gray').pack(anchor=tk.W, pady=(0, 10))
+        # Get all hostnames from loaded data
+        all_hostnames = self._get_all_hostnames()
+        current_mappings = dict(settings.environment_mappings)
+        env_options = settings.environment_types + ['Unknown']
 
-        # Text widget for hostname mappings
-        mappings_text = tk.Text(mappings_frame, height=10, width=50,
-                               bg=GUI_DARK_THEME['entry_bg'], fg=GUI_DARK_THEME['fg'],
-                               insertbackground=GUI_DARK_THEME['fg'])
-        mappings_text.pack(fill=tk.BOTH, expand=True, pady=5)
+        # Store mapping state
+        mapping_state = {'mappings': current_mappings.copy()}
 
-        # Pre-populate with current mappings
-        current_mappings = settings.environment_mappings
-        mapping_lines = [f"{hostname} = {env}" for hostname, env in current_mappings.items()]
-        mappings_text.insert('1.0', '\n'.join(mapping_lines))
+        # Top controls - bulk assignment
+        bulk_frame = ttk.Frame(mappings_frame)
+        bulk_frame.pack(fill=tk.X, pady=(0, 10))
+
+        ttk.Label(bulk_frame, text="Bulk assign selected hosts to:").pack(side=tk.LEFT)
+        bulk_env_var = tk.StringVar(value=env_options[0] if env_options else "Production")
+        bulk_combo = ttk.Combobox(bulk_frame, textvariable=bulk_env_var,
+                                  values=env_options, state="readonly", width=15)
+        bulk_combo.pack(side=tk.LEFT, padx=5)
+
+        # Main content - two columns
+        content_frame = ttk.Frame(mappings_frame)
+        content_frame.pack(fill=tk.BOTH, expand=True)
+        content_frame.columnconfigure(0, weight=1)
+        content_frame.columnconfigure(1, weight=1)
+
+        # Left side: Host list with checkboxes and dropdowns
+        left_frame = ttk.LabelFrame(content_frame, text="All Hosts", padding=5)
+        left_frame.grid(row=0, column=0, sticky='nsew', padx=(0, 5))
+
+        # Search filter
+        search_frame = ttk.Frame(left_frame)
+        search_frame.pack(fill=tk.X, pady=(0, 5))
+        ttk.Label(search_frame, text="Filter:").pack(side=tk.LEFT)
+        search_var = tk.StringVar()
+        search_entry = ttk.Entry(search_frame, textvariable=search_var, width=20)
+        search_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+
+        # Scrollable host list
+        host_canvas = tk.Canvas(left_frame, bg=GUI_DARK_THEME['entry_bg'], highlightthickness=0)
+        host_scrollbar = ttk.Scrollbar(left_frame, orient="vertical", command=host_canvas.yview)
+        host_list_frame = ttk.Frame(host_canvas)
+
+        host_canvas.configure(yscrollcommand=host_scrollbar.set)
+        host_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        host_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        host_canvas_window = host_canvas.create_window((0, 0), window=host_list_frame, anchor="nw")
+
+        # Store checkbox and combo references
+        host_widgets = {}
+
+        def get_current_env(hostname):
+            """Get current environment for a hostname."""
+            h_lower = hostname.lower()
+            if h_lower in mapping_state['mappings']:
+                return mapping_state['mappings'][h_lower]
+            return self._get_environment_type(hostname)
+
+        def update_mapping(hostname, env):
+            """Update mapping for a hostname."""
+            h_lower = hostname.lower()
+            if env and env != 'Unknown':
+                mapping_state['mappings'][h_lower] = env
+            elif h_lower in mapping_state['mappings']:
+                del mapping_state['mappings'][h_lower]
+            update_env_lists()
+
+        def build_host_list(filter_text=""):
+            """Build/rebuild the host list with checkboxes."""
+            # Clear existing widgets
+            for widget in host_list_frame.winfo_children():
+                widget.destroy()
+            host_widgets.clear()
+
+            filtered_hosts = [h for h in all_hostnames if filter_text.lower() in h.lower()]
+
+            for i, hostname in enumerate(sorted(filtered_hosts)):
+                row_frame = ttk.Frame(host_list_frame)
+                row_frame.pack(fill=tk.X, pady=1)
+
+                # Checkbox for selection
+                check_var = tk.BooleanVar(value=False)
+                check = ttk.Checkbutton(row_frame, variable=check_var)
+                check.pack(side=tk.LEFT)
+
+                # Hostname label
+                ttk.Label(row_frame, text=hostname[:25], width=25).pack(side=tk.LEFT)
+
+                # Environment dropdown
+                current_env = get_current_env(hostname)
+                env_var = tk.StringVar(value=current_env)
+                env_combo = ttk.Combobox(row_frame, textvariable=env_var,
+                                        values=env_options, state="readonly", width=12)
+                env_combo.pack(side=tk.LEFT, padx=2)
+                env_combo.bind('<<ComboboxSelected>>', lambda e, h=hostname, v=env_var: update_mapping(h, v.get()))
+
+                host_widgets[hostname] = {'check': check_var, 'env': env_var}
+
+            # Update canvas scroll region
+            host_list_frame.update_idletasks()
+            host_canvas.configure(scrollregion=host_canvas.bbox("all"))
+
+        def apply_bulk_assignment():
+            """Apply bulk environment assignment to selected hosts."""
+            env = bulk_env_var.get()
+            for hostname, widgets in host_widgets.items():
+                if widgets['check'].get():
+                    widgets['env'].set(env)
+                    update_mapping(hostname, env)
+
+        ttk.Button(bulk_frame, text="Apply", command=apply_bulk_assignment).pack(side=tk.LEFT, padx=5)
+
+        # Bind search filter
+        def on_search(*args):
+            build_host_list(search_var.get())
+        search_var.trace('w', on_search)
+
+        # Right side: Environment lists showing hosts in each environment
+        right_frame = ttk.LabelFrame(content_frame, text="Hosts by Environment", padding=5)
+        right_frame.grid(row=0, column=1, sticky='nsew', padx=(5, 0))
+
+        # Create scrollable text for each environment
+        env_list_canvas = tk.Canvas(right_frame, bg=GUI_DARK_THEME['entry_bg'], highlightthickness=0)
+        env_list_scrollbar = ttk.Scrollbar(right_frame, orient="vertical", command=env_list_canvas.yview)
+        env_lists_frame = ttk.Frame(env_list_canvas)
+
+        env_list_canvas.configure(yscrollcommand=env_list_scrollbar.set)
+        env_list_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        env_list_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        env_list_canvas.create_window((0, 0), window=env_lists_frame, anchor="nw")
+
+        env_text_widgets = {}
+
+        def update_env_lists():
+            """Update the environment lists on the right side."""
+            # Clear existing
+            for widget in env_lists_frame.winfo_children():
+                widget.destroy()
+            env_text_widgets.clear()
+
+            # Group hosts by environment
+            env_hosts = {env: [] for env in env_options}
+            for hostname in all_hostnames:
+                env = get_current_env(hostname)
+                if env in env_hosts:
+                    env_hosts[env].append(hostname)
+                else:
+                    env_hosts.setdefault('Unknown', []).append(hostname)
+
+            # Create collapsible sections for each environment
+            for env in env_options:
+                hosts = sorted(env_hosts.get(env, []))
+                if not hosts:
+                    continue
+
+                env_frame = ttk.LabelFrame(env_lists_frame, text=f"{env} ({len(hosts)})")
+                env_frame.pack(fill=tk.X, pady=2, padx=2)
+
+                text_widget = tk.Text(env_frame, height=4, width=30,
+                                     bg=GUI_DARK_THEME['entry_bg'], fg=GUI_DARK_THEME['fg'],
+                                     state='disabled')
+                text_scrollbar = ttk.Scrollbar(env_frame, command=text_widget.yview)
+                text_widget.configure(yscrollcommand=text_scrollbar.set)
+
+                text_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+                text_widget.pack(fill=tk.BOTH, expand=True)
+
+                text_widget.configure(state='normal')
+                text_widget.insert('1.0', '\n'.join(hosts))
+                text_widget.configure(state='disabled')
+
+                env_text_widgets[env] = text_widget
+
+            env_lists_frame.update_idletasks()
+            env_list_canvas.configure(scrollregion=env_list_canvas.bbox("all"))
+
+        # Initial build
+        build_host_list()
+        update_env_lists()
+
+        # Store reference to mapping_state for save function
+        mappings_text = mapping_state  # Reference for save function
 
         # === Pattern Mappings Tab ===
         patterns_frame = ttk.Frame(notebook, padding=10)
@@ -8099,21 +8538,44 @@ class NessusHistoryTrackerApp:
         auto_frame = ttk.Frame(notebook, padding=10)
         notebook.add(auto_frame, text="Auto-Detection")
 
-        ttk.Label(auto_frame, text="Automatic environment detection rules:").pack(anchor=tk.W, pady=(0, 10))
+        ttk.Label(auto_frame, text="Automatic environment detection rules:",
+                 font=('Arial', 10, 'bold')).pack(anchor=tk.W, pady=(0, 10))
 
-        ttk.Label(auto_frame, text="Standard 9-character hostname format: LLLLTTCEP").pack(anchor=tk.W, pady=2)
-        ttk.Label(auto_frame, text="  • L (4 chars): Location code").pack(anchor=tk.W, padx=20)
-        ttk.Label(auto_frame, text="  • T (2 chars): Tier code").pack(anchor=tk.W, padx=20)
-        ttk.Label(auto_frame, text="  • C (1 char): Cluster identifier").pack(anchor=tk.W, padx=20)
-        ttk.Label(auto_frame, text="  • E (1 char): Environment - Letter=Production, Number=PSS").pack(anchor=tk.W, padx=20)
-        ttk.Label(auto_frame, text="  • P (1 char): Physical (p) or Virtual (v)").pack(anchor=tk.W, padx=20)
+        # Configurable hostname length
+        length_frame = ttk.Frame(auto_frame)
+        length_frame.pack(fill=tk.X, pady=5)
+        ttk.Label(length_frame, text="Expected hostname length:").pack(side=tk.LEFT)
+        current_length = getattr(settings, 'hostname_length', 9)
+        auto_frame.hostname_length_var = tk.StringVar(value=str(current_length))
+        length_entry = ttk.Entry(length_frame, textvariable=auto_frame.hostname_length_var, width=5)
+        length_entry.pack(side=tk.LEFT, padx=5)
+        ttk.Label(length_frame, text="characters (default: 9)").pack(side=tk.LEFT)
 
-        ttk.Separator(auto_frame, orient='horizontal').pack(fill=tk.X, pady=15)
+        ttk.Separator(auto_frame, orient='horizontal').pack(fill=tk.X, pady=10)
 
-        ttk.Label(auto_frame, text="Detection priority:").pack(anchor=tk.W, pady=5)
+        ttk.Label(auto_frame, text="Standard hostname format: LLLLTTCEP",
+                 font=('Arial', 9, 'bold')).pack(anchor=tk.W, pady=2)
+        ttk.Label(auto_frame, text="(Customize positions based on your hostname structure)").pack(anchor=tk.W, pady=(0, 5))
+
+        # Position configuration
+        pos_frame = ttk.LabelFrame(auto_frame, text="Position Configuration", padding=5)
+        pos_frame.pack(fill=tk.X, pady=5)
+
+        ttk.Label(pos_frame, text="Position 1-4: Location code (e.g., LANT, PACF)").pack(anchor=tk.W, padx=10)
+        ttk.Label(pos_frame, text="Position 5-6: Tier/type code").pack(anchor=tk.W, padx=10)
+        ttk.Label(pos_frame, text="Position 7: Cluster identifier").pack(anchor=tk.W, padx=10)
+        ttk.Label(pos_frame, text="Position 8: Environment indicator").pack(anchor=tk.W, padx=10)
+        ttk.Label(pos_frame, text="    • Letter (A-Z) = Production").pack(anchor=tk.W, padx=30)
+        ttk.Label(pos_frame, text="    • Number (0-9) = PSS/Pre-Production").pack(anchor=tk.W, padx=30)
+        ttk.Label(pos_frame, text="Position 9: Host type").pack(anchor=tk.W, padx=10)
+        ttk.Label(pos_frame, text="    • 'p' = Physical, 'v' = Virtual").pack(anchor=tk.W, padx=30)
+
+        ttk.Separator(auto_frame, orient='horizontal').pack(fill=tk.X, pady=10)
+
+        ttk.Label(auto_frame, text="Detection priority:", font=('Arial', 9, 'bold')).pack(anchor=tk.W, pady=5)
         ttk.Label(auto_frame, text="  1. Explicit hostname mappings (Hostname Mappings tab)").pack(anchor=tk.W, padx=20)
         ttk.Label(auto_frame, text="  2. Pattern matching (Pattern Mappings tab)").pack(anchor=tk.W, padx=20)
-        ttk.Label(auto_frame, text="  3. Auto-detection from 9-char format").pack(anchor=tk.W, padx=20)
+        ttk.Label(auto_frame, text="  3. Auto-detection from hostname format").pack(anchor=tk.W, padx=20)
         ttk.Label(auto_frame, text="  4. Default to 'Unknown'").pack(anchor=tk.W, padx=20)
 
         # Buttons
@@ -8127,17 +8589,8 @@ class NessusHistoryTrackerApp:
             if not new_types:
                 new_types = ['Production', 'PSS', 'Shared', 'Unknown']
 
-            # Parse hostname mappings
-            mappings_content = mappings_text.get('1.0', tk.END).strip()
-            new_mappings = {}
-            for line in mappings_content.split('\n'):
-                if '=' in line:
-                    parts = line.split('=', 1)
-                    if len(parts) == 2:
-                        hostname = parts[0].strip().lower()
-                        env = parts[1].strip()
-                        if hostname and env:
-                            new_mappings[hostname] = env
+            # Get hostname mappings from the interactive state
+            new_mappings = dict(mapping_state['mappings'])
 
             # Parse pattern mappings
             patterns_content = patterns_text.get('1.0', tk.END).strip()
@@ -8151,6 +8604,13 @@ class NessusHistoryTrackerApp:
                         if pattern and env:
                             new_patterns[pattern] = env
 
+            # Get hostname length from auto-detection settings
+            if hasattr(auto_frame, 'hostname_length_var'):
+                try:
+                    settings.hostname_length = int(auto_frame.hostname_length_var.get())
+                except ValueError:
+                    pass
+
             # Update settings
             settings.environment_types = new_types
             settings.environment_mappings = new_mappings
@@ -8160,7 +8620,7 @@ class NessusHistoryTrackerApp:
             self.settings_manager.save()
 
             # Update the environment filter dropdown
-            env_types = ["All"] + new_types
+            env_types = ["All Combined", "All Separate"] + new_types
             self.env_combo['values'] = env_types
 
             self._log(f"Saved environment config: {len(new_types)} types, {len(new_mappings)} mappings, {len(new_patterns)} patterns")
