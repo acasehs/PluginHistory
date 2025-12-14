@@ -376,6 +376,12 @@ def create_opdir_lookup(opdir_df: pd.DataFrame) -> Dict[str, Any]:
     if opdir_df.empty:
         return lookup
 
+    # Clean: drop unnamed columns (blank columns from Excel import)
+    unnamed_cols = [col for col in opdir_df.columns if 'unnamed' in str(col).lower()]
+    if unnamed_cols:
+        print(f"Dropping {len(unnamed_cols)} unnamed columns: {unnamed_cols}")
+        opdir_df = opdir_df.drop(columns=unnamed_cols)
+
     # Check if we need to parse legacy format (database loaded without iavab columns)
     needs_parsing = 'iavab_full' not in opdir_df.columns and 'iavab_suffix' not in opdir_df.columns
 
