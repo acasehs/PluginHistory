@@ -489,6 +489,20 @@ class NessusHistoryTrackerApp:
             value_label.pack(side=tk.LEFT, padx=(5, 0))
             self.host_type_labels[htype] = value_label
 
+        # Environment breakdown frame
+        env_frame = ttk.LabelFrame(dashboard_frame, text="Environment Breakdown", padding=10)
+        env_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        self.env_type_labels = {}
+        env_colors = {'Production': '#28a745', 'PSS': '#007bff', 'Shared': '#ffc107', 'Unknown': '#6c757d'}
+        for i, env in enumerate(['Production', 'PSS', 'Shared', 'Unknown']):
+            frame = ttk.Frame(env_frame)
+            frame.grid(row=0, column=i, padx=15, pady=5)
+            ttk.Label(frame, text=f"{env}:").pack(side=tk.LEFT)
+            value_label = ttk.Label(frame, text="0", foreground=env_colors.get(env, '#00ff00'))
+            value_label.pack(side=tk.LEFT, padx=(5, 0))
+            self.env_type_labels[env] = value_label
+
         # Filter status label
         filter_frame = ttk.Frame(dashboard_frame)
         filter_frame.pack(fill=tk.X, padx=10, pady=5)
@@ -1263,6 +1277,47 @@ class NessusHistoryTrackerApp:
 
         # Default to monthly
         return DATE_INTERVAL_MONTHLY
+
+    def _get_environment_type(self, hostname: str) -> str:
+        """
+        Classify hostname by environment type (Production/PSS/Shared/Unknown).
+
+        Args:
+            hostname: The hostname to classify
+
+        Returns:
+            Environment label string
+        """
+        if not isinstance(hostname, str) or not hostname:
+            return 'Unknown'
+
+        from ..models.hostname_structure import parse_hostname, EnvironmentType
+        parsed = parse_hostname(hostname)
+
+        if parsed.environment_type == EnvironmentType.PRODUCTION:
+            return 'Production'
+        elif parsed.environment_type == EnvironmentType.PRE_PRODUCTION:
+            return 'PSS'
+        elif parsed.environment_type == EnvironmentType.SHARED:
+            return 'Shared'
+        return 'Unknown'
+
+    def _add_environment_column(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Add environment_type column to DataFrame based on hostname classification.
+
+        Args:
+            df: DataFrame with 'hostname' column
+
+        Returns:
+            DataFrame with 'environment_type' column added
+        """
+        if df.empty or 'hostname' not in df.columns:
+            return df
+
+        df = df.copy()
+        df['environment_type'] = df['hostname'].apply(self._get_environment_type)
+        return df
 
     # File selection methods
     def _truncate_filename(self, name: str, max_len: int = 20) -> str:
@@ -2180,6 +2235,19 @@ class NessusHistoryTrackerApp:
             for htype, count in type_counts.items():
                 self.host_type_labels[htype].config(text=str(count))
 
+        # Update environment breakdown
+        if 'hostname' in df.columns:
+            hostnames = df['hostname'].unique()
+            env_counts = {'Production': 0, 'PSS': 0, 'Shared': 0, 'Unknown': 0}
+            for h in hostnames:
+                env_type = self._get_environment_type(h)
+                if env_type in env_counts:
+                    env_counts[env_type] += 1
+                else:
+                    env_counts['Unknown'] += 1
+            for env, count in env_counts.items():
+                self.env_type_labels[env].config(text=str(count))
+
     def _update_lifecycle_tree(self):
         """Update lifecycle treeview with filtered data and pagination."""
         # Clear existing items
@@ -2720,14 +2788,13 @@ class NessusHistoryTrackerApp:
             transform=self.risk_ax3.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         self.risk_ax3.set_xlabel('Days Open', color=GUI_DARK_THEME['fg'])
 
-        # Chart 4: Top risky hosts with risk gradient
+        # Chart 4: Top risky hosts colored by environment type
         if 'hostname' in df.columns and 'severity_value' in df.columns:
             host_risk = df.groupby('hostname')['severity_value'].sum().nlargest(10)
             if len(host_risk) > 0:
-                # Color gradient based on risk
-                max_risk = host_risk.max()
-                colors = ['#dc3545' if r > max_risk * 0.7 else '#fd7e14' if r > max_risk * 0.4 else '#ffc107'
-                         for r in host_risk.values]
+                # Color by environment type
+                env_colors = {'Production': '#28a745', 'PSS': '#007bff', 'Shared': '#ffc107', 'Unknown': '#6c757d'}
+                colors = [env_colors.get(self._get_environment_type(h), '#6c757d') for h in host_risk.index]
                 bars = self.risk_ax4.barh(range(len(host_risk)), host_risk.values, color=colors)
                 self.risk_ax4.set_yticks(range(len(host_risk)))
                 self.risk_ax4.set_yticklabels([h[:15] for h in host_risk.index], fontsize=7)
@@ -2737,8 +2804,15 @@ class NessusHistoryTrackerApp:
                                               xytext=(3, 0), textcoords='offset points',
                                               ha='left', va='center', fontsize=6, color='white')
                 self.risk_ax4.invert_yaxis()
-        self.risk_ax4.set_title('Top 10 Risky Hosts', color=GUI_DARK_THEME['fg'], fontsize=10)
-        self.risk_ax4.text(0.5, 1.02, 'Hosts with highest total severity-weighted risk',
+                # Add legend for environment colors
+                from matplotlib.patches import Patch
+                legend_elements = [Patch(facecolor='#28a745', label='Prod'),
+                                   Patch(facecolor='#007bff', label='PSS'),
+                                   Patch(facecolor='#ffc107', label='Shared')]
+                self.risk_ax4.legend(handles=legend_elements, loc='lower right', fontsize=6,
+                                    facecolor=GUI_DARK_THEME['bg'], labelcolor=GUI_DARK_THEME['fg'])
+        self.risk_ax4.set_title('Top 10 Risky Hosts by Environment', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.risk_ax4.text(0.5, 1.02, 'Green=Prod, Blue=PSS, Yellow=Shared',
             transform=self.risk_ax4.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
         self.risk_ax4.set_xlabel('Risk Score', color=GUI_DARK_THEME['fg'])
 
@@ -5595,29 +5669,22 @@ class NessusHistoryTrackerApp:
         self.network_ax3.set_xlabel('Risk Score', color=GUI_DARK_THEME['fg'])
         self.network_ax3.set_ylabel('Host Count', color=GUI_DARK_THEME['fg'])
 
-        # Chart 4: Network class distribution with counts in labels
-        def get_class(ip):
-            if pd.isna(ip) or not isinstance(ip, str):
-                return 'Unknown'
-            parts = ip.split('.')
-            if len(parts) >= 1:
-                first = int(parts[0]) if parts[0].isdigit() else 0
-                if first < 128:
-                    return 'Class A'
-                elif first < 192:
-                    return 'Class B'
-                elif first < 224:
-                    return 'Class C'
-            return 'Other'
-
-        class_counts = df[ip_col].apply(get_class).value_counts()
-        if len(class_counts) > 0:
-            colors = ['#007bff', '#28a745', '#ffc107', '#dc3545'][:len(class_counts)]
-            labels = [f'{idx}\n({val})' for idx, val in zip(class_counts.index, class_counts.values)]
-            self.network_ax4.pie(class_counts.values, labels=labels, colors=colors,
-                                autopct='%1.1f%%', textprops={'color': 'white', 'fontsize': 8})
-        self.network_ax4.set_title('Network Segment Analysis', color=GUI_DARK_THEME['fg'], fontsize=10)
-        self.network_ax4.text(0.5, 1.02, 'IP address class breakdown (A/B/C)',
+        # Chart 4: Environment distribution (Production/PSS/Shared)
+        if 'hostname' in df.columns:
+            env_df = self._add_environment_column(df)
+            env_counts = env_df['environment_type'].value_counts()
+            # Define consistent colors and order
+            env_order = ['Production', 'PSS', 'Shared', 'Unknown']
+            env_colors = {'Production': '#28a745', 'PSS': '#007bff', 'Shared': '#ffc107', 'Unknown': '#6c757d'}
+            # Filter and order
+            env_counts = env_counts.reindex([e for e in env_order if e in env_counts.index])
+            if len(env_counts) > 0:
+                colors = [env_colors.get(e, '#6c757d') for e in env_counts.index]
+                labels = [f'{idx}\n({val})' for idx, val in zip(env_counts.index, env_counts.values)]
+                self.network_ax4.pie(env_counts.values, labels=labels, colors=colors,
+                                    autopct='%1.1f%%', textprops={'color': 'white', 'fontsize': 8})
+        self.network_ax4.set_title('Environment Distribution', color=GUI_DARK_THEME['fg'], fontsize=10)
+        self.network_ax4.text(0.5, 1.02, 'Findings by environment type (Prod/PSS/Shared)',
             transform=self.network_ax4.transAxes, ha='center', va='bottom', fontsize=7, color='#888888')
 
         for ax in [self.network_ax1, self.network_ax2, self.network_ax3, self.network_ax4]:

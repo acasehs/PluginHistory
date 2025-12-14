@@ -178,6 +178,10 @@ class MenuBar:
             label="Settings...",
             command=self.app._show_settings_dialog
         )
+        analysis_menu.add_command(
+            label="Shared Assets Config...",
+            command=self._show_shared_assets_dialog
+        )
 
         # Keyboard shortcuts
         self.window.bind('<F5>', lambda e: self.app._process_archives())
@@ -380,6 +384,27 @@ class MenuBar:
 
         # Open threat intel dialog in sync mode
         self._show_threat_intel_settings()
+
+    def _show_shared_assets_dialog(self):
+        """Show shared assets configuration dialog."""
+        try:
+            from .shared_assets_dialog import show_shared_assets_dialog
+        except ImportError:
+            from refactored_app.gui.shared_assets_dialog import show_shared_assets_dialog
+
+        def on_save(config):
+            # Reload environment mappings
+            self.app._log(f"Shared assets config saved: {len(config.get('explicit_mappings', {}))} mappings, "
+                         f"{len(config.get('shared_patterns', []))} patterns")
+            # Refresh analysis to apply new classifications
+            if not self.app.historical_df.empty:
+                self.app._refresh_analysis()
+
+        show_shared_assets_dialog(
+            parent=self.window,
+            settings_manager=self.app.settings_manager,
+            on_save=on_save
+        )
 
     def _show_user_guide(self):
         """Show user guide."""

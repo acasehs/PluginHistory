@@ -120,6 +120,10 @@ class UserSettings:
     # Lifecycle pagination
     default_page_size: int = 100
 
+    # Shared assets configuration
+    shared_asset_mappings: Dict[str, str] = field(default_factory=dict)
+    shared_asset_patterns: List[str] = field(default_factory=list)
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return asdict(self)
