@@ -285,26 +285,30 @@ class NessusHistoryTrackerApp:
         ttk.Button(iavm_row, text="...", command=self._select_iavm_file, width=3).pack(side=tk.RIGHT)
 
     def _build_filter_panel(self, parent):
-        """Build filter controls section with compact inline layout."""
+        """Build filter controls section with 2-column layout."""
         filter_frame = ttk.LabelFrame(parent, text="Filters", padding=5)
         filter_frame.pack(fill=tk.X, pady=(0, 5))
 
-        # Row 1: Include Info checkbox
-        ttk.Checkbutton(filter_frame, text="Include Info Severity",
-                       variable=self.filter_include_info).pack(anchor=tk.W)
+        # Calculate default 180-day date range
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=self.settings_manager.settings.default_date_range_days)
+        self.filter_start_date.set(start_date.strftime('%Y-%m-%d'))
+        self.filter_end_date.set(end_date.strftime('%Y-%m-%d'))
 
-        # Row 2: Date Range (inline)
+        # Row 1: Date Range (full width)
         date_row = ttk.Frame(filter_frame)
         date_row.pack(fill=tk.X, pady=3)
-        ttk.Label(date_row, text="Dates:", width=8).pack(side=tk.LEFT)
-        ttk.Entry(date_row, textvariable=self.filter_start_date, width=10).pack(side=tk.LEFT, padx=1)
-        ttk.Label(date_row, text="-").pack(side=tk.LEFT)
-        ttk.Entry(date_row, textvariable=self.filter_end_date, width=10).pack(side=tk.LEFT, padx=1)
+        date_label = tk.Label(date_row, text="Dates:", width=8, bg='#1a3a5c', fg='white', anchor='w')
+        date_label.pack(side=tk.LEFT)
+        ttk.Entry(date_row, textvariable=self.filter_start_date, width=12).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
+        ttk.Label(date_row, text="to").pack(side=tk.LEFT, padx=2)
+        ttk.Entry(date_row, textvariable=self.filter_end_date, width=12).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
 
-        # Row 3: Severity toggle buttons with colored highlights
+        # Row 2: Severity toggle buttons (full width)
         sev_row = ttk.Frame(filter_frame)
         sev_row.pack(fill=tk.X, pady=3)
-        ttk.Label(sev_row, text="Severity:", width=8).pack(side=tk.LEFT)
+        sev_label = tk.Label(sev_row, text="Severity:", width=8, bg='#1a3a5c', fg='white', anchor='w')
+        sev_label.pack(side=tk.LEFT)
 
         # Severity colors (from settings or defaults)
         sev_colors = self.settings_manager.settings.get_severity_colors()
@@ -329,66 +333,104 @@ class NessusHistoryTrackerApp:
         ttk.Button(sev_row, text="None", width=4,
                   command=self._select_no_severities).pack(side=tk.LEFT, padx=1)
 
-        # Row 3b: Status filter
-        status_row = ttk.Frame(filter_frame)
-        status_row.pack(fill=tk.X, pady=3)
-        ttk.Label(status_row, text="Status:", width=8).pack(side=tk.LEFT)
+        # Two-column layout frame
+        two_col_frame = ttk.Frame(filter_frame)
+        two_col_frame.pack(fill=tk.X, pady=3)
+        two_col_frame.columnconfigure(0, weight=1)
+        two_col_frame.columnconfigure(1, weight=1)
+
+        # Left column
+        left_col = ttk.Frame(two_col_frame)
+        left_col.grid(row=0, column=0, sticky='ew', padx=(0, 5))
+
+        # Right column
+        right_col = ttk.Frame(two_col_frame)
+        right_col.grid(row=0, column=1, sticky='ew', padx=(5, 0))
+
+        # Left Column Row 1: Status filter
+        status_row = ttk.Frame(left_col)
+        status_row.pack(fill=tk.X, pady=2)
+        status_label = tk.Label(status_row, text="Status:", width=8, bg='#1a3a5c', fg='white', anchor='w')
+        status_label.pack(side=tk.LEFT)
         ttk.Combobox(status_row, textvariable=self.filter_status,
-                    values=["All", "Active", "Resolved"], state="readonly", width=10).pack(side=tk.LEFT, padx=1)
+                    values=["All", "Active", "Resolved"], state="readonly", width=10).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
 
-        # Row 4: Host Type + Env Type (inline)
-        host_row = ttk.Frame(filter_frame)
-        host_row.pack(fill=tk.X, pady=3)
-        ttk.Label(host_row, text="Type:", width=8).pack(side=tk.LEFT)
-        ttk.Combobox(host_row, textvariable=self.filter_host_type,
-                    values=["All", "Physical", "Virtual", "ILOM"], state="readonly", width=8).pack(side=tk.LEFT, padx=1)
-        ttk.Label(host_row, text="Env:").pack(side=tk.LEFT, padx=(5, 0))
-        ttk.Combobox(host_row, textvariable=self.filter_env_type,
-                    values=["All", "Production", "PSS", "Shared"], state="readonly", width=9).pack(side=tk.LEFT, padx=1)
+        # Right Column Row 1: Host Type
+        type_row = ttk.Frame(right_col)
+        type_row.pack(fill=tk.X, pady=2)
+        type_label = tk.Label(type_row, text="Type:", width=8, bg='#1a3a5c', fg='white', anchor='w')
+        type_label.pack(side=tk.LEFT)
+        ttk.Combobox(type_row, textvariable=self.filter_host_type,
+                    values=["All", "Physical", "Virtual", "ILOM"], state="readonly", width=10).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
 
-        # Row 5: Location + Host Pattern (inline)
-        loc_row = ttk.Frame(filter_frame)
-        loc_row.pack(fill=tk.X, pady=3)
-        ttk.Label(loc_row, text="Loc:", width=8).pack(side=tk.LEFT)
-        ttk.Entry(loc_row, textvariable=self.filter_location, width=6).pack(side=tk.LEFT, padx=1)
-        ttk.Label(loc_row, text="Host:").pack(side=tk.LEFT, padx=(5, 0))
-        ttk.Entry(loc_row, textvariable=self.filter_host, width=10).pack(side=tk.LEFT, padx=1)
-        ttk.Button(loc_row, text="...", command=self._show_host_selector, width=2).pack(side=tk.LEFT, padx=1)
-        self.host_count_label = ttk.Label(loc_row, text="", foreground="cyan", width=6)
-        self.host_count_label.pack(side=tk.LEFT)
+        # Left Column Row 2: Environment
+        env_row = ttk.Frame(left_col)
+        env_row.pack(fill=tk.X, pady=2)
+        env_label = tk.Label(env_row, text="Env:", width=8, bg='#1a3a5c', fg='white', anchor='w')
+        env_label.pack(side=tk.LEFT)
+        # Get environment types from settings
+        env_types = ["All"] + self.settings_manager.settings.environment_types
+        self.env_combo = ttk.Combobox(env_row, textvariable=self.filter_env_type,
+                    values=env_types, state="readonly", width=10)
+        self.env_combo.pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
+        ttk.Button(env_row, text="⚙", command=self._show_environment_config, width=2).pack(side=tk.LEFT, padx=1)
 
-        # Row 6: CVSS Range (inline)
-        cvss_row = ttk.Frame(filter_frame)
-        cvss_row.pack(fill=tk.X, pady=3)
-        ttk.Label(cvss_row, text="CVSS:", width=8).pack(side=tk.LEFT)
+        # Right Column Row 2: Location
+        loc_row = ttk.Frame(right_col)
+        loc_row.pack(fill=tk.X, pady=2)
+        loc_label = tk.Label(loc_row, text="Loc:", width=8, bg='#1a3a5c', fg='white', anchor='w')
+        loc_label.pack(side=tk.LEFT)
+        ttk.Entry(loc_row, textvariable=self.filter_location, width=10).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
+
+        # Left Column Row 3: Host Pattern
+        host_row = ttk.Frame(left_col)
+        host_row.pack(fill=tk.X, pady=2)
+        host_label = tk.Label(host_row, text="Host:", width=8, bg='#1a3a5c', fg='white', anchor='w')
+        host_label.pack(side=tk.LEFT)
+        ttk.Entry(host_row, textvariable=self.filter_host, width=10).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
+        ttk.Button(host_row, text="...", command=self._show_host_selector, width=2).pack(side=tk.LEFT, padx=1)
+
+        # Right Column Row 3: CVSS Range
+        cvss_row = ttk.Frame(right_col)
+        cvss_row.pack(fill=tk.X, pady=2)
+        cvss_label = tk.Label(cvss_row, text="CVSS:", width=8, bg='#1a3a5c', fg='white', anchor='w')
+        cvss_label.pack(side=tk.LEFT)
         ttk.Entry(cvss_row, textvariable=self.filter_cvss_min, width=5).pack(side=tk.LEFT, padx=1)
         ttk.Label(cvss_row, text="-").pack(side=tk.LEFT)
-        ttk.Entry(cvss_row, textvariable=self.filter_cvss_max, width=5).pack(side=tk.LEFT, padx=1)
+        ttk.Entry(cvss_row, textvariable=self.filter_cvss_max, width=5).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
 
-        # Row 7: OPDIR Status filter
-        opdir_row = ttk.Frame(filter_frame)
-        opdir_row.pack(fill=tk.X, pady=3)
-        ttk.Label(opdir_row, text="OPDIR:", width=8).pack(side=tk.LEFT)
+        # Left Column Row 4: OPDIR Status
+        opdir_row = ttk.Frame(left_col)
+        opdir_row.pack(fill=tk.X, pady=2)
+        opdir_label = tk.Label(opdir_row, text="OPDIR:", width=8, bg='#1a3a5c', fg='white', anchor='w')
+        opdir_label.pack(side=tk.LEFT)
         opdir_options = ["All", "Overdue", "Due Soon", "On Track", "OPDIR Mapped", "No OPDIR"]
         ttk.Combobox(opdir_row, textvariable=self.filter_opdir_status,
-                    values=opdir_options, state="readonly", width=12).pack(side=tk.LEFT, padx=1)
+                    values=opdir_options, state="readonly", width=10).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
 
-        # Row 8: CVE and IAVX filters
-        vuln_row = ttk.Frame(filter_frame)
-        vuln_row.pack(fill=tk.X, pady=3)
-        ttk.Label(vuln_row, text="CVE:", width=8).pack(side=tk.LEFT)
-        ttk.Entry(vuln_row, textvariable=self.filter_cve, width=15).pack(side=tk.LEFT, padx=1)
+        # Right Column Row 4: CVE filter
+        cve_row = ttk.Frame(right_col)
+        cve_row.pack(fill=tk.X, pady=2)
+        cve_label = tk.Label(cve_row, text="CVE:", width=8, bg='#1a3a5c', fg='white', anchor='w')
+        cve_label.pack(side=tk.LEFT)
+        ttk.Entry(cve_row, textvariable=self.filter_cve, width=15).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
 
+        # Full width: IAVX filter
         iavx_row = ttk.Frame(filter_frame)
-        iavx_row.pack(fill=tk.X, pady=3)
-        ttk.Label(iavx_row, text="IAV:", width=8).pack(side=tk.LEFT)
-        ttk.Entry(iavx_row, textvariable=self.filter_iavx, width=15).pack(side=tk.LEFT, padx=1)
+        iavx_row.pack(fill=tk.X, pady=2)
+        iavx_label = tk.Label(iavx_row, text="IAV:", width=8, bg='#1a3a5c', fg='white', anchor='w')
+        iavx_label.pack(side=tk.LEFT)
+        ttk.Entry(iavx_row, textvariable=self.filter_iavx, width=15).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
 
-        # Row 9: Apply and Reset buttons
+        # Host count display
+        self.host_count_label = ttk.Label(filter_frame, text="", foreground="cyan")
+        self.host_count_label.pack(anchor=tk.W, pady=2)
+
+        # Apply and Reset buttons
         btn_row = ttk.Frame(filter_frame)
         btn_row.pack(fill=tk.X, pady=3)
-        ttk.Button(btn_row, text="Apply", command=self._apply_filters, width=10).pack(side=tk.LEFT, padx=1)
-        ttk.Button(btn_row, text="Reset", command=self._reset_filters, width=10).pack(side=tk.LEFT, padx=1)
+        ttk.Button(btn_row, text="Apply", command=self._apply_filters, width=10).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+        ttk.Button(btn_row, text="Reset", command=self._reset_filters, width=10).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
 
     def _build_action_buttons(self, parent):
         """Build action buttons section with compact 2-per-row layout."""
@@ -1324,7 +1366,12 @@ class NessusHistoryTrackerApp:
 
     def _get_environment_type(self, hostname: str) -> str:
         """
-        Classify hostname by environment type (Production/PSS/Shared/Unknown).
+        Classify hostname by environment type using settings-based mappings.
+
+        Detection priority:
+        1. Explicit hostname mappings from settings
+        2. Pattern matching from settings
+        3. Auto-detection from hostname_structure module
 
         Args:
             hostname: The hostname to classify
@@ -1335,6 +1382,23 @@ class NessusHistoryTrackerApp:
         if not isinstance(hostname, str) or not hostname:
             return 'Unknown'
 
+        hostname_lower = hostname.lower().strip()
+        settings = self.settings_manager.settings
+
+        # Priority 1: Check explicit hostname mappings from settings
+        if hostname_lower in settings.environment_mappings:
+            return settings.environment_mappings[hostname_lower]
+
+        # Priority 2: Check pattern mappings from settings
+        import re
+        for pattern, env_type in settings.environment_patterns.items():
+            try:
+                if re.match(pattern, hostname_lower, re.IGNORECASE):
+                    return env_type
+            except re.error:
+                continue  # Skip invalid regex patterns
+
+        # Priority 3: Use auto-detection from hostname_structure module
         from ..models.hostname_structure import parse_hostname, EnvironmentType
         parsed = parse_hostname(hostname)
 
@@ -7458,6 +7522,152 @@ class NessusHistoryTrackerApp:
         if settings.recent_sqlite_db and os.path.exists(settings.recent_sqlite_db):
             self.existing_db_path = settings.recent_sqlite_db
             self.existing_db_label.config(text=self._truncate_filename(os.path.basename(settings.recent_sqlite_db)), foreground="white")
+
+    def _show_environment_config(self):
+        """Show environment mapping configuration dialog."""
+        settings = self.settings_manager.settings
+
+        dialog = tk.Toplevel(self.window)
+        dialog.title("Environment Configuration")
+        dialog.geometry("600x550")
+        dialog.configure(bg=GUI_DARK_THEME['bg'])
+        dialog.transient(self.window)
+        dialog.grab_set()
+
+        # Create notebook for tabbed configuration
+        notebook = ttk.Notebook(dialog)
+        notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # === Environment Types Tab ===
+        types_frame = ttk.Frame(notebook, padding=10)
+        notebook.add(types_frame, text="Environment Types")
+
+        ttk.Label(types_frame, text="Define custom environment types (one per line):").pack(anchor=tk.W, pady=(0, 5))
+        ttk.Label(types_frame, text="These will appear in the Environment filter dropdown.",
+                 foreground='gray').pack(anchor=tk.W, pady=(0, 10))
+
+        # Text widget for environment types
+        env_types_text = tk.Text(types_frame, height=10, width=40,
+                                bg=GUI_DARK_THEME['entry_bg'], fg=GUI_DARK_THEME['fg'],
+                                insertbackground=GUI_DARK_THEME['fg'])
+        env_types_text.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        # Pre-populate with current environment types
+        current_types = settings.environment_types
+        env_types_text.insert('1.0', '\n'.join(current_types))
+
+        # === Hostname Mappings Tab ===
+        mappings_frame = ttk.Frame(notebook, padding=10)
+        notebook.add(mappings_frame, text="Hostname Mappings")
+
+        ttk.Label(mappings_frame, text="Map specific hostnames to environments:").pack(anchor=tk.W, pady=(0, 5))
+        ttk.Label(mappings_frame, text="Format: hostname = EnvironmentType (e.g., server01 = Production)",
+                 foreground='gray').pack(anchor=tk.W, pady=(0, 10))
+
+        # Text widget for hostname mappings
+        mappings_text = tk.Text(mappings_frame, height=10, width=50,
+                               bg=GUI_DARK_THEME['entry_bg'], fg=GUI_DARK_THEME['fg'],
+                               insertbackground=GUI_DARK_THEME['fg'])
+        mappings_text.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        # Pre-populate with current mappings
+        current_mappings = settings.environment_mappings
+        mapping_lines = [f"{hostname} = {env}" for hostname, env in current_mappings.items()]
+        mappings_text.insert('1.0', '\n'.join(mapping_lines))
+
+        # === Pattern Mappings Tab ===
+        patterns_frame = ttk.Frame(notebook, padding=10)
+        notebook.add(patterns_frame, text="Pattern Mappings")
+
+        ttk.Label(patterns_frame, text="Map hostname patterns (regex) to environments:").pack(anchor=tk.W, pady=(0, 5))
+        ttk.Label(patterns_frame, text="Format: pattern = EnvironmentType (e.g., ^prod-.* = Production)",
+                 foreground='gray').pack(anchor=tk.W, pady=(0, 10))
+
+        # Text widget for pattern mappings
+        patterns_text = tk.Text(patterns_frame, height=10, width=50,
+                               bg=GUI_DARK_THEME['entry_bg'], fg=GUI_DARK_THEME['fg'],
+                               insertbackground=GUI_DARK_THEME['fg'])
+        patterns_text.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        # Pre-populate with current patterns
+        current_patterns = settings.environment_patterns
+        pattern_lines = [f"{pattern} = {env}" for pattern, env in current_patterns.items()]
+        patterns_text.insert('1.0', '\n'.join(pattern_lines))
+
+        # === Auto-Detection Tab ===
+        auto_frame = ttk.Frame(notebook, padding=10)
+        notebook.add(auto_frame, text="Auto-Detection")
+
+        ttk.Label(auto_frame, text="Automatic environment detection rules:").pack(anchor=tk.W, pady=(0, 10))
+
+        ttk.Label(auto_frame, text="Standard 9-character hostname format: LLLLTTCEP").pack(anchor=tk.W, pady=2)
+        ttk.Label(auto_frame, text="  • L (4 chars): Location code").pack(anchor=tk.W, padx=20)
+        ttk.Label(auto_frame, text="  • T (2 chars): Tier code").pack(anchor=tk.W, padx=20)
+        ttk.Label(auto_frame, text="  • C (1 char): Cluster identifier").pack(anchor=tk.W, padx=20)
+        ttk.Label(auto_frame, text="  • E (1 char): Environment - Letter=Production, Number=PSS").pack(anchor=tk.W, padx=20)
+        ttk.Label(auto_frame, text="  • P (1 char): Physical (p) or Virtual (v)").pack(anchor=tk.W, padx=20)
+
+        ttk.Separator(auto_frame, orient='horizontal').pack(fill=tk.X, pady=15)
+
+        ttk.Label(auto_frame, text="Detection priority:").pack(anchor=tk.W, pady=5)
+        ttk.Label(auto_frame, text="  1. Explicit hostname mappings (Hostname Mappings tab)").pack(anchor=tk.W, padx=20)
+        ttk.Label(auto_frame, text="  2. Pattern matching (Pattern Mappings tab)").pack(anchor=tk.W, padx=20)
+        ttk.Label(auto_frame, text="  3. Auto-detection from 9-char format").pack(anchor=tk.W, padx=20)
+        ttk.Label(auto_frame, text="  4. Default to 'Unknown'").pack(anchor=tk.W, padx=20)
+
+        # Buttons
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(fill=tk.X, padx=10, pady=10)
+
+        def save_config():
+            # Parse environment types
+            types_content = env_types_text.get('1.0', tk.END).strip()
+            new_types = [t.strip() for t in types_content.split('\n') if t.strip()]
+            if not new_types:
+                new_types = ['Production', 'PSS', 'Shared', 'Unknown']
+
+            # Parse hostname mappings
+            mappings_content = mappings_text.get('1.0', tk.END).strip()
+            new_mappings = {}
+            for line in mappings_content.split('\n'):
+                if '=' in line:
+                    parts = line.split('=', 1)
+                    if len(parts) == 2:
+                        hostname = parts[0].strip().lower()
+                        env = parts[1].strip()
+                        if hostname and env:
+                            new_mappings[hostname] = env
+
+            # Parse pattern mappings
+            patterns_content = patterns_text.get('1.0', tk.END).strip()
+            new_patterns = {}
+            for line in patterns_content.split('\n'):
+                if '=' in line:
+                    parts = line.split('=', 1)
+                    if len(parts) == 2:
+                        pattern = parts[0].strip()
+                        env = parts[1].strip()
+                        if pattern and env:
+                            new_patterns[pattern] = env
+
+            # Update settings
+            settings.environment_types = new_types
+            settings.environment_mappings = new_mappings
+            settings.environment_patterns = new_patterns
+
+            # Save settings
+            self.settings_manager.save()
+
+            # Update the environment filter dropdown
+            env_types = ["All"] + new_types
+            self.env_combo['values'] = env_types
+
+            self._log(f"Saved environment config: {len(new_types)} types, {len(new_mappings)} mappings, {len(new_patterns)} patterns")
+            messagebox.showinfo("Saved", "Environment configuration saved successfully.")
+            dialog.destroy()
+
+        ttk.Button(btn_frame, text="Save", command=save_config, width=10).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=dialog.destroy, width=10).pack(side=tk.RIGHT)
 
     def _show_settings_dialog(self):
         """Show settings configuration dialog."""
