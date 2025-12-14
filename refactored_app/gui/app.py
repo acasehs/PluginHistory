@@ -1444,11 +1444,35 @@ class NessusHistoryTrackerApp:
 
             try:
                 self.lifecycle_df = pd.read_sql_query("SELECT * FROM finding_lifecycle", conn)
+                self._log(f"Loaded {len(self.lifecycle_df)} lifecycle records")
             except:
                 pass
 
             try:
                 self.host_presence_df = pd.read_sql_query("SELECT * FROM host_presence", conn)
+                self._log(f"Loaded {len(self.host_presence_df)} host presence records")
+            except:
+                pass
+
+            try:
+                self.scan_changes_df = pd.read_sql_query("SELECT * FROM scan_changes", conn)
+                self._log(f"Loaded {len(self.scan_changes_df)} scan change records")
+            except:
+                pass
+
+            # Load OPDIR mapping if present
+            try:
+                self.opdir_df = pd.read_sql_query("SELECT * FROM opdir_mapping", conn)
+                if not self.opdir_df.empty:
+                    self._log(f"Loaded {len(self.opdir_df)} OPDIR mappings from database")
+            except:
+                pass
+
+            # Load IAVM notices if present
+            try:
+                self.iavm_df = pd.read_sql_query("SELECT * FROM iavm_notices", conn)
+                if not self.iavm_df.empty:
+                    self._log(f"Loaded {len(self.iavm_df)} IAVM notices from database")
             except:
                 pass
 
