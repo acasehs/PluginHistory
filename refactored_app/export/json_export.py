@@ -161,7 +161,7 @@ def load_from_json(filepath: str) -> Dict[str, Any]:
 
                 # Convert date columns
                 date_columns = ['scan_date', 'first_seen', 'last_seen',
-                               'opdir_release_date', 'opdir_final_due_date']
+                               'opdir_poam_due_date', 'opdir_due_date']
                 for col in date_columns:
                     if col in df.columns:
                         df[col] = pd.to_datetime(df[col], errors='coerce')

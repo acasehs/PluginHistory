@@ -3207,7 +3207,7 @@ class NessusHistoryTrackerApp:
 
         # Make resizable
         modal.resizable(True, True)
-        modal.minsize(700, 500)
+        modal.minsize(700, 600)
 
         # Main container with scrollbar
         main_frame = ttk.Frame(modal)
@@ -3277,54 +3277,77 @@ class NessusHistoryTrackerApp:
                                wraplength=850, justify=tk.LEFT, anchor='w')
                 label.pack(fill=tk.X, padx=5, pady=5)
 
-        # Helper function to add key-value row
-        def add_row(parent, label, value, row_num):
+        # Helper function to add key-value row with multi-column support
+        def add_row(parent, label, value, row_num, col_offset=0):
             if value is None or value == '' or value == 'nan' or (isinstance(value, float) and pd.isna(value)):
                 return row_num
 
+            base_col = col_offset * 3  # Each column pair takes 3 grid columns (label, value, spacer)
             tk.Label(parent, text=f"{label}:", font=('Arial', 9, 'bold'),
                     bg=GUI_DARK_THEME['bg'], fg='#17a2b8',
-                    anchor='e', width=18).grid(row=row_num, column=0, sticky='e', padx=(5, 10), pady=2)
+                    anchor='e', width=14).grid(row=row_num, column=base_col, sticky='e', padx=(5, 5), pady=2)
             tk.Label(parent, text=str(value), bg=GUI_DARK_THEME['bg'],
                     fg=GUI_DARK_THEME['fg'], anchor='w',
-                    wraplength=700).grid(row=row_num, column=1, sticky='w', pady=2)
+                    wraplength=300).grid(row=row_num, column=base_col + 1, sticky='w', pady=2)
             return row_num + 1
 
-        # Basic Information section
+        # Basic Information section - condensed 2-column layout
         basic_frame = ttk.LabelFrame(scrollable_frame, text="Basic Information")
         basic_frame.pack(fill=tk.X, pady=5, padx=5)
 
         info_grid = ttk.Frame(basic_frame)
         info_grid.pack(fill=tk.X, padx=5, pady=5)
 
-        row = 0
-        row = add_row(info_grid, "Hostname", finding.get('hostname'), row)
-        row = add_row(info_grid, "IP Address", finding.get('ip_address'), row)
-        row = add_row(info_grid, "Plugin ID", finding.get('plugin_id'), row)
-        row = add_row(info_grid, "Severity", finding.get('severity_text'), row)
-        row = add_row(info_grid, "CVSS v3 Score", finding.get('cvss3_base_score'), row)
-        row = add_row(info_grid, "Status", finding.get('status'), row)
+        # Collect valid items first
+        basic_items = [
+            ("Hostname", finding.get('hostname')),
+            ("IP Address", finding.get('ip_address')),
+            ("Plugin ID", finding.get('plugin_id')),
+            ("Severity", finding.get('severity_text')),
+            ("CVSS v3 Score", finding.get('cvss3_base_score')),
+            ("Status", finding.get('status')),
+        ]
 
         # Port/Protocol from historical
         if hist_details.get('port'):
             port_info = f"{hist_details.get('port')}/{hist_details.get('protocol', 'tcp')}"
-            row = add_row(info_grid, "Port/Protocol", port_info, row)
+            basic_items.append(("Port/Protocol", port_info))
 
-        row = add_row(info_grid, "Risk Factor", hist_details.get('risk_factor'), row)
+        if hist_details.get('risk_factor'):
+            basic_items.append(("Risk Factor", hist_details.get('risk_factor')))
 
-        # Timeline section
+        # Filter out empty/None values
+        basic_items = [(k, v) for k, v in basic_items if v is not None and v != '' and v != 'nan' and not (isinstance(v, float) and pd.isna(v))]
+
+        # Place in 2-column layout
+        for i, (label, value) in enumerate(basic_items):
+            row_num = i // 2
+            col_offset = i % 2
+            add_row(info_grid, label, value, row_num, col_offset)
+
+        # Timeline section - condensed 2-column layout
         timeline_frame = ttk.LabelFrame(scrollable_frame, text="Timeline")
         timeline_frame.pack(fill=tk.X, pady=5, padx=5)
 
         time_grid = ttk.Frame(timeline_frame)
         time_grid.pack(fill=tk.X, padx=5, pady=5)
 
-        row = 0
-        row = add_row(time_grid, "First Observed", finding.get('first_seen'), row)
-        row = add_row(time_grid, "Last Seen", finding.get('last_seen'), row)
-        row = add_row(time_grid, "Days Open", finding.get('days_open'), row)
-        row = add_row(time_grid, "Total Observations", finding.get('total_observations'), row)
-        row = add_row(time_grid, "Reappearances", finding.get('reappearances'), row)
+        timeline_items = [
+            ("First Observed", finding.get('first_seen')),
+            ("Last Seen", finding.get('last_seen')),
+            ("Days Open", finding.get('days_open')),
+            ("Total Observations", finding.get('total_observations')),
+            ("Reappearances", finding.get('reappearances')),
+        ]
+
+        # Filter out empty/None values
+        timeline_items = [(k, v) for k, v in timeline_items if v is not None and v != '' and v != 'nan' and not (isinstance(v, float) and pd.isna(v))]
+
+        # Place in 2-column layout
+        for i, (label, value) in enumerate(timeline_items):
+            row_num = i // 2
+            col_offset = i % 2
+            add_row(time_grid, label, value, row_num, col_offset)
 
         # CVE/IAVX section
         cve_iavx_frame = ttk.LabelFrame(scrollable_frame, text="CVE & IAVX References")

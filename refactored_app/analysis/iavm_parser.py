@@ -459,16 +459,16 @@ def merge_opdir_and_iavm(opdir_df: pd.DataFrame, iavm_df: pd.DataFrame) -> pd.Da
         for _, row in opdir_df.iterrows():
             record = {
                 'reference_number': row.get('opdir_number', ''),
-                'reference_normalized': row.get('opdir_number_normalized', ''),
+                'reference_normalized': row.get('opdir_number_raw', ''),
                 'year': row.get('opdir_year'),
                 'type': 'OPDIR',
-                'title': row.get('opdir_subject', ''),
+                'title': row.get('subject', ''),
                 'severity': '',
                 'status': '',
-                'release_date': row.get('opdir_release_date'),
-                'due_date': row.get('opdir_final_due_date'),
+                'release_date': row.get('release_date'),
+                'due_date': row.get('final_due_date'),
                 'mitigation_date': pd.NaT,
-                'days_to_remediate': row.get('opdir_days_to_remediate'),
+                'days_to_remediate': None,  # Not tracked in new OPDIR format
                 'supersedes': '',
                 'superseded_by': '',
                 'source': 'OPDIR',
