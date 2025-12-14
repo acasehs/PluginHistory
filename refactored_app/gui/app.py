@@ -1896,10 +1896,39 @@ class NessusHistoryTrackerApp:
                 self._get_environment_type
             )
 
+        # Apply default 180-day filter after loading data
+        self._apply_default_date_filter()
+
         self._update_dashboard()
         self._update_lifecycle_tree()
         self._update_host_tree()
         self._update_all_visualizations()
+
+    def _apply_default_date_filter(self):
+        """Apply the default 180-day date filter after data loading."""
+        if self.historical_df.empty or 'scan_date' not in self.historical_df.columns:
+            return
+
+        scan_dates = pd.to_datetime(self.historical_df['scan_date'])
+        data_max = scan_dates.max()
+        data_min = scan_dates.min()
+
+        # Default to last 180 days
+        default_start = data_max - pd.Timedelta(days=180)
+        # But don't go before actual data start
+        if default_start < data_min:
+            default_start = data_min
+
+        self.filter_start_date.set(default_start.strftime('%Y-%m-%d'))
+        self.filter_end_date.set(data_max.strftime('%Y-%m-%d'))
+
+        # Calculate actual days in range
+        days_range = (data_max - default_start).days
+
+        self._log(f"Default filter applied: Last {days_range} days ({default_start.strftime('%Y-%m-%d')} to {data_max.strftime('%Y-%m-%d')})")
+
+        # Apply the filters to the data
+        self._apply_filters()
 
     def _auto_save_info_findings(self):
         """Auto-save informational findings to yearly databases."""
@@ -2499,17 +2528,18 @@ class NessusHistoryTrackerApp:
                 picker.destroy()
 
         def draw_calendar():
+            import calendar as cal_module  # Import at start to avoid scoping issues
+
             # Clear existing buttons
             for btn in day_buttons:
                 btn.destroy()
             day_buttons.clear()
 
             # Update month label
-            month_label.config(text=f"{calendar.month_name[cal_state['month']]} {cal_state['year']}")
+            month_label.config(text=f"{cal_module.month_name[cal_state['month']]} {cal_state['year']}")
 
             # Get calendar for month
-            import calendar
-            cal = calendar.Calendar(firstweekday=0)
+            cal = cal_module.Calendar(firstweekday=0)
             month_days = cal.monthdayscalendar(cal_state['year'], cal_state['month'])
 
             today = datetime.now().date()
@@ -2547,8 +2577,6 @@ class NessusHistoryTrackerApp:
                     btn.grid(row=row_idx + 1, column=col_idx, padx=1, pady=1)
                     day_buttons.append(btn)
 
-        # Import calendar module for this function
-        import calendar
         draw_calendar()
 
         # Quick select buttons

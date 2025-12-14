@@ -360,6 +360,8 @@ def create_opdir_lookup(opdir_df: pd.DataFrame) -> Dict[str, Any]:
     1. by_full: Full match 'YYYY-X-NNNN' -> OPDIR data
     2. by_suffix: Suffix match 'X-NNNN' -> list of OPDIR data (may have multiple years)
 
+    Handles both new format (from file) and legacy format (from existing database).
+
     Args:
         opdir_df: OPDIR mapping DataFrame
 
@@ -374,14 +376,48 @@ def create_opdir_lookup(opdir_df: pd.DataFrame) -> Dict[str, Any]:
     if opdir_df.empty:
         return lookup
 
+    # Check if we need to parse legacy format (database loaded without iavab columns)
+    needs_parsing = 'iavab_full' not in opdir_df.columns and 'iavab_suffix' not in opdir_df.columns
+
+    # Debug: print available columns
+    print(f"OPDIR columns: {list(opdir_df.columns)}")
+
     for _, row in opdir_df.iterrows():
-        iavab_full = row.get('iavab_full', '')
-        iavab_suffix = row.get('iavab_suffix', '')
+        if needs_parsing:
+            # Legacy format - try to get IAVA/B from various possible columns
+            iavab_raw = None
+            # Try multiple possible column names for IAVA/B data
+            candidate_cols = ['iavab', 'iava_b', 'iava/b', 'iava', 'iavb', 'opdir_number_normalized']
+            for col in candidate_cols:
+                if col in row.index and pd.notna(row.get(col)) and row.get(col):
+                    val = str(row.get(col)).strip()
+                    if val and val.lower() != 'nan':
+                        iavab_raw = val
+                        break
+
+            if not iavab_raw:
+                # No IAVA/B found in legacy columns - skip this row
+                continue
+
+            # Parse the IAVA/B reference
+            opdir_year = row.get('opdir_year')
+            if pd.isna(opdir_year):
+                opdir_year = None
+            parsed = parse_iavab_reference(iavab_raw, opdir_year)
+            iavab_full = parsed['full']
+            iavab_suffix = parsed['suffix']
+        else:
+            # New format - columns already exist
+            iavab_full = row.get('iavab_full', '')
+            iavab_suffix = row.get('iavab_suffix', '')
 
         if not iavab_suffix:
             continue
 
         row_dict = row.to_dict()
+        # Add parsed values for consistency
+        row_dict['iavab_full'] = iavab_full
+        row_dict['iavab_suffix'] = iavab_suffix
 
         # Full lookup (year-specific)
         if iavab_full and iavab_full != iavab_suffix:  # Has year component
@@ -493,6 +529,14 @@ def enrich_with_opdir(lifecycle_df: pd.DataFrame, opdir_df: pd.DataFrame) -> pd.
     match_count = 0
     no_iavx_count = 0
     no_match_count = 0
+
+    # Debug: Check if iavx column exists and has data
+    if 'iavx' in lifecycle_df.columns:
+        iavx_non_empty = lifecycle_df['iavx'].notna() & (lifecycle_df['iavx'] != '')
+        print(f"Lifecycle has iavx column: {iavx_non_empty.sum()} findings with IAVX data out of {len(lifecycle_df)}")
+    else:
+        print("WARNING: Lifecycle data does not have 'iavx' column!")
+        print(f"Available columns: {list(lifecycle_df.columns)}")
 
     # Process each finding
     for idx, row in lifecycle_df.iterrows():
