@@ -1415,37 +1415,96 @@ class NessusHistoryTrackerApp:
         # Default to monthly
         return DATE_INTERVAL_MONTHLY
 
-    def _get_chart_data(self, data_type: str = 'lifecycle') -> pd.DataFrame:
+    def _get_chart_data(self, data_type: str = 'lifecycle', smart_filter: str = None) -> pd.DataFrame:
         """
-        Get the appropriate data for charts, ensuring filtered data is used when available.
+        Get the appropriate data for charts, with optional smart filtering.
+
+        Smart filtering allows certain visualizations to override the UI status filter
+        when they need specific data regardless of user selection:
+        - 'all_statuses': Include both Active and Remediated (for remediation rate, comparison charts)
+        - 'remediated_only': Only Remediated findings (for MTTR, resolution velocity)
+        - 'active_only': Only Active findings (for current risk metrics)
+        - None: Use regular filtered data (respects all UI filters)
 
         Args:
             data_type: Type of data to get - 'lifecycle', 'historical', 'scan_changes', 'host'
+            smart_filter: Smart filter mode to override status filter
 
         Returns:
             DataFrame with the requested data
         """
+        # Get base data
         if data_type == 'lifecycle':
-            if hasattr(self, 'filtered_lifecycle_df') and not self.filtered_lifecycle_df.empty:
+            if smart_filter and hasattr(self, 'lifecycle_df') and not self.lifecycle_df.empty:
+                # Use unfiltered base data for smart filtering
+                df = self.lifecycle_df.copy()
+            elif hasattr(self, 'filtered_lifecycle_df') and not self.filtered_lifecycle_df.empty:
                 return self.filtered_lifecycle_df
             elif hasattr(self, 'lifecycle_df') and not self.lifecycle_df.empty:
                 return self.lifecycle_df
+            else:
+                return pd.DataFrame()
         elif data_type == 'historical':
-            if hasattr(self, 'filtered_historical_df') and not self.filtered_historical_df.empty:
+            if smart_filter and hasattr(self, 'historical_df') and not self.historical_df.empty:
+                df = self.historical_df.copy()
+            elif hasattr(self, 'filtered_historical_df') and not self.filtered_historical_df.empty:
                 return self.filtered_historical_df
             elif hasattr(self, 'historical_df') and not self.historical_df.empty:
                 return self.historical_df
+            else:
+                return pd.DataFrame()
         elif data_type == 'scan_changes':
             if hasattr(self, 'filtered_scan_changes_df') and not self.filtered_scan_changes_df.empty:
                 return self.filtered_scan_changes_df
             elif hasattr(self, 'scan_changes_df') and not self.scan_changes_df.empty:
                 return self.scan_changes_df
+            else:
+                return pd.DataFrame()
         elif data_type == 'host':
             if hasattr(self, 'filtered_host_df') and not self.filtered_host_df.empty:
                 return self.filtered_host_df
             elif hasattr(self, 'host_presence_df') and not self.host_presence_df.empty:
                 return self.host_presence_df
-        return pd.DataFrame()
+            else:
+                return pd.DataFrame()
+        else:
+            return pd.DataFrame()
+
+        # Apply smart filtering (only for lifecycle and historical)
+        if smart_filter and not df.empty:
+            # Apply date filter (still respect date range)
+            start_date = self.filter_start_date.get()
+            end_date = self.filter_end_date.get()
+            if start_date and end_date and 'first_seen' in df.columns:
+                df['first_seen_dt'] = pd.to_datetime(df['first_seen'], errors='coerce')
+                mask = (df['first_seen_dt'] >= pd.to_datetime(start_date)) & \
+                       (df['first_seen_dt'] <= pd.to_datetime(end_date))
+                df = df[mask]
+                df = df.drop(columns=['first_seen_dt'], errors='ignore')
+
+            # Apply severity filter (still respect severity)
+            severity_filter = self.filter_severity.get() if hasattr(self, 'filter_severity') else 'All'
+            if severity_filter != 'All' and 'severity_text' in df.columns:
+                df = df[df['severity_text'] == severity_filter]
+
+            # Apply environment filter (still respect environment)
+            env_filter = self.filter_environment.get() if hasattr(self, 'filter_environment') else 'All'
+            if env_filter != 'All' and 'hostname' in df.columns:
+                df = df[df['hostname'].apply(self._get_environment_type) == env_filter]
+
+            # Apply smart status filter
+            if 'status' in df.columns:
+                if smart_filter == 'all_statuses':
+                    # Keep both Active and Remediated
+                    df = df[df['status'].isin(['Active', 'Remediated'])]
+                elif smart_filter == 'remediated_only':
+                    # Only Remediated
+                    df = df[df['status'] == 'Remediated']
+                elif smart_filter == 'active_only':
+                    # Only Active
+                    df = df[df['status'] == 'Active']
+
+        return df
 
     def _get_environment_type(self, hostname: str) -> str:
         """
@@ -1690,6 +1749,23 @@ class NessusHistoryTrackerApp:
             try:
                 self.opdir_df = pd.read_sql_query("SELECT * FROM opdir_mapping", conn)
                 if not self.opdir_df.empty:
+                    # Standardize legacy column names to match load_opdir_mapping output
+                    column_renames = {
+                        'opdir_final_due_date': 'final_due_date',
+                        'opdir_release_date': 'release_date',
+                        'opdir_subject': 'subject',
+                        'opdir_number_normalized': 'opdir_number_raw',
+                        'opdir_year_from_number': 'opdir_year',
+                        'iava/b': 'iavab',
+                        'poa&m due date': 'poam_due_date',
+                        'acknowledge date': 'acknowledge_date',
+                    }
+                    self.opdir_df = self.opdir_df.rename(columns=column_renames)
+
+                    # Create opdir_number_raw if missing (copy from opdir_number)
+                    if 'opdir_number_raw' not in self.opdir_df.columns and 'opdir_number' in self.opdir_df.columns:
+                        self.opdir_df['opdir_number_raw'] = self.opdir_df['opdir_number']
+
                     # Convert date columns from string to datetime
                     for date_col in ['poam_due_date', 'final_due_date', 'release_date']:
                         if date_col in self.opdir_df.columns:
@@ -1786,6 +1862,23 @@ class NessusHistoryTrackerApp:
             try:
                 self.opdir_df = pd.read_sql_query("SELECT * FROM opdir_mapping", conn)
                 if not self.opdir_df.empty:
+                    # Standardize legacy column names to match load_opdir_mapping output
+                    column_renames = {
+                        'opdir_final_due_date': 'final_due_date',
+                        'opdir_release_date': 'release_date',
+                        'opdir_subject': 'subject',
+                        'opdir_number_normalized': 'opdir_number_raw',
+                        'opdir_year_from_number': 'opdir_year',
+                        'iava/b': 'iavab',
+                        'poa&m due date': 'poam_due_date',
+                        'acknowledge date': 'acknowledge_date',
+                    }
+                    self.opdir_df = self.opdir_df.rename(columns=column_renames)
+
+                    # Create opdir_number_raw if missing (copy from opdir_number)
+                    if 'opdir_number_raw' not in self.opdir_df.columns and 'opdir_number' in self.opdir_df.columns:
+                        self.opdir_df['opdir_number_raw'] = self.opdir_df['opdir_number']
+
                     # Convert date columns from string to datetime
                     for date_col in ['poam_due_date', 'final_due_date', 'release_date']:
                         if date_col in self.opdir_df.columns:
@@ -3617,14 +3710,17 @@ class NessusHistoryTrackerApp:
         btn_frame = ttk.Frame(modal)
         btn_frame.pack(fill=tk.X, pady=10)
 
-        ttk.Button(btn_frame, text="Copy to Clipboard",
-                  command=lambda: self._copy_finding_to_clipboard(finding, hist_details)).pack(side=tk.LEFT, padx=20)
-        ttk.Button(btn_frame, text="Close", command=modal.destroy).pack(side=tk.RIGHT, padx=20)
-
         # Clean up mousewheel binding when modal closes
         def on_close():
-            canvas.unbind_all("<MouseWheel>")
+            try:
+                canvas.unbind_all("<MouseWheel>")
+            except:
+                pass
             modal.destroy()
+
+        ttk.Button(btn_frame, text="Copy to Clipboard",
+                  command=lambda: self._copy_finding_to_clipboard(finding, hist_details)).pack(side=tk.LEFT, padx=20)
+        ttk.Button(btn_frame, text="Close", command=on_close).pack(side=tk.RIGHT, padx=20)
 
         modal.protocol("WM_DELETE_WINDOW", on_close)
 
@@ -4099,22 +4195,21 @@ class NessusHistoryTrackerApp:
         ax.legend(fontsize=9)
 
     def _draw_mttr_popout(self, fig, ax, enlarged=False, show_labels=True):
-        """Draw MTTR by severity chart for pop-out."""
-        df = self._get_chart_data('lifecycle')
+        """Draw MTTR by severity chart for pop-out.
+
+        Uses smart filtering: Always shows Remediated findings regardless of status filter.
+        MTTR can only be calculated from resolved findings.
+        """
+        # Smart filter: MTTR always needs remediated findings
+        df = self._get_chart_data('lifecycle', smart_filter='remediated_only')
         if df.empty or 'severity_text' not in df.columns or 'days_open' not in df.columns:
-            ax.text(0.5, 0.5, 'No MTTR data available', ha='center', va='center',
-                   color='white', fontsize=12)
+            ax.text(0.5, 0.5, 'No MTTR data available\n(No remediated findings in selected range)',
+                   ha='center', va='center', color='white', fontsize=12)
             return
 
-        resolved = df[df['status'] == 'Resolved']
-        if resolved.empty:
-            ax.text(0.5, 0.5, 'No resolved findings', ha='center', va='center',
-                   color='white', fontsize=12)
-            return
-
-        resolved = resolved.copy()
-        resolved['days_open'] = pd.to_numeric(resolved['days_open'], errors='coerce')
-        mttr = resolved.groupby('severity_text')['days_open'].mean()
+        df = df.copy()
+        df['days_open'] = pd.to_numeric(df['days_open'], errors='coerce')
+        mttr = df.groupby('severity_text')['days_open'].mean()
         severity_order = ['Critical', 'High', 'Medium', 'Low', 'Info']
         mttr = mttr.reindex([s for s in severity_order if s in mttr.index])
 
@@ -7709,18 +7804,28 @@ class NessusHistoryTrackerApp:
         self.host_tracking_canvas.draw()
 
     def _update_metrics_charts(self):
-        """Update advanced metrics visualizations with industry KPIs."""
+        """Update advanced metrics visualizations with industry KPIs.
+
+        Uses smart filtering: Remediation rate metrics always include both
+        Active and Remediated findings regardless of status filter.
+        """
         if not HAS_MATPLOTLIB or not hasattr(self, 'metrics_ax1'):
             return
 
+        # Regular filtered data for display
         df = self._get_chart_data('lifecycle')
         hist_df = self._get_chart_data('historical')
+
+        # Smart filtered data for metrics that need both statuses
+        # Remediation rate MUST include both Active and Remediated to calculate properly
+        df_all_statuses = self._get_chart_data('lifecycle', smart_filter='all_statuses')
+        hist_df_all_statuses = self._get_chart_data('historical', smart_filter='all_statuses')
 
         for ax in [self.metrics_ax1, self.metrics_ax2, self.metrics_ax3, self.metrics_ax4]:
             ax.clear()
             ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
 
-        if df.empty:
+        if df_all_statuses.empty:
             # Reset KPI labels
             for key in self.kpi_labels:
                 self.kpi_labels[key].config(text="--")
@@ -7731,9 +7836,9 @@ class NessusHistoryTrackerApp:
         sla_targets = self.settings_manager.settings.get_sla_targets()
         sla_targets = {k: v for k, v in sla_targets.items() if v is not None}
 
-        # Calculate metrics
-        reopen_metrics = calculate_reopen_rate(df)
-        remediation_metrics = calculate_remediation_rate(df, hist_df)
+        # Calculate metrics using smart filtered data (both statuses)
+        reopen_metrics = calculate_reopen_rate(df_all_statuses)
+        remediation_metrics = calculate_remediation_rate(df_all_statuses, hist_df_all_statuses)
         sla_metrics = calculate_sla_breach_tracking(df, sla_targets)
         normalized_metrics = calculate_normalized_metrics(hist_df, df)
         risk_trend = calculate_risk_reduction_trend(hist_df)
