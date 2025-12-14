@@ -400,10 +400,18 @@ class MenuBar:
             if not self.app.historical_df.empty:
                 self.app._refresh_analysis()
 
+        # Get hostnames from loaded data
+        hostnames = []
+        if not self.app.lifecycle_df.empty and 'hostname' in self.app.lifecycle_df.columns:
+            hostnames = self.app.lifecycle_df['hostname'].unique().tolist()
+        elif not self.app.historical_df.empty and 'hostname' in self.app.historical_df.columns:
+            hostnames = self.app.historical_df['hostname'].unique().tolist()
+
         show_shared_assets_dialog(
             parent=self.window,
             settings_manager=self.app.settings_manager,
-            on_save=on_save
+            on_save=on_save,
+            hostnames=hostnames
         )
 
     def _show_user_guide(self):

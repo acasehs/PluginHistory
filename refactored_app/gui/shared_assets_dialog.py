@@ -28,7 +28,8 @@ class SharedAssetsDialog:
         self,
         parent: tk.Tk,
         settings_manager,
-        on_save: Optional[Callable[[Dict], None]] = None
+        on_save: Optional[Callable[[Dict], None]] = None,
+        hostnames: Optional[List[str]] = None
     ):
         """
         Initialize shared assets dialog.
@@ -37,10 +38,12 @@ class SharedAssetsDialog:
             parent: Parent window
             settings_manager: Settings manager instance
             on_save: Optional callback when settings are saved
+            hostnames: Optional list of hostnames from loaded data
         """
         self.parent = parent
         self.settings_manager = settings_manager
         self.on_save = on_save
+        self.all_hostnames = hostnames or []
 
         # Load current settings
         self.explicit_mappings: Dict[str, str] = dict(
@@ -84,16 +87,21 @@ class SharedAssetsDialog:
         info_label = ttk.Label(main_frame, text=info_text, wraplength=650, justify=tk.LEFT)
         info_label.pack(fill=tk.X, pady=(0, 10))
 
-        # Notebook for two sections
+        # Notebook for sections
         notebook = ttk.Notebook(main_frame)
         notebook.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
 
-        # Tab 1: Explicit Mappings
+        # Tab 1: Host Assignment (from loaded data)
+        hosts_frame = ttk.Frame(notebook, padding="10")
+        notebook.add(hosts_frame, text="Assign Hosts")
+        self._build_hosts_tab(hosts_frame)
+
+        # Tab 2: Explicit Mappings (manual entry)
         mapping_frame = ttk.Frame(notebook, padding="10")
-        notebook.add(mapping_frame, text="Explicit Mappings")
+        notebook.add(mapping_frame, text="Manual Entry")
         self._build_mappings_tab(mapping_frame)
 
-        # Tab 2: Regex Patterns
+        # Tab 3: Regex Patterns
         pattern_frame = ttk.Frame(notebook, padding="10")
         notebook.add(pattern_frame, text="Regex Patterns")
         self._build_patterns_tab(pattern_frame)
@@ -107,6 +115,170 @@ class SharedAssetsDialog:
 
         ttk.Button(button_frame, text="Cancel", command=self.dialog.destroy).pack(side=tk.RIGHT, padx=(5, 0))
         ttk.Button(button_frame, text="Save", command=self._save).pack(side=tk.RIGHT)
+
+    def _classify_hostname(self, hostname: str) -> str:
+        """Classify a hostname using current settings."""
+        import re
+        hostname_lower = hostname.lower().strip()
+
+        # Check explicit mappings first
+        if hostname_lower in self.explicit_mappings:
+            env = self.explicit_mappings[hostname_lower]
+            if env == 'production':
+                return 'Production'
+            elif env == 'pre_production':
+                return 'PSS'
+            elif env == 'shared':
+                return 'Shared'
+
+        # Check shared patterns
+        for pattern in self.shared_patterns:
+            try:
+                if re.match(pattern, hostname_lower, re.IGNORECASE):
+                    return 'Shared'
+            except:
+                pass
+
+        # Auto-detect from 9-char format
+        base = hostname_lower.replace('-ilom', '').replace('ilom', '')
+        if len(base) == 9:
+            env_char = base[7:8]
+            if env_char.isalpha():
+                return 'Production'
+            elif env_char.isdigit():
+                return 'PSS'
+
+        return 'Unknown'
+
+    def _build_hosts_tab(self, parent):
+        """Build host assignment tab with list of hosts from data."""
+        # Filter controls
+        filter_frame = ttk.Frame(parent)
+        filter_frame.pack(fill=tk.X, pady=(0, 5))
+
+        ttk.Label(filter_frame, text="Show:").pack(side=tk.LEFT)
+        self.host_filter_var = tk.StringVar(value="Unknown")
+        filter_combo = ttk.Combobox(
+            filter_frame,
+            textvariable=self.host_filter_var,
+            values=["All", "Unknown", "Production", "PSS", "Shared"],
+            state="readonly",
+            width=12
+        )
+        filter_combo.pack(side=tk.LEFT, padx=(5, 15))
+        filter_combo.bind('<<ComboboxSelected>>', lambda e: self._refresh_hosts_list())
+
+        ttk.Label(filter_frame, text="Search:").pack(side=tk.LEFT)
+        self.host_search_var = tk.StringVar()
+        search_entry = ttk.Entry(filter_frame, textvariable=self.host_search_var, width=20)
+        search_entry.pack(side=tk.LEFT, padx=(5, 5))
+        search_entry.bind('<KeyRelease>', lambda e: self._refresh_hosts_list())
+
+        # Host list with checkboxes (using Treeview)
+        list_frame = ttk.Frame(parent)
+        list_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+
+        columns = ('hostname', 'current_env')
+        self.hosts_tree = ttk.Treeview(list_frame, columns=columns, show='headings', height=10, selectmode='extended')
+        self.hosts_tree.heading('hostname', text='Hostname')
+        self.hosts_tree.heading('current_env', text='Current Classification')
+        self.hosts_tree.column('hostname', width=350)
+        self.hosts_tree.column('current_env', width=150)
+
+        scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.hosts_tree.yview)
+        self.hosts_tree.configure(yscrollcommand=scrollbar.set)
+
+        self.hosts_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Load hosts
+        self._refresh_hosts_list()
+
+        # Assignment controls
+        assign_frame = ttk.Frame(parent)
+        assign_frame.pack(fill=tk.X)
+
+        ttk.Label(assign_frame, text="Assign selected to:").pack(side=tk.LEFT)
+        self.assign_env_var = tk.StringVar(value="shared")
+        assign_combo = ttk.Combobox(
+            assign_frame,
+            textvariable=self.assign_env_var,
+            values=["shared", "production", "pre_production"],
+            state="readonly",
+            width=12
+        )
+        assign_combo.pack(side=tk.LEFT, padx=(5, 10))
+
+        ttk.Button(assign_frame, text="Assign Selected", command=self._assign_selected_hosts).pack(side=tk.LEFT, padx=2)
+        ttk.Button(assign_frame, text="Select All Visible", command=self._select_all_hosts).pack(side=tk.LEFT, padx=2)
+        ttk.Button(assign_frame, text="Clear Selection", command=self._clear_host_selection).pack(side=tk.LEFT, padx=2)
+
+        # Status label
+        self.hosts_status_label = ttk.Label(parent, text="", foreground="gray")
+        self.hosts_status_label.pack(anchor=tk.W, pady=(5, 0))
+
+        if not self.all_hostnames:
+            self.hosts_status_label.config(text="No host data loaded. Load Nessus archives first.")
+
+    def _refresh_hosts_list(self):
+        """Refresh the hosts list based on filter."""
+        for item in self.hosts_tree.get_children():
+            self.hosts_tree.delete(item)
+
+        if not self.all_hostnames:
+            return
+
+        filter_type = self.host_filter_var.get()
+        search_term = self.host_search_var.get().lower().strip()
+
+        count = 0
+        for hostname in sorted(set(self.all_hostnames)):
+            if not isinstance(hostname, str):
+                continue
+
+            # Apply search filter
+            if search_term and search_term not in hostname.lower():
+                continue
+
+            # Classify and filter
+            current_env = self._classify_hostname(hostname)
+
+            if filter_type != "All" and current_env != filter_type:
+                continue
+
+            self.hosts_tree.insert('', tk.END, values=(hostname, current_env))
+            count += 1
+
+        self.hosts_status_label.config(text=f"Showing {count} hosts")
+
+    def _assign_selected_hosts(self):
+        """Assign selected hosts to chosen environment."""
+        selection = self.hosts_tree.selection()
+        if not selection:
+            messagebox.showwarning("No Selection", "Please select hosts to assign.")
+            return
+
+        env = self.assign_env_var.get()
+        count = 0
+
+        for item in selection:
+            values = self.hosts_tree.item(item, 'values')
+            hostname = values[0].lower()
+            self.explicit_mappings[hostname] = env
+            count += 1
+
+        self._refresh_hosts_list()
+        self._refresh_mappings_tree()
+        messagebox.showinfo("Assigned", f"Assigned {count} hosts to '{env}'")
+
+    def _select_all_hosts(self):
+        """Select all visible hosts in the list."""
+        for item in self.hosts_tree.get_children():
+            self.hosts_tree.selection_add(item)
+
+    def _clear_host_selection(self):
+        """Clear host selection."""
+        self.hosts_tree.selection_remove(self.hosts_tree.selection())
 
     def _build_mappings_tab(self, parent):
         """Build explicit mappings tab."""
@@ -386,7 +558,8 @@ class SharedAssetsDialog:
 def show_shared_assets_dialog(
     parent: tk.Tk,
     settings_manager,
-    on_save: Optional[Callable[[Dict], None]] = None
+    on_save: Optional[Callable[[Dict], None]] = None,
+    hostnames: Optional[List[str]] = None
 ) -> SharedAssetsDialog:
     """
     Show the shared assets configuration dialog.
@@ -395,8 +568,9 @@ def show_shared_assets_dialog(
         parent: Parent window
         settings_manager: Settings manager instance
         on_save: Optional callback when settings are saved
+        hostnames: Optional list of hostnames from loaded data
 
     Returns:
         SharedAssetsDialog instance
     """
-    return SharedAssetsDialog(parent, settings_manager, on_save)
+    return SharedAssetsDialog(parent, settings_manager, on_save, hostnames)
