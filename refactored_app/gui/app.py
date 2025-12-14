@@ -2206,7 +2206,8 @@ class NessusHistoryTrackerApp:
             self.stat_labels['unique_plugins'].config(text=str(df['plugin_id'].nunique()))
 
         if 'days_open' in df.columns:
-            avg_days = df['days_open'].mean()
+            days_numeric = pd.to_numeric(df['days_open'], errors='coerce')
+            avg_days = days_numeric.mean()
             self.stat_labels['avg_days_open'].config(text=f"{avg_days:.1f}" if pd.notna(avg_days) else "N/A")
 
         # Update severity breakdown
@@ -2738,9 +2739,10 @@ class NessusHistoryTrackerApp:
 
         # Chart 2: MTTR by severity with severity-colored bars
         if 'severity_text' in df.columns and 'days_open' in df.columns:
-            resolved = df[df['status'] == 'Resolved']
+            resolved = df[df['status'] == 'Resolved'].copy()
             if not resolved.empty:
-                mttr = resolved.groupby('severity_text')['days_open'].mean()
+                resolved['days_open_numeric'] = pd.to_numeric(resolved['days_open'], errors='coerce')
+                mttr = resolved.groupby('severity_text')['days_open_numeric'].mean()
                 severity_order = ['Critical', 'High', 'Medium', 'Low']
                 mttr = mttr.reindex([s for s in severity_order if s in mttr.index])
                 severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff'}
@@ -2754,7 +2756,7 @@ class NessusHistoryTrackerApp:
                                               xytext=(0, 3), textcoords='offset points',
                                               ha='center', va='bottom', fontsize=7, color='white')
                 # Overall MTTR
-                overall_mttr = resolved['days_open'].mean()
+                overall_mttr = resolved['days_open_numeric'].mean()
                 self.risk_ax2.axhline(y=overall_mttr, color='white', linestyle='--', linewidth=1, alpha=0.5)
                 self.risk_ax2.text(0.02, 0.98, f'Overall: {overall_mttr:.0f}d', transform=self.risk_ax2.transAxes,
                                   fontsize=7, va='top', color='white')
@@ -2765,11 +2767,12 @@ class NessusHistoryTrackerApp:
 
         # Chart 3: Findings by age with urgency coloring
         if 'days_open' in df.columns:
-            active = df[df['status'] == 'Active']
+            active = df[df['status'] == 'Active'].copy()
             if not active.empty:
+                active['days_open_numeric'] = pd.to_numeric(active['days_open'], errors='coerce')
                 buckets = [0, 30, 60, 90, 120, float('inf')]
                 labels = ['0-30', '31-60', '61-90', '91-120', '121+']
-                age_counts = pd.cut(active['days_open'], bins=buckets, labels=labels).value_counts().sort_index()
+                age_counts = pd.cut(active['days_open_numeric'], bins=buckets, labels=labels).value_counts().sort_index()
                 colors = ['#28a745', '#ffc107', '#fd7e14', '#dc3545', '#dc3545']
                 bars = self.risk_ax3.bar(range(len(age_counts)), age_counts.values, color=colors)
                 self.risk_ax3.set_xticks(range(len(age_counts)))
@@ -2781,7 +2784,7 @@ class NessusHistoryTrackerApp:
                                                   xytext=(0, 3), textcoords='offset points',
                                                   ha='center', va='bottom', fontsize=7, color='white')
                 # Average age
-                avg_age = active['days_open'].mean()
+                avg_age = active['days_open_numeric'].mean()
                 self.risk_ax3.text(0.98, 0.98, f'Avg: {avg_age:.0f}d', transform=self.risk_ax3.transAxes,
                                   fontsize=8, va='top', ha='right', color='white')
         self.risk_ax3.set_title('Active Findings by Age', color=GUI_DARK_THEME['fg'], fontsize=10)
