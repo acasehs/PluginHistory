@@ -328,11 +328,36 @@ def extract_finding_data(item: ET.Element, host_name: str, hostname: str,
             'family': 'family',
             'cvss3_base_score': 'cvss3_base_score',
             'cvss2_base_score': 'cvss_base_score',
+            'synopsis': 'synopsis',
+            'risk_factor': 'risk_factor',
+            'stig_severity': 'stig_severity',
+            'exploit_ease': 'exploit_ease',
+            'exploit_available': 'exploit_available',
+            'exploit_frameworks': 'exploit_frameworks',
+            'cpe': 'cpe',
+            'vuln_publication_date': 'vuln_publication_date',
+            'patch_publication_date': 'patch_publication_date',
+            'plugin_publication_date': 'plugin_publication_date',
+            'plugin_modification_date': 'plugin_modification_date',
         }
 
         for finding_key, plugin_key in enrichment_mappings.items():
             if not finding[finding_key] and plugin_key in plugin_info:
                 finding[finding_key] = str(plugin_info[plugin_key])
+
+        # Enrich CVEs if not already present from scan
+        if not finding['cves'] and 'cves' in plugin_info and plugin_info['cves']:
+            finding['cves'] = str(plugin_info['cves'])
+
+        # Enrich IAVX if not already present from scan
+        if not finding['iavx'] and 'iavx' in plugin_info and plugin_info['iavx']:
+            finding['iavx'] = str(plugin_info['iavx'])
+        elif finding['iavx'] and 'iavx' in plugin_info and plugin_info['iavx']:
+            # Merge IAVX refs from both sources
+            existing_refs = set(finding['iavx'].split('\n'))
+            plugin_refs = set(str(plugin_info['iavx']).split('\n'))
+            all_refs = existing_refs | plugin_refs
+            finding['iavx'] = "\n".join(sorted(all_refs))
 
     return finding
 

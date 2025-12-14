@@ -114,6 +114,8 @@ class NessusHistoryTrackerApp:
         self.filter_cvss_max = tk.StringVar(value="10.0")
         self.filter_opdir_status = tk.StringVar(value="All")
         self.filter_env_type = tk.StringVar(value="All")  # Production/Pre-Production
+        self.filter_cve = tk.StringVar()  # CVE filter (e.g., CVE-2024-1234)
+        self.filter_iavx = tk.StringVar()  # IAVA/B/T filter (e.g., 2024-A-0001)
 
         # Advanced host filtering
         self.filter_host_list: List[str] = []  # Specific hostnames selected
@@ -367,7 +369,18 @@ class NessusHistoryTrackerApp:
         ttk.Combobox(opdir_row, textvariable=self.filter_opdir_status,
                     values=opdir_options, state="readonly", width=12).pack(side=tk.LEFT, padx=1)
 
-        # Row 8: Apply and Reset buttons
+        # Row 8: CVE and IAVX filters
+        vuln_row = ttk.Frame(filter_frame)
+        vuln_row.pack(fill=tk.X, pady=3)
+        ttk.Label(vuln_row, text="CVE:", width=8).pack(side=tk.LEFT)
+        ttk.Entry(vuln_row, textvariable=self.filter_cve, width=15).pack(side=tk.LEFT, padx=1)
+
+        iavx_row = ttk.Frame(filter_frame)
+        iavx_row.pack(fill=tk.X, pady=3)
+        ttk.Label(iavx_row, text="IAV:", width=8).pack(side=tk.LEFT)
+        ttk.Entry(iavx_row, textvariable=self.filter_iavx, width=15).pack(side=tk.LEFT, padx=1)
+
+        # Row 9: Apply and Reset buttons
         btn_row = ttk.Frame(filter_frame)
         btn_row.pack(fill=tk.X, pady=3)
         ttk.Button(btn_row, text="Apply", command=self._apply_filters, width=10).pack(side=tk.LEFT, padx=1)
@@ -1857,6 +1870,20 @@ class NessusHistoryTrackerApp:
                 filtered = filtered[filtered['opdir_status'] == opdir_status]
                 filter_descriptions.append(f"OPDIR: {opdir_status}")
 
+        # Filter: CVE
+        cve_filter = self.filter_cve.get().strip().upper()
+        if cve_filter and 'cves' in filtered.columns:
+            # Support partial matching (e.g., "2024-1234" matches "CVE-2024-1234")
+            filtered = filtered[filtered['cves'].str.contains(cve_filter, case=False, na=False)]
+            filter_descriptions.append(f"CVE: {cve_filter}")
+
+        # Filter: IAVX (IAVA/IAVB/IAVT)
+        iavx_filter = self.filter_iavx.get().strip().upper()
+        if iavx_filter and 'iavx' in filtered.columns:
+            # Support partial matching (e.g., "2024-A-0001" matches "IAVA:2024-A-0001")
+            filtered = filtered[filtered['iavx'].str.contains(iavx_filter, case=False, na=False)]
+            filter_descriptions.append(f"IAV: {iavx_filter}")
+
         # Store filtered data
         self.filtered_lifecycle_df = filtered
 
@@ -1939,6 +1966,8 @@ class NessusHistoryTrackerApp:
         self.filter_cvss_min.set("0.0")
         self.filter_cvss_max.set("10.0")
         self.filter_opdir_status.set("All")
+        self.filter_cve.set("")
+        self.filter_iavx.set("")
 
         # Reset host list filter
         self.filter_host_list = []

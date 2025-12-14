@@ -201,14 +201,107 @@ def load_plugins_database_json(plugins_file: str) -> Optional[Dict[str, Dict[str
                             'feed_timestamp_str': feed_timestamp_str
                         }
 
+                        # Copy direct properties
                         for key in plugin:
-                            if key != 'attributes':
+                            if key not in ('attributes', 'cves', 'xrefs'):
                                 plugin_entry[key] = plugin[key]
 
                         if 'script_name' in plugin:
                             plugin_entry['name'] = plugin['script_name']
                         if 'script_family' in plugin:
                             plugin_entry['family'] = plugin['script_family']
+
+                        # Extract CVEs from cves structure
+                        if 'cves' in plugin and plugin['cves']:
+                            cves = []
+                            cves_data = plugin['cves']
+                            if isinstance(cves_data, dict) and 'cve' in cves_data:
+                                cve_list = cves_data['cve']
+                                if isinstance(cve_list, list):
+                                    cves.extend([cve for cve in cve_list if cve])
+                                elif cve_list:
+                                    cves.append(str(cve_list))
+                            if cves:
+                                plugin_entry['cves'] = "\n".join(cves)
+
+                        # Extract IAVX from xrefs structure
+                        if 'xrefs' in plugin and plugin['xrefs']:
+                            iavx_refs = []
+                            other_refs = []
+                            xrefs_data = plugin['xrefs']
+                            if isinstance(xrefs_data, dict) and 'xref' in xrefs_data:
+                                xref_list = xrefs_data['xref']
+                                if isinstance(xref_list, list):
+                                    for xref in xref_list:
+                                        if xref:
+                                            xref_str = str(xref)
+                                            if any(x in xref_str for x in ["IAVA:", "IAVB:", "IAVT:", "IATM:"]):
+                                                iavx_refs.append(xref_str)
+                                            else:
+                                                other_refs.append(xref_str)
+                                elif xref_list:
+                                    xref_str = str(xref_list)
+                                    if any(x in xref_str for x in ["IAVA:", "IAVB:", "IAVT:", "IATM:"]):
+                                        iavx_refs.append(xref_str)
+                                    else:
+                                        other_refs.append(xref_str)
+                            if iavx_refs:
+                                plugin_entry['iavx'] = "\n".join(iavx_refs)
+                            if other_refs:
+                                plugin_entry['cross_references'] = "\n".join(other_refs)
+
+                        # Process attributes
+                        if 'attributes' in plugin and isinstance(plugin['attributes'], dict):
+                            attr_data = plugin['attributes']
+                            if 'attribute' in attr_data:
+                                attributes = attr_data['attribute']
+                                if isinstance(attributes, list):
+                                    exploit_frameworks = []
+                                    for attr in attributes:
+                                        if 'name' in attr and 'value' in attr:
+                                            attr_name = attr['name']
+                                            attr_value = attr['value']
+
+                                            # Map key attributes
+                                            attr_mappings = {
+                                                "description": "description",
+                                                "solution": "solution",
+                                                "risk_factor": "risk_factor",
+                                                "cvss_base_score": "cvss_base_score",
+                                                "cvss3_base_score": "cvss3_base_score",
+                                                "synopsis": "synopsis",
+                                                "stig_severity": "stig_severity",
+                                                "exploitability_ease": "exploit_ease",
+                                                "exploit_available": "exploit_available",
+                                                "vpr_score": "vpr_score",
+                                                "plugin_publication_date": "plugin_publication_date",
+                                                "plugin_modification_date": "plugin_modification_date",
+                                                "vuln_publication_date": "vuln_publication_date",
+                                                "patch_publication_date": "patch_publication_date",
+                                                "cpe": "cpe",
+                                                "cvss_vector": "cvss_vector",
+                                                "cvss3_vector": "cvss_v3_vector",
+                                                "iava": "iava",
+                                            }
+
+                                            if attr_name in attr_mappings:
+                                                plugin_entry[attr_mappings[attr_name]] = attr_value
+                                            elif attr_name.startswith("exploit_framework_"):
+                                                if str(attr_value).lower() == "true":
+                                                    framework_name = attr_name.replace("exploit_framework_", "").capitalize()
+                                                    exploit_frameworks.append(framework_name)
+
+                                            # Handle iava attribute adding to iavx
+                                            if attr_name == "iava" and attr_value:
+                                                iava_ref = f"IAVA:{attr_value}"
+                                                if 'iavx' in plugin_entry:
+                                                    if iava_ref not in plugin_entry['iavx']:
+                                                        plugin_entry['iavx'] += f"\n{iava_ref}"
+                                                else:
+                                                    plugin_entry['iavx'] = iava_ref
+
+                                    if exploit_frameworks:
+                                        plugin_entry['exploit_frameworks'] = ", ".join(exploit_frameworks)
 
                         plugins_dict[plugin_id] = plugin_entry
                         plugin_count += 1
@@ -219,6 +312,8 @@ def load_plugins_database_json(plugins_file: str) -> Optional[Dict[str, Dict[str
 
     except Exception as e:
         print(f"Error loading plugins database: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 
