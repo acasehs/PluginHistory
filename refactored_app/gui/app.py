@@ -199,6 +199,19 @@ class NessusHistoryTrackerApp:
 
     def _build_ui(self):
         """Build the main user interface."""
+        # Status bar at bottom (create first, pack last)
+        self.status_bar = tk.Frame(self.window, bg='#1a1a2e', height=24)
+        self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+        self.status_bar.pack_propagate(False)
+
+        self.status_label = tk.Label(self.status_bar, text="Ready", bg='#1a1a2e', fg='#888888',
+                                     anchor='w', padx=10, font=('Arial', 9))
+        self.status_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        self.progress_label = tk.Label(self.status_bar, text="", bg='#1a1a2e', fg='#17a2b8',
+                                       anchor='e', padx=10, font=('Arial', 9))
+        self.progress_label.pack(side=tk.RIGHT)
+
         # Main container
         main_frame = ttk.Frame(self.window)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
@@ -219,7 +232,7 @@ class NessusHistoryTrackerApp:
         self.notebook = ttk.Notebook(right_panel)
         self.notebook.pack(fill=tk.BOTH, expand=True)
 
-        self._build_status_tab()
+        # Build tabs - Logging tab last
         self._build_dashboard_tab()
         self._build_lifecycle_tab()
         self._build_host_tab()
@@ -234,6 +247,7 @@ class NessusHistoryTrackerApp:
         self._build_metrics_tab()
         self._build_host_tracking_tab()
         self._build_advanced_tab()
+        self._build_logging_tab()  # Moved to last
 
     def _build_file_selection(self, parent):
         """Build file selection section with compact layout."""
@@ -512,18 +526,18 @@ class NessusHistoryTrackerApp:
         ttk.Button(ai_row2, text="Threat Feeds", command=self._show_threat_intel_dialog).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
         ttk.Button(ai_row2, text="Sync Intel", command=self._quick_sync_threat_intel).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
 
-    def _build_status_tab(self):
-        """Build status/log tab."""
-        status_frame = ttk.Frame(self.notebook)
-        self.notebook.add(status_frame, text="Status")
+    def _build_logging_tab(self):
+        """Build logging tab (formerly Status tab)."""
+        logging_frame = ttk.Frame(self.notebook)
+        self.notebook.add(logging_frame, text="Logging")
 
-        self.status_text = tk.Text(status_frame, wrap=tk.WORD,
+        self.status_text = tk.Text(logging_frame, wrap=tk.WORD,
                                    bg=GUI_DARK_THEME['text_bg'],
                                    fg=GUI_DARK_THEME['fg'],
                                    font=('Consolas', 10))
         self.status_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        scrollbar = ttk.Scrollbar(status_frame, command=self.status_text.yview)
+        scrollbar = ttk.Scrollbar(logging_frame, command=self.status_text.yview)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.status_text.config(yscrollcommand=scrollbar.set)
 
@@ -1559,58 +1573,183 @@ class NessusHistoryTrackerApp:
 
     # Processing methods
     def _process_archives(self):
-        """Process selected archives."""
+        """Process selected archives in a background thread."""
         if not self.archive_paths and not self.existing_db_path:
             messagebox.showwarning("No Data", "Please select archives or an existing database")
             return
 
-        try:
-            self._log("Starting processing...")
+        # Check if already processing
+        if hasattr(self, '_is_processing') and self._is_processing:
+            messagebox.showinfo("Processing", "Processing is already in progress")
+            return
 
-            # Load plugins database first (needed for processing new archives)
-            if self.plugins_db_path:
-                self._log("Loading plugins database...")
-                self.plugins_dict = load_plugins_database(self.plugins_db_path)
+        self._is_processing = True
+        self._set_processing(True, "Starting processing...")
 
-            # Process archives or load existing DB FIRST
-            if self.existing_db_path and not self.archive_paths:
-                self._load_existing_database()
-            else:
-                self._process_new_archives()
+        import threading
 
-            # After loading database, check if we need to load OPDIR from file
-            # Only load from file if: file selected AND (no data in DB OR file is different)
-            if self.opdir_file_path:
-                if self.opdir_df.empty:
-                    self._log("Loading OPDIR mapping from file...")
-                    self.opdir_df = load_opdir_mapping(self.opdir_file_path)
-                    if not self.opdir_df.empty:
-                        self._log(f"Loaded {len(self.opdir_df)} OPDIR mappings from file")
+        def process_thread():
+            """Background processing thread."""
+            try:
+                self._log_safe("Starting processing...")
+
+                # Load plugins database first (needed for processing new archives)
+                if self.plugins_db_path:
+                    self._log_safe("Loading plugins database...")
+                    self.plugins_dict = load_plugins_database(self.plugins_db_path)
+
+                # Process archives or load existing DB FIRST
+                if self.existing_db_path and not self.archive_paths:
+                    self._load_existing_database_thread()
                 else:
-                    self._log(f"Using {len(self.opdir_df)} OPDIR mappings from database")
+                    self._process_new_archives_thread()
 
-            # Same for IAVM notices
-            if self.iavm_file_path:
-                if self.iavm_df.empty:
-                    self._log("Loading IAVM notice summaries from file...")
-                    self.iavm_df = load_iavm_summaries(self.iavm_file_path)
-                    if not self.iavm_df.empty:
-                        self._log(f"Loaded {len(self.iavm_df)} IAVM notices from file")
-                else:
-                    self._log(f"Using {len(self.iavm_df)} IAVM notices from database")
+                # After loading database, check if we need to load OPDIR from file
+                if self.opdir_file_path:
+                    if self.opdir_df.empty:
+                        self._log_safe("Loading OPDIR mapping from file...")
+                        self.opdir_df = load_opdir_mapping(self.opdir_file_path)
+                        if not self.opdir_df.empty:
+                            self._log_safe(f"Loaded {len(self.opdir_df)} OPDIR mappings from file")
+                    else:
+                        self._log_safe(f"Using {len(self.opdir_df)} OPDIR mappings from database")
 
-            # Apply default 180-day date filter
-            self._apply_default_date_filter()
+                # Same for IAVM notices
+                if self.iavm_file_path:
+                    if self.iavm_df.empty:
+                        self._log_safe("Loading IAVM notice summaries from file...")
+                        self.iavm_df = load_iavm_summaries(self.iavm_file_path)
+                        if not self.iavm_df.empty:
+                            self._log_safe(f"Loaded {len(self.iavm_df)} IAVM notices from file")
+                    else:
+                        self._log_safe(f"Using {len(self.iavm_df)} IAVM notices from database")
 
-            # Auto-save informational findings to yearly databases
-            self._auto_save_info_findings()
+                # Apply default 180-day date filter (must be on main thread)
+                self.window.after(0, self._apply_default_date_filter)
 
-            self._log("Processing complete!")
+                # Auto-save informational findings
+                self._auto_save_info_findings()
+
+                self._log_safe("Processing complete!")
+                self.window.after(0, lambda: self._on_processing_complete(True))
+
+            except Exception as e:
+                self._log_safe(f"ERROR: {str(e)}")
+                self.window.after(0, lambda: self._on_processing_complete(False, str(e)))
+
+        # Start background thread
+        thread = threading.Thread(target=process_thread, daemon=True)
+        thread.start()
+
+    def _on_processing_complete(self, success: bool, error_msg: str = ""):
+        """Called when processing completes (on main thread)."""
+        self._is_processing = False
+        if success:
+            self._set_processing(False, "Processing complete")
             messagebox.showinfo("Success", "Data processed successfully!")
+        else:
+            self._set_processing(False, "Processing failed")
+            messagebox.showerror("Error", f"Processing failed: {error_msg}")
 
-        except Exception as e:
-            self._log(f"ERROR: {str(e)}")
-            messagebox.showerror("Error", f"Processing failed: {str(e)}")
+    def _log_safe(self, message: str):
+        """Thread-safe logging - schedules log on main thread."""
+        self.window.after(0, lambda: self._log(message))
+
+    def _load_existing_database_thread(self):
+        """Load data from existing database (called from thread)."""
+        import sqlite3
+
+        self._log_safe("Loading existing database...")
+
+        conn = sqlite3.connect(self.existing_db_path)
+
+        try:
+            self.historical_df = pd.read_sql_query("SELECT * FROM historical_findings", conn)
+            self.historical_df['scan_date'] = pd.to_datetime(self.historical_df['scan_date'])
+            self._log_safe(f"Loaded {len(self.historical_df)} historical findings")
+
+            try:
+                self.lifecycle_df = pd.read_sql_query("SELECT * FROM finding_lifecycle", conn)
+                self._log_safe(f"Loaded {len(self.lifecycle_df)} lifecycle records")
+            except:
+                pass
+
+            try:
+                self.host_presence_df = pd.read_sql_query("SELECT * FROM host_presence", conn)
+                self._log_safe(f"Loaded {len(self.host_presence_df)} host presence records")
+            except:
+                pass
+
+            try:
+                self.scan_changes_df = pd.read_sql_query("SELECT * FROM scan_changes", conn)
+                self._log_safe(f"Loaded {len(self.scan_changes_df)} scan change records")
+            except:
+                pass
+
+            # Load OPDIR mapping if present
+            try:
+                self.opdir_df = pd.read_sql_query("SELECT * FROM opdir_mapping", conn)
+                if not self.opdir_df.empty:
+                    # Convert date columns from string to datetime
+                    for date_col in ['poam_due_date', 'final_due_date', 'release_date']:
+                        if date_col in self.opdir_df.columns:
+                            self.opdir_df[date_col] = pd.to_datetime(
+                                self.opdir_df[date_col], errors='coerce'
+                            )
+                    self._log_safe(f"Loaded {len(self.opdir_df)} OPDIR mappings from database")
+            except:
+                pass
+
+            # Load IAVM notices if present
+            try:
+                self.iavm_df = pd.read_sql_query("SELECT * FROM iavm_notices", conn)
+                if not self.iavm_df.empty:
+                    self._log_safe(f"Loaded {len(self.iavm_df)} IAVM notices from database")
+            except:
+                pass
+
+        finally:
+            conn.close()
+
+        # Run analysis refresh on main thread
+        self.window.after(0, self._refresh_analysis_internal)
+
+    def _process_new_archives_thread(self):
+        """Process new archive files (called from thread)."""
+        import tempfile
+
+        self._log_safe("Processing archives...")
+
+        all_findings = []
+        temp_dirs = []
+
+        for archive_path in self.archive_paths:
+            self._log_safe(f"Processing: {os.path.basename(archive_path)}")
+
+            if archive_path.endswith('.zip'):
+                temp_dir = tempfile.mkdtemp()
+                temp_dirs.append(temp_dir)
+                extract_nested_archives(archive_path, temp_dir)
+                nessus_files = find_files_by_extension(temp_dir, '.nessus')
+            else:
+                nessus_files = [archive_path]
+
+            if nessus_files:
+                findings_df, _ = parse_multiple_nessus_files(nessus_files, self.plugins_dict)
+                if not findings_df.empty:
+                    findings_df = enrich_findings_with_severity(findings_df)
+                    all_findings.append(findings_df)
+
+        # Cleanup temp directories
+        for temp_dir in temp_dirs:
+            cleanup_temp_directory(temp_dir)
+
+        if all_findings:
+            self.historical_df = pd.concat(all_findings, ignore_index=True)
+            self._log_safe(f"Total findings: {len(self.historical_df)}")
+
+        # Run analysis refresh on main thread
+        self.window.after(0, self._refresh_analysis_internal)
 
     def _load_existing_database(self):
         """Load data from existing database."""
@@ -1647,6 +1786,12 @@ class NessusHistoryTrackerApp:
             try:
                 self.opdir_df = pd.read_sql_query("SELECT * FROM opdir_mapping", conn)
                 if not self.opdir_df.empty:
+                    # Convert date columns from string to datetime
+                    for date_col in ['poam_due_date', 'final_due_date', 'release_date']:
+                        if date_col in self.opdir_df.columns:
+                            self.opdir_df[date_col] = pd.to_datetime(
+                                self.opdir_df[date_col], errors='coerce'
+                            )
                     self._log(f"Loaded {len(self.opdir_df)} OPDIR mappings from database")
             except:
                 pass
@@ -8924,11 +9069,31 @@ class NessusHistoryTrackerApp:
             self._show_settings_dialog()  # Refresh dialog
 
     def _log(self, message: str):
-        """Add message to status log."""
+        """Add message to status log and update status bar."""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.status_text.insert(tk.END, f"[{timestamp}] {message}\n")
         self.status_text.see(tk.END)
-        self.window.update()
+        # Update status bar with latest message (truncated)
+        self._set_status(message[:80] if len(message) > 80 else message)
+        self.window.update_idletasks()
+
+    def _set_status(self, message: str, progress: str = ""):
+        """Update the status bar at the bottom of the window."""
+        if hasattr(self, 'status_label'):
+            self.status_label.config(text=message)
+        if hasattr(self, 'progress_label'):
+            self.progress_label.config(text=progress)
+
+    def _set_processing(self, is_processing: bool, message: str = ""):
+        """Set processing state - updates status bar and optionally disables/enables buttons."""
+        if is_processing:
+            self._set_status(message, "⏳ Processing...")
+            if hasattr(self, 'status_label'):
+                self.status_label.config(fg='#17a2b8')  # Cyan for active
+        else:
+            self._set_status(message if message else "Ready", "")
+            if hasattr(self, 'status_label'):
+                self.status_label.config(fg='#888888')  # Gray for idle
 
     # =========================================================================
     # AI Predictions Integration
