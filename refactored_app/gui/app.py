@@ -677,6 +677,9 @@ class NessusHistoryTrackerApp:
         tree_frame.grid_rowconfigure(0, weight=1)
         tree_frame.grid_columnconfigure(0, weight=1)
 
+        # Bind double-click to show finding details
+        self.lifecycle_tree.bind('<Double-1>', self._show_finding_detail)
+
         # Configure treeview colors for dark theme
         style = ttk.Style()
         style.configure("Treeview",
@@ -2868,6 +2871,330 @@ class NessusHistoryTrackerApp:
                 messagebox.showwarning("Invalid Row", f"Row number must be between 1 and {total}")
         except ValueError:
             messagebox.showwarning("Invalid Input", "Please enter a valid row number")
+
+    def _show_finding_detail(self, event):
+        """Show detailed popup for double-clicked finding."""
+        # Get selected item
+        selection = self.lifecycle_tree.selection()
+        if not selection:
+            return
+
+        item = selection[0]
+        values = self.lifecycle_tree.item(item, 'values')
+
+        if not values or len(values) < 2:
+            return
+
+        hostname = values[0]
+        plugin_id = values[1]
+
+        # Get full data from lifecycle_df
+        df = self._get_chart_data('lifecycle')
+        if df.empty:
+            return
+
+        # Find the matching row
+        mask = (df['hostname'].astype(str) == str(hostname)) & \
+               (df['plugin_id'].astype(str) == str(plugin_id))
+        matches = df[mask]
+
+        if matches.empty:
+            return
+
+        finding = matches.iloc[0]
+
+        # Get additional details from historical_df if available
+        hist_details = {}
+        if not self.historical_df.empty:
+            hist_mask = (self.historical_df['hostname'].astype(str) == str(hostname)) & \
+                       (self.historical_df['plugin_id'].astype(str) == str(plugin_id))
+            hist_matches = self.historical_df[hist_mask]
+            if not hist_matches.empty:
+                # Get the most recent entry
+                latest_hist = hist_matches.sort_values('scan_date', ascending=False).iloc[0]
+                hist_details = {
+                    'output': latest_hist.get('output', ''),
+                    'description': latest_hist.get('description', ''),
+                    'solution': latest_hist.get('solution', ''),
+                    'synopsis': latest_hist.get('synopsis', ''),
+                    'see_also': latest_hist.get('see_also', ''),
+                    'risk_factor': latest_hist.get('risk_factor', ''),
+                    'port': latest_hist.get('port', ''),
+                    'protocol': latest_hist.get('protocol', ''),
+                }
+
+        # Create the detail popup
+        self._create_finding_detail_popup(finding, hist_details)
+
+    def _create_finding_detail_popup(self, finding, hist_details):
+        """Create and display the finding detail popup modal."""
+        modal = tk.Toplevel(self.window)
+        modal.title(f"Finding Details: {finding.get('plugin_name', 'Unknown')[:50]}")
+        modal.geometry("900x700")
+        modal.configure(bg=GUI_DARK_THEME['bg'])
+        modal.transient(self.window)
+
+        # Make resizable
+        modal.resizable(True, True)
+        modal.minsize(700, 500)
+
+        # Main container with scrollbar
+        main_frame = ttk.Frame(modal)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Create canvas with scrollbar for the entire content
+        canvas = tk.Canvas(main_frame, bg=GUI_DARK_THEME['bg'], highlightthickness=0)
+        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Enable mousewheel scrolling
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # Title section
+        title_frame = tk.Frame(scrollable_frame, bg='#1a3a5c')
+        title_frame.pack(fill=tk.X, pady=(0, 10))
+        tk.Label(title_frame, text=finding.get('plugin_name', 'Unknown'),
+                font=('Arial', 14, 'bold'), bg='#1a3a5c', fg='white',
+                wraplength=850).pack(padx=10, pady=10)
+
+        # Helper function to add a section
+        def add_section(parent, title, content, is_resizable=False):
+            if not content or content == 'nan' or pd.isna(content):
+                return
+
+            section_frame = ttk.LabelFrame(parent, text=title)
+            section_frame.pack(fill=tk.X, pady=5, padx=5)
+
+            if is_resizable:
+                # Create resizable text widget for large content
+                text_frame = ttk.Frame(section_frame)
+                text_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+                text_widget = tk.Text(text_frame, wrap=tk.WORD,
+                                     bg=GUI_DARK_THEME['entry_bg'],
+                                     fg=GUI_DARK_THEME['fg'],
+                                     font=('Consolas', 9),
+                                     height=10)
+                text_scrollbar = ttk.Scrollbar(text_frame, command=text_widget.yview)
+                text_widget.configure(yscrollcommand=text_scrollbar.set)
+
+                text_widget.insert('1.0', str(content))
+                text_widget.configure(state='disabled')
+
+                text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+                text_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+                # Add resize grip
+                grip = ttk.Sizegrip(text_frame)
+                grip.pack(side=tk.BOTTOM, anchor='se')
+            else:
+                label = tk.Label(section_frame, text=str(content),
+                               bg=GUI_DARK_THEME['bg'], fg=GUI_DARK_THEME['fg'],
+                               wraplength=850, justify=tk.LEFT, anchor='w')
+                label.pack(fill=tk.X, padx=5, pady=5)
+
+        # Helper function to add key-value row
+        def add_row(parent, label, value, row_num):
+            if value is None or value == '' or value == 'nan' or (isinstance(value, float) and pd.isna(value)):
+                return row_num
+
+            tk.Label(parent, text=f"{label}:", font=('Arial', 9, 'bold'),
+                    bg=GUI_DARK_THEME['bg'], fg='#17a2b8',
+                    anchor='e', width=18).grid(row=row_num, column=0, sticky='e', padx=(5, 10), pady=2)
+            tk.Label(parent, text=str(value), bg=GUI_DARK_THEME['bg'],
+                    fg=GUI_DARK_THEME['fg'], anchor='w',
+                    wraplength=700).grid(row=row_num, column=1, sticky='w', pady=2)
+            return row_num + 1
+
+        # Basic Information section
+        basic_frame = ttk.LabelFrame(scrollable_frame, text="Basic Information")
+        basic_frame.pack(fill=tk.X, pady=5, padx=5)
+
+        info_grid = ttk.Frame(basic_frame)
+        info_grid.pack(fill=tk.X, padx=5, pady=5)
+
+        row = 0
+        row = add_row(info_grid, "Hostname", finding.get('hostname'), row)
+        row = add_row(info_grid, "IP Address", finding.get('ip_address'), row)
+        row = add_row(info_grid, "Plugin ID", finding.get('plugin_id'), row)
+        row = add_row(info_grid, "Severity", finding.get('severity_text'), row)
+        row = add_row(info_grid, "CVSS v3 Score", finding.get('cvss3_base_score'), row)
+        row = add_row(info_grid, "Status", finding.get('status'), row)
+
+        # Port/Protocol from historical
+        if hist_details.get('port'):
+            port_info = f"{hist_details.get('port')}/{hist_details.get('protocol', 'tcp')}"
+            row = add_row(info_grid, "Port/Protocol", port_info, row)
+
+        row = add_row(info_grid, "Risk Factor", hist_details.get('risk_factor'), row)
+
+        # Timeline section
+        timeline_frame = ttk.LabelFrame(scrollable_frame, text="Timeline")
+        timeline_frame.pack(fill=tk.X, pady=5, padx=5)
+
+        time_grid = ttk.Frame(timeline_frame)
+        time_grid.pack(fill=tk.X, padx=5, pady=5)
+
+        row = 0
+        row = add_row(time_grid, "First Observed", finding.get('first_seen'), row)
+        row = add_row(time_grid, "Last Seen", finding.get('last_seen'), row)
+        row = add_row(time_grid, "Days Open", finding.get('days_open'), row)
+        row = add_row(time_grid, "Total Observations", finding.get('total_observations'), row)
+        row = add_row(time_grid, "Reappearances", finding.get('reappearances'), row)
+
+        # CVE/IAVX section
+        cve_iavx_frame = ttk.LabelFrame(scrollable_frame, text="CVE & IAVX References")
+        cve_iavx_frame.pack(fill=tk.X, pady=5, padx=5)
+
+        ref_grid = ttk.Frame(cve_iavx_frame)
+        ref_grid.pack(fill=tk.X, padx=5, pady=5)
+
+        row = 0
+        row = add_row(ref_grid, "CVEs", finding.get('cves'), row)
+        row = add_row(ref_grid, "IAVX", finding.get('iavx'), row)
+
+        # OPDIR information if available
+        opdir_num = finding.get('opdir_number')
+        if opdir_num and not pd.isna(opdir_num):
+            opdir_frame = ttk.LabelFrame(scrollable_frame, text="OPDIR Information")
+            opdir_frame.pack(fill=tk.X, pady=5, padx=5)
+
+            opdir_grid = ttk.Frame(opdir_frame)
+            opdir_grid.pack(fill=tk.X, padx=5, pady=5)
+
+            row = 0
+            row = add_row(opdir_grid, "OPDIR Number", opdir_num, row)
+            row = add_row(opdir_grid, "OPDIR Title", finding.get('opdir_title'), row)
+            row = add_row(opdir_grid, "OPDIR Due Date", finding.get('opdir_due_date'), row)
+            row = add_row(opdir_grid, "OPDIR Status", finding.get('opdir_status'), row)
+
+        # Synopsis
+        add_section(scrollable_frame, "Synopsis", hist_details.get('synopsis'))
+
+        # Description
+        add_section(scrollable_frame, "Description", hist_details.get('description'), is_resizable=True)
+
+        # Solution
+        add_section(scrollable_frame, "Solution", hist_details.get('solution'), is_resizable=True)
+
+        # Plugin Output (resizable) - this is the big one
+        add_section(scrollable_frame, "Plugin Output", hist_details.get('output'), is_resizable=True)
+
+        # See Also
+        add_section(scrollable_frame, "References (See Also)", hist_details.get('see_also'), is_resizable=True)
+
+        # Gap details if reappearances exist
+        gap_details = finding.get('gap_details')
+        if gap_details and gap_details != '' and not pd.isna(gap_details):
+            try:
+                import json
+                gaps = json.loads(gap_details)
+                if gaps:
+                    gap_text = "\n".join([
+                        f"Gap {i+1}: {g['gap_start']} to {g['gap_end']} ({g['days']} days)"
+                        for i, g in enumerate(gaps)
+                    ])
+                    add_section(scrollable_frame, "Reappearance Gaps", gap_text)
+            except:
+                pass
+
+        # Close button
+        btn_frame = ttk.Frame(modal)
+        btn_frame.pack(fill=tk.X, pady=10)
+
+        ttk.Button(btn_frame, text="Copy to Clipboard",
+                  command=lambda: self._copy_finding_to_clipboard(finding, hist_details)).pack(side=tk.LEFT, padx=20)
+        ttk.Button(btn_frame, text="Close", command=modal.destroy).pack(side=tk.RIGHT, padx=20)
+
+        # Clean up mousewheel binding when modal closes
+        def on_close():
+            canvas.unbind_all("<MouseWheel>")
+            modal.destroy()
+
+        modal.protocol("WM_DELETE_WINDOW", on_close)
+
+        # Focus modal
+        modal.focus_set()
+        modal.grab_set()
+
+    def _copy_finding_to_clipboard(self, finding, hist_details):
+        """Copy finding details to clipboard as formatted text."""
+        lines = []
+        lines.append("=" * 60)
+        lines.append(f"FINDING DETAILS: {finding.get('plugin_name', 'Unknown')}")
+        lines.append("=" * 60)
+        lines.append("")
+
+        lines.append("BASIC INFORMATION")
+        lines.append("-" * 40)
+        lines.append(f"Hostname:       {finding.get('hostname', '')}")
+        lines.append(f"IP Address:     {finding.get('ip_address', '')}")
+        lines.append(f"Plugin ID:      {finding.get('plugin_id', '')}")
+        lines.append(f"Severity:       {finding.get('severity_text', '')}")
+        lines.append(f"CVSS v3 Score:  {finding.get('cvss3_base_score', '')}")
+        lines.append(f"Status:         {finding.get('status', '')}")
+        lines.append("")
+
+        lines.append("TIMELINE")
+        lines.append("-" * 40)
+        lines.append(f"First Observed: {finding.get('first_seen', '')}")
+        lines.append(f"Last Seen:      {finding.get('last_seen', '')}")
+        lines.append(f"Days Open:      {finding.get('days_open', '')}")
+        lines.append("")
+
+        if finding.get('cves') or finding.get('iavx'):
+            lines.append("REFERENCES")
+            lines.append("-" * 40)
+            if finding.get('cves'):
+                lines.append(f"CVEs: {finding.get('cves')}")
+            if finding.get('iavx'):
+                lines.append(f"IAVX: {finding.get('iavx')}")
+            lines.append("")
+
+        if hist_details.get('synopsis'):
+            lines.append("SYNOPSIS")
+            lines.append("-" * 40)
+            lines.append(hist_details.get('synopsis'))
+            lines.append("")
+
+        if hist_details.get('description'):
+            lines.append("DESCRIPTION")
+            lines.append("-" * 40)
+            lines.append(hist_details.get('description'))
+            lines.append("")
+
+        if hist_details.get('solution'):
+            lines.append("SOLUTION")
+            lines.append("-" * 40)
+            lines.append(hist_details.get('solution'))
+            lines.append("")
+
+        if hist_details.get('output'):
+            lines.append("PLUGIN OUTPUT")
+            lines.append("-" * 40)
+            lines.append(hist_details.get('output'))
+            lines.append("")
+
+        text = "\n".join(lines)
+
+        # Copy to clipboard
+        self.window.clipboard_clear()
+        self.window.clipboard_append(text)
+
+        messagebox.showinfo("Copied", "Finding details copied to clipboard!")
 
     def _sort_host_tree(self, col):
         """Sort host treeview by column."""
