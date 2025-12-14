@@ -8,7 +8,7 @@ from tkinter import ttk, filedialog, messagebox
 import pandas as pd
 import numpy as np
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 
 # Matplotlib for charts (with Tk backend)
