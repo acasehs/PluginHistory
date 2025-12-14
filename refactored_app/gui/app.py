@@ -2528,17 +2528,18 @@ class NessusHistoryTrackerApp:
                 picker.destroy()
 
         def draw_calendar():
+            import calendar as cal_module  # Import at start to avoid scoping issues
+
             # Clear existing buttons
             for btn in day_buttons:
                 btn.destroy()
             day_buttons.clear()
 
             # Update month label
-            month_label.config(text=f"{calendar.month_name[cal_state['month']]} {cal_state['year']}")
+            month_label.config(text=f"{cal_module.month_name[cal_state['month']]} {cal_state['year']}")
 
             # Get calendar for month
-            import calendar
-            cal = calendar.Calendar(firstweekday=0)
+            cal = cal_module.Calendar(firstweekday=0)
             month_days = cal.monthdayscalendar(cal_state['year'], cal_state['month'])
 
             today = datetime.now().date()
@@ -2576,8 +2577,6 @@ class NessusHistoryTrackerApp:
                     btn.grid(row=row_idx + 1, column=col_idx, padx=1, pady=1)
                     day_buttons.append(btn)
 
-        # Import calendar module for this function
-        import calendar
         draw_calendar()
 
         # Quick select buttons
