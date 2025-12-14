@@ -11,6 +11,8 @@ import os
 class DatabaseBrowserDialog:
     """Dialog for browsing SQLite database structure and data."""
 
+    PAGE_SIZE = 100  # Rows per page
+
     def __init__(self, parent, db_path: Optional[str] = None):
         """
         Initialize the database browser dialog.
@@ -22,6 +24,12 @@ class DatabaseBrowserDialog:
         self.parent = parent
         self.db_path = db_path
         self.conn: Optional[sqlite3.Connection] = None
+
+        # Pagination state
+        self.current_table: Optional[str] = None
+        self.current_offset = 0
+        self.total_rows = 0
+        self.col_names: List[str] = []
 
         self.dialog = tk.Toplevel(parent)
         self.dialog.title("Database Browser")
@@ -100,14 +108,34 @@ class DatabaseBrowserDialog:
                                    font=('Consolas', 9), state=tk.DISABLED)
         self.schema_text.pack(fill=tk.X)
 
-        # Data preview
-        data_label_frame = ttk.Frame(right_frame)
-        data_label_frame.pack(fill=tk.X)
-        ttk.Label(data_label_frame, text="Data Preview (first 100 rows)",
+        # Data preview header with navigation
+        data_header_frame = ttk.Frame(right_frame)
+        data_header_frame.pack(fill=tk.X)
+
+        ttk.Label(data_header_frame, text="Data Preview",
                   font=('TkDefaultFont', 9, 'bold')).pack(side=tk.LEFT)
 
-        self.row_count_label = ttk.Label(data_label_frame, text="")
-        self.row_count_label.pack(side=tk.RIGHT)
+        # Navigation controls
+        nav_frame = ttk.Frame(data_header_frame)
+        nav_frame.pack(side=tk.RIGHT)
+
+        self.first_btn = ttk.Button(nav_frame, text="<<", width=3, command=self._go_first)
+        self.first_btn.pack(side=tk.LEFT, padx=1)
+
+        self.prev_btn = ttk.Button(nav_frame, text="<", width=3, command=self._go_prev)
+        self.prev_btn.pack(side=tk.LEFT, padx=1)
+
+        self.page_label = ttk.Label(nav_frame, text="", width=25)
+        self.page_label.pack(side=tk.LEFT, padx=5)
+
+        self.next_btn = ttk.Button(nav_frame, text=">", width=3, command=self._go_next)
+        self.next_btn.pack(side=tk.LEFT, padx=1)
+
+        self.last_btn = ttk.Button(nav_frame, text=">>", width=3, command=self._go_last)
+        self.last_btn.pack(side=tk.LEFT, padx=1)
+
+        self.row_count_label = ttk.Label(data_header_frame, text="")
+        self.row_count_label.pack(side=tk.RIGHT, padx=10)
 
         # Data treeview with scrollbars
         data_frame = ttk.Frame(right_frame)
@@ -136,6 +164,9 @@ class DatabaseBrowserDialog:
         # Close button
         ttk.Button(main_frame, text="Close", command=self.dialog.destroy).pack(pady=5)
 
+        # Initially disable nav buttons
+        self._update_nav_buttons()
+
     def _browse_database(self):
         """Browse for a database file."""
         filepath = filedialog.askopenfilename(
@@ -154,6 +185,8 @@ class DatabaseBrowserDialog:
             self.conn = sqlite3.connect(db_path)
             self.db_path = db_path
             self.db_label.config(text=os.path.basename(db_path))
+            self.current_table = None
+            self.current_offset = 0
             self._load_tables()
         except Exception as e:
             messagebox.showerror("Error", f"Failed to open database: {e}")
@@ -242,10 +275,13 @@ class DatabaseBrowserDialog:
 
         if 'table' in tags:
             table_name = self.tables_tree.item(item, 'text').strip()
-            self._show_table_data(table_name)
+            self.current_table = table_name
+            self.current_offset = 0
+            self._load_table_schema(table_name)
+            self._load_table_data()
 
-    def _show_table_data(self, table_name: str):
-        """Show data for selected table."""
+    def _load_table_schema(self, table_name: str):
+        """Load and display table schema."""
         if not self.conn:
             return
 
@@ -257,8 +293,10 @@ class DatabaseBrowserDialog:
 
         # Build schema text
         schema_lines = []
+        self.col_names = []
         for col in columns:
             col_id, col_name, col_type, not_null, default, pk = col
+            self.col_names.append(col_name)
             line = f"{col_name} {col_type}"
             if pk:
                 line += " PRIMARY KEY"
@@ -273,30 +311,33 @@ class DatabaseBrowserDialog:
         self.schema_text.insert('1.0', ", ".join(schema_lines))
         self.schema_text.config(state=tk.DISABLED)
 
-        # Get row count
+        # Get total row count
         cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
-        total_rows = cursor.fetchone()[0]
+        self.total_rows = cursor.fetchone()[0]
 
         self.table_info_label.config(text=f"Table: {table_name}")
-        self.row_count_label.config(text=f"Total: {total_rows:,} rows")
+        self.row_count_label.config(text=f"Total: {self.total_rows:,} rows")
 
-        # Clear data tree
+        # Configure data tree columns
         self.data_tree.delete(*self.data_tree.get_children())
-        self.data_tree['columns'] = []
+        self.data_tree['columns'] = self.col_names
 
-        if not columns:
-            return
-
-        # Configure columns
-        col_names = [col[1] for col in columns]
-        self.data_tree['columns'] = col_names
-
-        for col_name in col_names:
+        for col_name in self.col_names:
             self.data_tree.heading(col_name, text=col_name)
             self.data_tree.column(col_name, width=100, minwidth=50)
 
-        # Get data (first 100 rows)
-        cursor.execute(f"SELECT * FROM {table_name} LIMIT 100")
+    def _load_table_data(self):
+        """Load data for current page."""
+        if not self.conn or not self.current_table:
+            return
+
+        cursor = self.conn.cursor()
+
+        # Clear existing data
+        self.data_tree.delete(*self.data_tree.get_children())
+
+        # Get data for current page
+        cursor.execute(f"SELECT * FROM {self.current_table} LIMIT {self.PAGE_SIZE} OFFSET {self.current_offset}")
         rows = cursor.fetchall()
 
         for row in rows:
@@ -310,6 +351,58 @@ class DatabaseBrowserDialog:
                 else:
                     display_row.append(str(val))
             self.data_tree.insert('', 'end', values=display_row)
+
+        self._update_nav_buttons()
+
+    def _update_nav_buttons(self):
+        """Update navigation button states and page label."""
+        if not self.current_table or self.total_rows == 0:
+            self.first_btn.config(state=tk.DISABLED)
+            self.prev_btn.config(state=tk.DISABLED)
+            self.next_btn.config(state=tk.DISABLED)
+            self.last_btn.config(state=tk.DISABLED)
+            self.page_label.config(text="")
+            return
+
+        # Calculate current page info
+        current_page = (self.current_offset // self.PAGE_SIZE) + 1
+        total_pages = ((self.total_rows - 1) // self.PAGE_SIZE) + 1 if self.total_rows > 0 else 1
+        start_row = self.current_offset + 1
+        end_row = min(self.current_offset + self.PAGE_SIZE, self.total_rows)
+
+        self.page_label.config(text=f"Rows {start_row:,}-{end_row:,} (Page {current_page}/{total_pages})")
+
+        # Enable/disable buttons based on position
+        can_go_back = self.current_offset > 0
+        can_go_forward = self.current_offset + self.PAGE_SIZE < self.total_rows
+
+        self.first_btn.config(state=tk.NORMAL if can_go_back else tk.DISABLED)
+        self.prev_btn.config(state=tk.NORMAL if can_go_back else tk.DISABLED)
+        self.next_btn.config(state=tk.NORMAL if can_go_forward else tk.DISABLED)
+        self.last_btn.config(state=tk.NORMAL if can_go_forward else tk.DISABLED)
+
+    def _go_first(self):
+        """Go to first page."""
+        self.current_offset = 0
+        self._load_table_data()
+
+    def _go_prev(self):
+        """Go to previous page."""
+        self.current_offset = max(0, self.current_offset - self.PAGE_SIZE)
+        self._load_table_data()
+
+    def _go_next(self):
+        """Go to next page."""
+        new_offset = self.current_offset + self.PAGE_SIZE
+        if new_offset < self.total_rows:
+            self.current_offset = new_offset
+            self._load_table_data()
+
+    def _go_last(self):
+        """Go to last page."""
+        if self.total_rows > 0:
+            self.current_offset = ((self.total_rows - 1) // self.PAGE_SIZE) * self.PAGE_SIZE
+            self._load_table_data()
 
     def destroy(self):
         """Clean up and close dialog."""
