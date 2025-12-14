@@ -3368,13 +3368,13 @@ class NessusHistoryTrackerApp:
         """Create and display the finding detail popup modal."""
         modal = tk.Toplevel(self.window)
         modal.title(f"Finding Details: {finding.get('plugin_name', 'Unknown')[:50]}")
-        modal.geometry("900x700")
+        modal.geometry("900x900")
         modal.configure(bg=GUI_DARK_THEME['bg'])
         modal.transient(self.window)
 
         # Make resizable
         modal.resizable(True, True)
-        modal.minsize(700, 600)
+        modal.minsize(700, 900)
 
         # Main container with scrollbar
         main_frame = ttk.Frame(modal)
