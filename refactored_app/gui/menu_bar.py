@@ -56,6 +56,10 @@ class MenuBar:
             label="Load Existing Database...",
             command=self.app._select_existing_db
         )
+        file_menu.add_command(
+            label="Load Info Findings (Yearly)...",
+            command=self.app._show_load_info_dialog
+        )
 
         file_menu.add_separator()
 

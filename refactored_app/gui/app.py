@@ -41,7 +41,10 @@ from ..analysis.advanced_metrics import (
 from ..filters.filter_engine import FilterEngine, apply_filters
 from ..filters.hostname_parser import parse_hostname, HostType
 from ..filters.custom_lists import FilterListManager, FilterList
-from ..export.sqlite_export import export_to_sqlite
+from ..export.sqlite_export import (
+    export_to_sqlite, save_informational_findings_by_year,
+    list_available_info_databases, load_informational_findings
+)
 from ..export.excel_export import export_to_excel
 from ..export.json_export import export_to_json
 from ..settings import SettingsManager, UserSettings
@@ -112,6 +115,15 @@ class NessusHistoryTrackerApp:
         self.lifecycle_current_start = 0  # Starting index for pagination
         self.lifecycle_jump_to = tk.StringVar()
 
+        # Lifecycle display toggles (Active only by default)
+        self.lifecycle_show_active = tk.BooleanVar(value=True)
+        self.lifecycle_show_resolved = tk.BooleanVar(value=False)
+
+        # Host display toggles (Active only by default)
+        self.host_show_active = tk.BooleanVar(value=True)
+        self.host_show_missing = tk.BooleanVar(value=False)
+        self.host_missing_threshold = 6  # Missing from > 6 scans = "missing"
+
         # Chart pop-out redraw functions (populated after UI build)
         self.chart_redraw_funcs: Dict[str, Any] = {}
 
@@ -141,7 +153,15 @@ class NessusHistoryTrackerApp:
         style.configure('TEntry', fieldbackground=GUI_DARK_THEME['entry_bg'], foreground=GUI_DARK_THEME['fg'])
         style.configure('TCheckbutton', background=GUI_DARK_THEME['bg'], foreground=GUI_DARK_THEME['fg'])
         style.configure('TNotebook', background=GUI_DARK_THEME['bg'])
-        style.configure('TNotebook.Tab', background=GUI_DARK_THEME['button_bg'], foreground=GUI_DARK_THEME['fg'])
+        style.configure('TNotebook.Tab',
+                       background=GUI_DARK_THEME['text_bg'],  # Darker unselected tabs
+                       foreground=GUI_DARK_THEME['fg'],
+                       padding=[10, 5])
+        style.map('TNotebook.Tab',
+                 background=[('selected', GUI_DARK_THEME['button_bg']),  # Slightly lighter when selected
+                            ('active', GUI_DARK_THEME['entry_bg'])],     # Hover state
+                 foreground=[('selected', GUI_DARK_THEME['fg']),
+                            ('active', GUI_DARK_THEME['fg'])])
 
         # Combobox dark theme
         style.configure('TCombobox',
@@ -204,35 +224,40 @@ class NessusHistoryTrackerApp:
         file_frame = ttk.LabelFrame(parent, text="Data Sources", padding=5)
         file_frame.pack(fill=tk.X, pady=(0, 5))
 
+        # Load order hint
+        hint_label = ttk.Label(file_frame, text="Load order: DB → Archives → Plugins → OPDIR",
+                              font=('TkDefaultFont', 8), foreground='#888888')
+        hint_label.pack(anchor=tk.W, pady=(0, 3))
+
+        # Existing DB row (FIRST - recommended to load existing data first)
+        db_row = ttk.Frame(file_frame)
+        db_row.pack(fill=tk.X, pady=2)
+        ttk.Label(db_row, text="1. Existing:", width=11).pack(side=tk.LEFT)
+        self.existing_db_label = ttk.Label(db_row, text="None", foreground="gray", width=16, anchor=tk.W)
+        self.existing_db_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(db_row, text="...", command=self._select_existing_db, width=3).pack(side=tk.RIGHT)
+
         # Archives row
         archive_row = ttk.Frame(file_frame)
         archive_row.pack(fill=tk.X, pady=2)
-        ttk.Label(archive_row, text="Archives:", width=9).pack(side=tk.LEFT)
-        self.archives_label = ttk.Label(archive_row, text="None", foreground="gray", width=18, anchor=tk.W)
+        ttk.Label(archive_row, text="2. Archives:", width=11).pack(side=tk.LEFT)
+        self.archives_label = ttk.Label(archive_row, text="None", foreground="gray", width=16, anchor=tk.W)
         self.archives_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Button(archive_row, text="...", command=self._select_archives, width=3).pack(side=tk.RIGHT)
 
         # Plugins DB row
         plugins_row = ttk.Frame(file_frame)
         plugins_row.pack(fill=tk.X, pady=2)
-        ttk.Label(plugins_row, text="Plugins:", width=9).pack(side=tk.LEFT)
-        self.plugins_label = ttk.Label(plugins_row, text="None", foreground="gray", width=18, anchor=tk.W)
+        ttk.Label(plugins_row, text="3. Plugins:", width=11).pack(side=tk.LEFT)
+        self.plugins_label = ttk.Label(plugins_row, text="None", foreground="gray", width=16, anchor=tk.W)
         self.plugins_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Button(plugins_row, text="...", command=self._select_plugins_db, width=3).pack(side=tk.RIGHT)
-
-        # Existing DB row
-        db_row = ttk.Frame(file_frame)
-        db_row.pack(fill=tk.X, pady=2)
-        ttk.Label(db_row, text="Existing:", width=9).pack(side=tk.LEFT)
-        self.existing_db_label = ttk.Label(db_row, text="None", foreground="gray", width=18, anchor=tk.W)
-        self.existing_db_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Button(db_row, text="...", command=self._select_existing_db, width=3).pack(side=tk.RIGHT)
 
         # OPDIR row
         opdir_row = ttk.Frame(file_frame)
         opdir_row.pack(fill=tk.X, pady=2)
-        ttk.Label(opdir_row, text="OPDIR:", width=9).pack(side=tk.LEFT)
-        self.opdir_label = ttk.Label(opdir_row, text="None", foreground="gray", width=18, anchor=tk.W)
+        ttk.Label(opdir_row, text="4. OPDIR:", width=11).pack(side=tk.LEFT)
+        self.opdir_label = ttk.Label(opdir_row, text="None", foreground="gray", width=16, anchor=tk.W)
         self.opdir_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Button(opdir_row, text="...", command=self._select_opdir_file, width=3).pack(side=tk.RIGHT)
 
@@ -483,9 +508,18 @@ class NessusHistoryTrackerApp:
         nav_frame = ttk.Frame(lifecycle_frame)
         nav_frame.pack(fill=tk.X, padx=5, pady=5)
 
-        # Left side: count label
-        self.lifecycle_count_label = ttk.Label(nav_frame, text="Showing 0 findings")
-        self.lifecycle_count_label.pack(side=tk.LEFT)
+        # Left side: count label and status toggles
+        left_frame = ttk.Frame(nav_frame)
+        left_frame.pack(side=tk.LEFT)
+
+        self.lifecycle_count_label = ttk.Label(left_frame, text="Showing 0 findings")
+        self.lifecycle_count_label.pack(side=tk.LEFT, padx=(0, 15))
+
+        # Status toggle buttons
+        ttk.Checkbutton(left_frame, text="Active", variable=self.lifecycle_show_active,
+                       command=self._lifecycle_status_changed).pack(side=tk.LEFT, padx=2)
+        ttk.Checkbutton(left_frame, text="Resolved", variable=self.lifecycle_show_resolved,
+                       command=self._lifecycle_status_changed).pack(side=tk.LEFT, padx=2)
 
         # Right side: navigation controls
         nav_controls = ttk.Frame(nav_frame)
@@ -569,11 +603,18 @@ class NessusHistoryTrackerApp:
         self.notebook.add(host_frame, text="Hosts")
         self.host_frame = host_frame
 
-        # Info label
+        # Info and toggle frame
         info_frame = ttk.Frame(host_frame)
         info_frame.pack(fill=tk.X, padx=5, pady=5)
+
         self.host_count_label = ttk.Label(info_frame, text="Showing 0 hosts")
-        self.host_count_label.pack(side=tk.LEFT)
+        self.host_count_label.pack(side=tk.LEFT, padx=(0, 15))
+
+        # Host status toggle buttons
+        ttk.Checkbutton(info_frame, text="Active", variable=self.host_show_active,
+                       command=self._host_status_changed).pack(side=tk.LEFT, padx=2)
+        ttk.Checkbutton(info_frame, text="Missing", variable=self.host_show_missing,
+                       command=self._host_status_changed).pack(side=tk.LEFT, padx=2)
 
         # Treeview with scrollbars
         tree_frame = ttk.Frame(host_frame)
@@ -1260,6 +1301,9 @@ class NessusHistoryTrackerApp:
                 self.filter_start_date.set(start_date)
                 self.filter_end_date.set(end_date)
 
+            # Auto-save informational findings to yearly databases
+            self._auto_save_info_findings()
+
             self._log("Processing complete!")
             messagebox.showinfo("Success", "Data processed successfully!")
 
@@ -1372,6 +1416,145 @@ class NessusHistoryTrackerApp:
         self._update_lifecycle_tree()
         self._update_host_tree()
         self._update_all_visualizations()
+
+    def _auto_save_info_findings(self):
+        """Auto-save informational findings to yearly databases."""
+        if self.historical_df.empty:
+            return
+
+        # Check if there are any Info findings
+        info_count = len(self.historical_df[self.historical_df['severity_text'] == 'Info'])
+        if info_count == 0:
+            return
+
+        try:
+            # Get base directory for info databases
+            base_dir = os.path.join(os.path.expanduser('~'), '.nessus_tracker')
+
+            # Save info findings by year
+            results = save_informational_findings_by_year(self.historical_df, base_dir)
+
+            if results:
+                years_saved = ', '.join([str(y) for y in sorted(results.keys())])
+                total_saved = sum(results.values())
+                self._log(f"Auto-saved {total_saved} info findings to yearly databases: {years_saved}")
+        except Exception as e:
+            self._log(f"Warning: Could not auto-save info findings: {str(e)}")
+
+    def _show_load_info_dialog(self):
+        """Show dialog to load informational findings from yearly databases."""
+        base_dir = os.path.join(os.path.expanduser('~'), '.nessus_tracker')
+        available = list_available_info_databases(base_dir)
+
+        if not available:
+            messagebox.showinfo("No Info Databases",
+                              "No informational findings databases found.\n\n"
+                              "Info findings are auto-saved by calendar year when you process data.")
+            return
+
+        # Create selection dialog
+        dialog = tk.Toplevel(self.window)
+        dialog.title("Load Informational Findings")
+        dialog.geometry("500x400")
+        dialog.transient(self.window)
+        dialog.grab_set()
+
+        # Center on parent
+        dialog.update_idletasks()
+        x = self.window.winfo_x() + (self.window.winfo_width() - 500) // 2
+        y = self.window.winfo_y() + (self.window.winfo_height() - 400) // 2
+        dialog.geometry(f"+{x}+{y}")
+
+        main_frame = ttk.Frame(dialog, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(main_frame, text="Select years to load:").pack(anchor=tk.W)
+
+        # Listbox with checkboxes (using Treeview)
+        tree_frame = ttk.Frame(main_frame)
+        tree_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        tree = ttk.Treeview(tree_frame, columns=('year', 'count'), show='headings', height=10)
+        tree.heading('year', text='Year')
+        tree.heading('count', text='Findings Count')
+        tree.column('year', width=100)
+        tree.column('count', width=150)
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=tree.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        tree.config(yscrollcommand=scrollbar.set)
+
+        # Store paths for selection
+        db_paths = {}
+        for db in available:
+            item_id = tree.insert('', tk.END, values=(db['year'], f"{db['count']:,}"))
+            db_paths[item_id] = db['path']
+
+        # Enable multi-selection
+        tree.config(selectmode='extended')
+
+        # Select all by default
+        for item in tree.get_children():
+            tree.selection_add(item)
+
+        def load_selected():
+            selected_items = tree.selection()
+            if not selected_items:
+                messagebox.showwarning("No Selection", "Please select at least one year")
+                return
+
+            selected_paths = [db_paths[item] for item in selected_items]
+
+            # Load the info findings
+            info_df = load_informational_findings(selected_paths)
+
+            if info_df.empty:
+                messagebox.showwarning("No Data", "No informational findings found in selected databases")
+                dialog.destroy()
+                return
+
+            # Merge with existing data
+            if not self.historical_df.empty:
+                # Append and remove duplicates
+                combined = pd.concat([self.historical_df, info_df], ignore_index=True)
+                combined = combined.drop_duplicates(
+                    subset=['plugin_id', 'hostname', 'ip_address', 'scan_date'],
+                    keep='first'
+                )
+                new_count = len(combined) - len(self.historical_df)
+                self.historical_df = combined
+                self._log(f"Added {new_count} info findings from yearly databases")
+            else:
+                self.historical_df = info_df
+                self._log(f"Loaded {len(info_df)} info findings from yearly databases")
+
+            dialog.destroy()
+
+            # Refresh analysis if we have data
+            if not self.historical_df.empty:
+                self._refresh_analysis_internal()
+                messagebox.showinfo("Success",
+                                  f"Loaded informational findings.\n"
+                                  f"Total findings: {len(self.historical_df):,}")
+
+        # Buttons
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X, pady=(10, 0))
+
+        ttk.Button(button_frame, text="Load Selected", command=load_selected).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.RIGHT)
+
+        # Select All / Clear buttons
+        def select_all():
+            for item in tree.get_children():
+                tree.selection_add(item)
+
+        def clear_selection():
+            tree.selection_remove(*tree.get_children())
+
+        ttk.Button(button_frame, text="Select All", command=select_all).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Clear", command=clear_selection).pack(side=tk.LEFT)
 
     def _apply_filters(self):
         """Apply current filters and refresh display."""
@@ -1601,11 +1784,20 @@ class NessusHistoryTrackerApp:
         self.filter_host_list = []
         self._update_host_count_label()
 
-        # Reset date filters to data range if available
+        # Reset date filters to last 180 days (or data range if smaller)
         if not self.historical_df.empty and 'scan_date' in self.historical_df.columns:
             scan_dates = pd.to_datetime(self.historical_df['scan_date'])
-            self.filter_start_date.set(scan_dates.min().strftime('%Y-%m-%d'))
-            self.filter_end_date.set(scan_dates.max().strftime('%Y-%m-%d'))
+            data_max = scan_dates.max()
+            data_min = scan_dates.min()
+
+            # Default to last 180 days
+            default_start = data_max - pd.Timedelta(days=180)
+            # But don't go before actual data start
+            if default_start < data_min:
+                default_start = data_min
+
+            self.filter_start_date.set(default_start.strftime('%Y-%m-%d'))
+            self.filter_end_date.set(data_max.strftime('%Y-%m-%d'))
         else:
             self.filter_start_date.set("")
             self.filter_end_date.set("")
@@ -1933,6 +2125,22 @@ class NessusHistoryTrackerApp:
             self.lifecycle_count_label.config(text="Showing 0 findings")
             return
 
+        # Apply status filter based on toggles
+        show_active = self.lifecycle_show_active.get()
+        show_resolved = self.lifecycle_show_resolved.get()
+
+        if 'status' in df.columns:
+            if show_active and show_resolved:
+                # Show both
+                pass
+            elif show_active:
+                df = df[df['status'] == 'Active']
+            elif show_resolved:
+                df = df[df['status'] == 'Resolved']
+            else:
+                # Neither selected - show nothing
+                df = df.head(0)
+
         total = len(df)
         page_size = self.lifecycle_page_size.get()
         start = self.lifecycle_current_start
@@ -1956,7 +2164,7 @@ class NessusHistoryTrackerApp:
             values = (
                 row.get('hostname', ''),
                 row.get('plugin_id', ''),
-                str(plugin_name)[:50] if plugin_name else '',  # Truncate long names
+                str(plugin_name) if plugin_name else '',  # Full plugin name, no truncation
                 row.get('severity_text', row.get('severity', '')),
                 row.get('status', ''),
                 str(row.get('first_seen', ''))[:10],
@@ -1966,11 +2174,22 @@ class NessusHistoryTrackerApp:
             self.lifecycle_tree.insert('', tk.END, values=values)
 
         # Update count label with range info
+        status_filter = ""
+        if show_active and not show_resolved:
+            status_filter = " (Active only)"
+        elif show_resolved and not show_active:
+            status_filter = " (Resolved only)"
+
         if page_size == 0:
-            label_text = f"Showing all {total} findings"
+            label_text = f"Showing all {total} findings{status_filter}"
         else:
-            label_text = f"Showing {start + 1}-{end} of {total} findings"
+            label_text = f"Showing {start + 1}-{end} of {total} findings{status_filter}"
         self.lifecycle_count_label.config(text=label_text)
+
+    def _lifecycle_status_changed(self):
+        """Handle lifecycle status toggle change."""
+        self.lifecycle_current_start = 0  # Reset to first page
+        self._update_lifecycle_tree()
 
     def _update_host_tree(self):
         """Update host treeview with filtered data."""
@@ -1983,6 +2202,42 @@ class NessusHistoryTrackerApp:
         if df.empty:
             self.host_count_label.config(text="Showing 0 hosts")
             return
+
+        # Apply Active/Missing filter based on toggles
+        show_active = self.host_show_active.get()
+        show_missing = self.host_show_missing.get()
+
+        # Calculate total scans and missing threshold
+        total_scans = df['scan_count'].max() if 'scan_count' in df.columns else df.get('scans_present', pd.Series([0])).max()
+
+        # Determine host status: Active if present in recent scans, Missing if not
+        # Missing = not present in >6 of most recent scans
+        if 'status' not in df.columns:
+            # Create status based on presence in recent scans
+            df = df.copy()
+            if 'scans_missed' in df.columns:
+                scans_missed = df['scans_missed']
+            elif 'scan_count' in df.columns:
+                scans_missed = total_scans - df['scan_count']
+            else:
+                scans_missed = 0
+
+            df['_is_missing'] = scans_missed > self.host_missing_threshold
+            df['_scans_missed'] = scans_missed
+        else:
+            df = df.copy()
+            df['_is_missing'] = df['status'].str.lower() != 'active'
+            df['_scans_missed'] = total_scans - df.get('scan_count', 0)
+
+        # Filter based on toggles
+        if show_active and show_missing:
+            pass  # Show all
+        elif show_active:
+            df = df[~df['_is_missing']]
+        elif show_missing:
+            df = df[df['_is_missing']]
+        else:
+            df = df.head(0)  # Neither selected
 
         # Limit display
         display_df = df.head(1000)
@@ -2000,10 +2255,21 @@ class NessusHistoryTrackerApp:
                 elif h_lower.endswith('v'):
                     host_type = 'Virtual'
 
+            # Determine status display
+            is_missing = row.get('_is_missing', False)
+            scans_missed = row.get('_scans_missed', 0)
+            if is_missing:
+                if scans_missed <= self.host_missing_threshold:
+                    status = f"Missing ({int(scans_missed)} scans)"
+                else:
+                    status = "Missing"
+            else:
+                status = row.get('status', 'Active')
+
             values = (
                 hostname,
                 row.get('ip_address', ''),
-                row.get('status', ''),
+                status,
                 str(row.get('first_seen', ''))[:10],
                 str(row.get('last_seen', ''))[:10],
                 row.get('scan_count', row.get('scans_present', '')),
@@ -2014,8 +2280,20 @@ class NessusHistoryTrackerApp:
 
         total = len(df)
         shown = len(display_df)
-        label_text = f"Showing {shown} of {total} hosts" if shown < total else f"Showing {total} hosts"
+
+        # Status filter label
+        status_filter = ""
+        if show_active and not show_missing:
+            status_filter = " (Active only)"
+        elif show_missing and not show_active:
+            status_filter = " (Missing only)"
+
+        label_text = f"Showing {shown} of {total} hosts{status_filter}" if shown < total else f"Showing {total} hosts{status_filter}"
         self.host_count_label.config(text=label_text)
+
+    def _host_status_changed(self):
+        """Handle host status toggle change."""
+        self._update_host_tree()
 
     def _sort_lifecycle_tree(self, col):
         """Sort lifecycle treeview by column."""
@@ -2269,7 +2547,7 @@ class NessusHistoryTrackerApp:
 
         # Chart 1: CVSS distribution with severity-based coloring
         if 'cvss3_base_score' in df.columns:
-            cvss_scores = df['cvss3_base_score'].dropna()
+            cvss_scores = pd.to_numeric(df['cvss3_base_score'], errors='coerce').dropna()
             if len(cvss_scores) > 0:
                 # Create histogram with color-coded bins
                 n, bins, patches = self.risk_ax1.hist(cvss_scores, bins=10, edgecolor='white', alpha=0.8)
