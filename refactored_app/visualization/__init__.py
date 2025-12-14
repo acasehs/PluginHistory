@@ -36,6 +36,23 @@ from .export_visuals import (
     export_dashboard_to_pdf
 )
 
+from .package_impact_charts import (
+    create_package_impact_bar_chart,
+    create_cumulative_impact_chart,
+    create_severity_breakdown_chart,
+    create_host_distribution_chart,
+    create_version_consolidation_chart,
+    create_cve_coverage_chart,
+    create_impact_bubble_chart,
+    create_quick_wins_chart
+)
+
+from .remediation_dashboard import (
+    create_remediation_impact_dashboard,
+    create_executive_remediation_summary,
+    create_host_impact_dashboard
+)
+
 __all__ = [
     'create_severity_pie_chart',
     'create_timeline_chart',
@@ -61,5 +78,18 @@ __all__ = [
     'DATE_INTERVAL_WEEKLY',
     'DATE_INTERVAL_MONTHLY',
     'DATE_INTERVAL_QUARTERLY',
-    'DATE_INTERVAL_YEARLY'
+    'DATE_INTERVAL_YEARLY',
+    # Package impact charts
+    'create_package_impact_bar_chart',
+    'create_cumulative_impact_chart',
+    'create_severity_breakdown_chart',
+    'create_host_distribution_chart',
+    'create_version_consolidation_chart',
+    'create_cve_coverage_chart',
+    'create_impact_bubble_chart',
+    'create_quick_wins_chart',
+    # Remediation dashboards
+    'create_remediation_impact_dashboard',
+    'create_executive_remediation_summary',
+    'create_host_impact_dashboard'
 ]
