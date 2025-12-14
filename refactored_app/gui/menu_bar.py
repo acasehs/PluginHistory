@@ -186,6 +186,13 @@ class MenuBar:
         analysis_menu.add_separator()
 
         analysis_menu.add_command(
+            label="Re-enrich from Plugins...",
+            command=self.app._reenrich_from_plugins
+        )
+
+        analysis_menu.add_separator()
+
+        analysis_menu.add_command(
             label="Apply Filters",
             command=self.app._apply_filters
         )
