@@ -234,6 +234,7 @@ class ChartPopoutModal:
     - Matplotlib navigation toolbar (zoom, pan, home, save)
     - Larger fonts and labels for readability
     - Dark theme matching main app
+    - Filter options for Active/Resolved, Unique/Cumulative, and date filtering
 
     Usage:
         # In your chart update method, store the redraw function:
@@ -250,7 +251,8 @@ class ChartPopoutModal:
     ENTRY_BG = '#2d2d2d'
 
     def __init__(self, parent, title: str, redraw_func: Callable,
-                 width: int = 900, height: int = 700):
+                 width: int = 900, height: int = 700,
+                 description: str = "", app_ref=None):
         """
         Create a pop-out chart modal.
 
@@ -260,15 +262,19 @@ class ChartPopoutModal:
             redraw_func: Function that takes (fig, ax) and draws the chart
             width: Initial window width
             height: Initial window height
+            description: Chart description (shown in tooltip)
+            app_ref: Reference to main app for accessing data
         """
         self.parent = parent
         self.title = title
         self.redraw_func = redraw_func
+        self.description = description
+        self.app_ref = app_ref
         self.zoom_level = 1.0
 
         # Create modal window
         self.modal = tk.Toplevel(parent)
-        self.modal.title(f"📊 {title} (Pop-out)")
+        self.modal.title(f"{title} (Pop-out)")
         self.modal.geometry(f"{width}x{height}")
         self.modal.configure(bg=self.BG_COLOR)
         self.modal.transient(parent)
@@ -293,9 +299,12 @@ class ChartPopoutModal:
         control_frame = ttk.Frame(self.modal)
         control_frame.pack(fill=tk.X, padx=5, pady=5)
 
-        # Title label
-        ttk.Label(control_frame, text=self.title,
-                 font=('Arial', 12, 'bold')).pack(side=tk.LEFT, padx=5)
+        # Title label with tooltip for description
+        title_label = ttk.Label(control_frame, text=self.title,
+                               font=('Arial', 12, 'bold'))
+        title_label.pack(side=tk.LEFT, padx=5)
+        if self.description:
+            self._create_tooltip(title_label, self.description)
 
         # Zoom controls
         zoom_frame = ttk.Frame(control_frame)
@@ -320,6 +329,45 @@ class ChartPopoutModal:
         ttk.Checkbutton(control_frame, text="Labels",
                        variable=self.show_labels_var,
                        command=self._redraw).pack(side=tk.RIGHT, padx=10)
+
+        # Filter options frame
+        filter_frame = ttk.Frame(self.modal)
+        filter_frame.pack(fill=tk.X, padx=5, pady=2)
+
+        # Status filter (Active/Resolved/All)
+        ttk.Label(filter_frame, text="Status:").pack(side=tk.LEFT, padx=2)
+        self.status_var = tk.StringVar(value="All")
+        status_combo = ttk.Combobox(filter_frame, textvariable=self.status_var,
+                                    values=["All", "Active", "Resolved"],
+                                    state="readonly", width=10)
+        status_combo.pack(side=tk.LEFT, padx=2)
+
+        # Data mode (Unique/Cumulative)
+        ttk.Label(filter_frame, text="Mode:").pack(side=tk.LEFT, padx=(10, 2))
+        self.mode_var = tk.StringVar(value="Filtered")
+        mode_combo = ttk.Combobox(filter_frame, textvariable=self.mode_var,
+                                  values=["Filtered", "All Data", "Unique"],
+                                  state="readonly", width=10)
+        mode_combo.pack(side=tk.LEFT, padx=2)
+
+        # Date range filter
+        ttk.Label(filter_frame, text="From:").pack(side=tk.LEFT, padx=(10, 2))
+        self.date_from_var = tk.StringVar()
+        date_from_entry = ttk.Entry(filter_frame, textvariable=self.date_from_var,
+                                    width=12)
+        date_from_entry.pack(side=tk.LEFT, padx=2)
+        self._create_tooltip(date_from_entry, "Start date (YYYY-MM-DD)")
+
+        ttk.Label(filter_frame, text="To:").pack(side=tk.LEFT, padx=(5, 2))
+        self.date_to_var = tk.StringVar()
+        date_to_entry = ttk.Entry(filter_frame, textvariable=self.date_to_var,
+                                  width=12)
+        date_to_entry.pack(side=tk.LEFT, padx=2)
+        self._create_tooltip(date_to_entry, "End date (YYYY-MM-DD)")
+
+        # Apply button
+        ttk.Button(filter_frame, text="Apply",
+                  command=self._apply_filters).pack(side=tk.LEFT, padx=10)
 
         # Chart frame
         self.chart_frame = ttk.Frame(self.modal)
@@ -350,13 +398,22 @@ class ChartPopoutModal:
         self.ax.clear()
         self.ax.set_facecolor(self.ENTRY_BG)
 
-        # Call the redraw function with larger font settings
+        # Get filter settings
+        filter_settings = self.get_filter_settings()
+
+        # Call the redraw function with larger font settings and filters
         try:
             self.redraw_func(self.fig, self.ax, enlarged=True,
-                           show_labels=self.show_labels_var.get())
+                           show_labels=filter_settings['show_labels'],
+                           filter_settings=filter_settings)
         except TypeError:
-            # Fallback if redraw_func doesn't accept extra args
-            self.redraw_func(self.fig, self.ax)
+            # Fallback if redraw_func doesn't accept filter_settings
+            try:
+                self.redraw_func(self.fig, self.ax, enlarged=True,
+                               show_labels=filter_settings['show_labels'])
+            except TypeError:
+                # Fallback if redraw_func doesn't accept extra args
+                self.redraw_func(self.fig, self.ax)
 
         # Apply dark theme styling with larger fonts
         self._style_enlarged_chart()
@@ -428,6 +485,41 @@ class ChartPopoutModal:
         if event.widget == self.modal:
             self.fig.tight_layout()
             self.canvas.draw()
+
+    def _create_tooltip(self, widget, text: str):
+        """Create a tooltip that appears on hover."""
+        def show_tooltip(event):
+            tooltip = tk.Toplevel(widget)
+            tooltip.wm_overrideredirect(True)
+            tooltip.wm_geometry(f"+{event.x_root + 10}+{event.y_root + 10}")
+            tooltip.configure(bg='#ffffe0')
+            label = tk.Label(tooltip, text=text, bg='#ffffe0', fg='black',
+                           relief='solid', borderwidth=1, padx=5, pady=3,
+                           wraplength=300, justify='left')
+            label.pack()
+            widget._tooltip = tooltip
+
+        def hide_tooltip(event):
+            if hasattr(widget, '_tooltip') and widget._tooltip:
+                widget._tooltip.destroy()
+                widget._tooltip = None
+
+        widget.bind('<Enter>', show_tooltip)
+        widget.bind('<Leave>', hide_tooltip)
+
+    def _apply_filters(self):
+        """Apply filter settings and redraw chart."""
+        self._draw_chart()
+
+    def get_filter_settings(self) -> Dict[str, Any]:
+        """Get current filter settings for use in redraw function."""
+        return {
+            'status': self.status_var.get(),
+            'mode': self.mode_var.get(),
+            'date_from': self.date_from_var.get(),
+            'date_to': self.date_to_var.get(),
+            'show_labels': self.show_labels_var.get()
+        }
 
 
 def create_popout_redraw_func(original_update_func, ax_index: int = 0):
