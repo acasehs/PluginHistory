@@ -1599,14 +1599,8 @@ class NessusHistoryTrackerApp:
                 else:
                     self._log(f"Using {len(self.iavm_df)} IAVM notices from database")
 
-            # Set date filter defaults
-            if not self.historical_df.empty and 'scan_date' in self.historical_df.columns:
-                # Ensure scan_date is datetime for min/max operations
-                scan_dates = pd.to_datetime(self.historical_df['scan_date'])
-                start_date = scan_dates.min().strftime('%Y-%m-%d')
-                end_date = scan_dates.max().strftime('%Y-%m-%d')
-                self.filter_start_date.set(start_date)
-                self.filter_end_date.set(end_date)
+            # Apply default 180-day date filter
+            self._apply_default_date_filter()
 
             # Auto-save informational findings to yearly databases
             self._auto_save_info_findings()
