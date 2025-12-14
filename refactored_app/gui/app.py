@@ -140,11 +140,13 @@ class NessusHistoryTrackerApp:
 
         # Settings manager
         self.settings_manager = SettingsManager()
-        self._apply_settings_to_ui()
 
         # Build UI
         self._setup_styles()
         self._build_ui()
+
+        # Apply settings after UI is built
+        self._apply_settings_to_ui()
 
         # Add menu bar
         self.menu_bar = create_menu_bar(self)
