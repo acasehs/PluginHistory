@@ -8611,18 +8611,27 @@ class NessusHistoryTrackerApp:
         content_frame.pack(fill=tk.BOTH, expand=True)
         content_frame.columnconfigure(0, weight=1)
         content_frame.columnconfigure(1, weight=1)
+        content_frame.rowconfigure(0, weight=1)
 
         # Left side: Host list with checkboxes and dropdowns
         left_frame = ttk.LabelFrame(content_frame, text="All Hosts", padding=5)
         left_frame.grid(row=0, column=0, sticky='nsew', padx=(0, 5))
 
-        # Search filter
+        # Search filter row
         search_frame = ttk.Frame(left_frame)
         search_frame.pack(fill=tk.X, pady=(0, 5))
         ttk.Label(search_frame, text="Filter:").pack(side=tk.LEFT)
         search_var = tk.StringVar()
-        search_entry = ttk.Entry(search_frame, textvariable=search_var, width=20)
-        search_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        search_entry = ttk.Entry(search_frame, textvariable=search_var, width=15)
+        search_entry.pack(side=tk.LEFT, padx=5)
+
+        # Environment filter dropdown
+        ttk.Label(search_frame, text="Env:").pack(side=tk.LEFT, padx=(10, 0))
+        env_filter_var = tk.StringVar(value="All")
+        env_filter_options = ["All"] + env_options
+        env_filter_combo = ttk.Combobox(search_frame, textvariable=env_filter_var,
+                                        values=env_filter_options, state="readonly", width=12)
+        env_filter_combo.pack(side=tk.LEFT, padx=5)
 
         # Scrollable host list
         host_canvas = tk.Canvas(left_frame, bg=GUI_DARK_THEME['entry_bg'], highlightthickness=0)
@@ -8644,7 +8653,7 @@ class NessusHistoryTrackerApp:
                 return mapping_state['mappings'][h_lower]
             return self._get_environment_type(hostname)
 
-        def update_mapping(hostname, env):
+        def update_mapping(hostname, env, rebuild_list=True):
             """Update mapping for a hostname."""
             h_lower = hostname.lower()
             if env and env != 'Unknown':
@@ -8652,15 +8661,23 @@ class NessusHistoryTrackerApp:
             elif h_lower in mapping_state['mappings']:
                 del mapping_state['mappings'][h_lower]
             update_env_lists()
+            # Rebuild host list if filtering by environment (host may need to disappear)
+            if rebuild_list and env_filter_var.get() != "All":
+                build_host_list(search_var.get(), env_filter_var.get())
 
-        def build_host_list(filter_text=""):
+        def build_host_list(filter_text="", env_filter="All"):
             """Build/rebuild the host list with checkboxes."""
             # Clear existing widgets
             for widget in host_list_frame.winfo_children():
                 widget.destroy()
             host_widgets.clear()
 
+            # Filter by text
             filtered_hosts = [h for h in all_hostnames if filter_text.lower() in h.lower()]
+
+            # Filter by environment if specified
+            if env_filter and env_filter != "All":
+                filtered_hosts = [h for h in filtered_hosts if get_current_env(h) == env_filter]
 
             for i, hostname in enumerate(sorted(filtered_hosts)):
                 row_frame = ttk.Frame(host_list_frame)
@@ -8691,17 +8708,27 @@ class NessusHistoryTrackerApp:
         def apply_bulk_assignment():
             """Apply bulk environment assignment to selected hosts."""
             env = bulk_env_var.get()
+            changed_hosts = []
             for hostname, widgets in host_widgets.items():
                 if widgets['check'].get():
                     widgets['env'].set(env)
-                    update_mapping(hostname, env)
+                    # Update mapping without rebuilding list each time
+                    update_mapping(hostname, env, rebuild_list=False)
+                    changed_hosts.append(hostname)
+                    # Uncheck after assignment
+                    widgets['check'].set(False)
+
+            # Rebuild host list once at the end if we're filtering by environment
+            if changed_hosts and env_filter_var.get() != "All":
+                build_host_list(search_var.get(), env_filter_var.get())
 
         ttk.Button(bulk_frame, text="Apply", command=apply_bulk_assignment).pack(side=tk.LEFT, padx=5)
 
-        # Bind search filter
-        def on_search(*args):
-            build_host_list(search_var.get())
-        search_var.trace('w', on_search)
+        # Bind search and environment filter
+        def on_filter_change(*args):
+            build_host_list(search_var.get(), env_filter_var.get())
+        search_var.trace('w', on_filter_change)
+        env_filter_combo.bind('<<ComboboxSelected>>', on_filter_change)
 
         # Right side: Environment lists showing hosts in each environment
         right_frame = ttk.LabelFrame(content_frame, text="Hosts by Environment", padding=5)
