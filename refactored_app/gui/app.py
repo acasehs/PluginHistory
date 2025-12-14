@@ -33,6 +33,7 @@ from ..analysis.lifecycle import analyze_finding_lifecycle
 from ..analysis.host_presence import create_host_presence_analysis
 from ..analysis.scan_changes import analyze_scan_changes
 from ..analysis.opdir_compliance import load_opdir_mapping, enrich_with_opdir
+from ..analysis.iavm_parser import load_iavm_summaries, enrich_findings_with_iavm
 from ..analysis.advanced_metrics import (
     get_all_advanced_metrics, calculate_reopen_rate, calculate_coverage_metrics,
     calculate_remediation_rate, calculate_sla_breach_tracking, calculate_normalized_metrics,
@@ -71,6 +72,7 @@ class NessusHistoryTrackerApp:
         self.host_presence_df = pd.DataFrame()
         self.scan_changes_df = pd.DataFrame()
         self.opdir_df = pd.DataFrame()
+        self.iavm_df = pd.DataFrame()
         self.plugins_dict = None
 
         # Filtered data for display
@@ -82,6 +84,7 @@ class NessusHistoryTrackerApp:
         self.plugins_db_path: Optional[str] = None
         self.existing_db_path: Optional[str] = None
         self.opdir_file_path: Optional[str] = None
+        self.iavm_file_path: Optional[str] = None
 
         # Filter variables
         self.filter_include_info = tk.BooleanVar(value=True)
@@ -225,7 +228,7 @@ class NessusHistoryTrackerApp:
         file_frame.pack(fill=tk.X, pady=(0, 5))
 
         # Load order hint
-        hint_label = ttk.Label(file_frame, text="Load order: DB → Archives → Plugins → OPDIR",
+        hint_label = ttk.Label(file_frame, text="Load order: DB → Archives → Plugins → OPDIR → IAVM",
                               font=('TkDefaultFont', 8), foreground='#888888')
         hint_label.pack(anchor=tk.W, pady=(0, 3))
 
@@ -260,6 +263,14 @@ class NessusHistoryTrackerApp:
         self.opdir_label = ttk.Label(opdir_row, text="None", foreground="gray", width=16, anchor=tk.W)
         self.opdir_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Button(opdir_row, text="...", command=self._select_opdir_file, width=3).pack(side=tk.RIGHT)
+
+        # IAVM Notices row
+        iavm_row = ttk.Frame(file_frame)
+        iavm_row.pack(fill=tk.X, pady=2)
+        ttk.Label(iavm_row, text="5. IAVM:", width=11).pack(side=tk.LEFT)
+        self.iavm_label = ttk.Label(iavm_row, text="None", foreground="gray", width=16, anchor=tk.W)
+        self.iavm_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(iavm_row, text="...", command=self._select_iavm_file, width=3).pack(side=tk.RIGHT)
 
     def _build_filter_panel(self, parent):
         """Build filter controls section with compact inline layout."""
@@ -1266,6 +1277,16 @@ class NessusHistoryTrackerApp:
             self.opdir_label.config(text=self._truncate_filename(os.path.basename(path)), foreground="white")
             self._log(f"Selected OPDIR file: {os.path.basename(path)}")
 
+    def _select_iavm_file(self):
+        """Select IAVM Notice Summaries file."""
+        filetypes = (('Excel files', '*.xlsx;*.xls'), ('CSV files', '*.csv'), ('All files', '*.*'))
+        path = filedialog.askopenfilename(title='Select IAVM Notice Summaries', filetypes=filetypes)
+
+        if path:
+            self.iavm_file_path = path
+            self.iavm_label.config(text=self._truncate_filename(os.path.basename(path)), foreground="white")
+            self._log(f"Selected IAVM file: {os.path.basename(path)}")
+
     # Processing methods
     def _process_archives(self):
         """Process selected archives."""
@@ -1280,6 +1301,13 @@ class NessusHistoryTrackerApp:
             if self.opdir_file_path:
                 self._log("Loading OPDIR mapping...")
                 self.opdir_df = load_opdir_mapping(self.opdir_file_path)
+
+            # Load IAVM notices if available
+            if self.iavm_file_path:
+                self._log("Loading IAVM notice summaries...")
+                self.iavm_df = load_iavm_summaries(self.iavm_file_path)
+                if not self.iavm_df.empty:
+                    self._log(f"Loaded {len(self.iavm_df)} IAVM notices")
 
             # Load plugins database
             if self.plugins_db_path:
@@ -1400,6 +1428,11 @@ class NessusHistoryTrackerApp:
         if not self.opdir_df.empty:
             self.lifecycle_df = enrich_with_opdir(self.lifecycle_df, self.opdir_df)
             self._log("Applied OPDIR enrichment")
+
+        # Enrich with IAVM notices
+        if not self.iavm_df.empty:
+            self.lifecycle_df = enrich_findings_with_iavm(self.lifecycle_df, self.iavm_df)
+            self._log("Applied IAVM enrichment")
 
         # Host presence
         self.host_presence_df = create_host_presence_analysis(self.historical_df)
@@ -6991,7 +7024,8 @@ class NessusHistoryTrackerApp:
             success = export_to_sqlite(
                 self.historical_df, self.lifecycle_df,
                 self.host_presence_df, self.scan_changes_df,
-                self.opdir_df, filepath
+                self.opdir_df, filepath,
+                iavm_df=self.iavm_df
             )
 
             if success:

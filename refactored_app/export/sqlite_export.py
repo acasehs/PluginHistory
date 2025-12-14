@@ -16,7 +16,8 @@ def export_to_sqlite(historical_df: pd.DataFrame,
                     host_presence_df: pd.DataFrame,
                     scan_changes_df: pd.DataFrame,
                     opdir_df: pd.DataFrame,
-                    filepath: str) -> bool:
+                    filepath: str,
+                    iavm_df: pd.DataFrame = None) -> bool:
     """
     Export all analysis data to a SQLite database.
 
@@ -27,6 +28,7 @@ def export_to_sqlite(historical_df: pd.DataFrame,
         scan_changes_df: DataFrame from analyze_scan_changes
         opdir_df: DataFrame with OPDIR mapping data
         filepath: Output database file path
+        iavm_df: DataFrame with IAVM notice summaries (optional)
 
     Returns:
         True if successful
@@ -65,13 +67,20 @@ def export_to_sqlite(historical_df: pd.DataFrame,
             prepare_df(opdir_df).to_sql('opdir_mapping', conn, if_exists='replace', index=False)
             print(f"Exported {len(opdir_df)} rows to opdir_mapping")
 
+        # Export IAVM notices if provided
+        if iavm_df is not None and not iavm_df.empty:
+            prepare_df(iavm_df).to_sql('iavm_notices', conn, if_exists='replace', index=False)
+            print(f"Exported {len(iavm_df)} rows to iavm_notices")
+
         # Create summary table
         summary_data = {
             'export_timestamp': [datetime.now().strftime('%Y-%m-%d %H:%M:%S')],
             'total_historical_findings': [len(historical_df)],
             'total_lifecycle_records': [len(lifecycle_df)],
             'total_hosts': [len(host_presence_df)],
-            'total_scans': [len(scan_changes_df) + 1 if not scan_changes_df.empty else 0]
+            'total_scans': [len(scan_changes_df) + 1 if not scan_changes_df.empty else 0],
+            'total_opdir_entries': [len(opdir_df) if not opdir_df.empty else 0],
+            'total_iavm_notices': [len(iavm_df) if iavm_df is not None and not iavm_df.empty else 0]
         }
         pd.DataFrame(summary_data).to_sql('export_summary', conn, if_exists='replace', index=False)
 
@@ -186,7 +195,32 @@ def create_sqlite_database(filepath: str) -> sqlite3.Connection:
             opdir_subject TEXT,
             opdir_release_date TEXT,
             opdir_final_due_date TEXT,
-            opdir_days_to_remediate INTEGER
+            opdir_days_to_remediate INTEGER,
+            opdir_number_normalized TEXT,
+            opdir_year INTEGER
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS iavm_notices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            iavm_number TEXT,
+            iavm_number_normalized TEXT,
+            iavm_year INTEGER,
+            iavm_type TEXT,
+            stig_severity TEXT,
+            stig_severity_normalized TEXT,
+            stig_severity_value INTEGER,
+            state TEXT,
+            status TEXT,
+            supersedes TEXT,
+            superseded_by TEXT,
+            title TEXT,
+            last_saved TEXT,
+            released_date TEXT,
+            acknowledged_date TEXT,
+            first_report_date TEXT,
+            mitigation_date TEXT
         )
     ''')
 
