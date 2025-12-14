@@ -1896,10 +1896,39 @@ class NessusHistoryTrackerApp:
                 self._get_environment_type
             )
 
+        # Apply default 180-day filter after loading data
+        self._apply_default_date_filter()
+
         self._update_dashboard()
         self._update_lifecycle_tree()
         self._update_host_tree()
         self._update_all_visualizations()
+
+    def _apply_default_date_filter(self):
+        """Apply the default 180-day date filter after data loading."""
+        if self.historical_df.empty or 'scan_date' not in self.historical_df.columns:
+            return
+
+        scan_dates = pd.to_datetime(self.historical_df['scan_date'])
+        data_max = scan_dates.max()
+        data_min = scan_dates.min()
+
+        # Default to last 180 days
+        default_start = data_max - pd.Timedelta(days=180)
+        # But don't go before actual data start
+        if default_start < data_min:
+            default_start = data_min
+
+        self.filter_start_date.set(default_start.strftime('%Y-%m-%d'))
+        self.filter_end_date.set(data_max.strftime('%Y-%m-%d'))
+
+        # Calculate actual days in range
+        days_range = (data_max - default_start).days
+
+        self._log(f"Default filter applied: Last {days_range} days ({default_start.strftime('%Y-%m-%d')} to {data_max.strftime('%Y-%m-%d')})")
+
+        # Apply the filters to the data
+        self._apply_filters()
 
     def _auto_save_info_findings(self):
         """Auto-save informational findings to yearly databases."""
