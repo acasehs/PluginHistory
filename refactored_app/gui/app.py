@@ -1556,6 +1556,142 @@ class NessusHistoryTrackerApp:
             self._log(f"ERROR: {str(e)}")
             messagebox.showerror("Error", f"Refresh failed: {str(e)}")
 
+    def _reenrich_from_plugins(self):
+        """Re-enrich existing findings with data from plugins database."""
+        if self.historical_df.empty:
+            messagebox.showwarning("No Data", "Please load a database first")
+            return
+
+        if not self.plugins_dict:
+            # Try to load plugins if path is set
+            if self.plugins_db_path:
+                self._log("Loading plugins database...")
+                from ..core.plugin_database import load_plugins_database
+                self.plugins_dict = load_plugins_database(self.plugins_db_path)
+
+            if not self.plugins_dict:
+                messagebox.showwarning("No Plugins", "Please select a plugins database first")
+                return
+
+        self._log("Re-enriching findings from plugins database...")
+
+        # Track stats
+        enriched_count = 0
+        cve_added = 0
+        iavx_added = 0
+        total = len(self.historical_df)
+
+        # Enrichment mappings
+        enrichment_fields = [
+            'cves', 'iavx', 'description', 'solution', 'synopsis',
+            'cvss3_base_score', 'cvss2_base_score', 'risk_factor',
+            'stig_severity', 'exploit_ease', 'exploit_available',
+            'exploit_frameworks', 'cpe', 'vuln_publication_date',
+            'patch_publication_date', 'plugin_publication_date',
+            'plugin_modification_date'
+        ]
+
+        # Ensure columns exist
+        for col in enrichment_fields:
+            if col not in self.historical_df.columns:
+                self.historical_df[col] = ''
+
+        # Process each unique plugin_id
+        unique_plugins = self.historical_df['plugin_id'].unique()
+        self._log(f"Processing {len(unique_plugins)} unique plugins across {total} findings...")
+
+        for plugin_id in unique_plugins:
+            plugin_id_str = str(plugin_id)
+            if plugin_id_str not in self.plugins_dict:
+                continue
+
+            plugin_info = self.plugins_dict[plugin_id_str]
+            mask = self.historical_df['plugin_id'] == plugin_id
+
+            # Track if we're adding new data
+            had_cve = self.historical_df.loc[mask, 'cves'].fillna('').str.len().sum() > 0
+            had_iavx = self.historical_df.loc[mask, 'iavx'].fillna('').str.len().sum() > 0
+
+            # Enrich CVEs
+            if 'cves' in plugin_info and plugin_info['cves']:
+                current_cves = self.historical_df.loc[mask, 'cves'].fillna('')
+                for idx in self.historical_df[mask].index:
+                    existing = str(self.historical_df.at[idx, 'cves']) if pd.notna(self.historical_df.at[idx, 'cves']) else ''
+                    plugin_cves = str(plugin_info['cves'])
+                    if not existing:
+                        self.historical_df.at[idx, 'cves'] = plugin_cves
+                    else:
+                        # Merge CVEs
+                        existing_set = set(existing.split('\n'))
+                        plugin_set = set(plugin_cves.split('\n'))
+                        merged = sorted(existing_set | plugin_set)
+                        self.historical_df.at[idx, 'cves'] = '\n'.join(merged)
+
+            # Enrich IAVX
+            if 'iavx' in plugin_info and plugin_info['iavx']:
+                for idx in self.historical_df[mask].index:
+                    existing = str(self.historical_df.at[idx, 'iavx']) if pd.notna(self.historical_df.at[idx, 'iavx']) else ''
+                    plugin_iavx = str(plugin_info['iavx'])
+                    if not existing:
+                        self.historical_df.at[idx, 'iavx'] = plugin_iavx
+                    else:
+                        # Merge IAVX
+                        existing_set = set(existing.split('\n'))
+                        plugin_set = set(plugin_iavx.split('\n'))
+                        merged = sorted(existing_set | plugin_set)
+                        self.historical_df.at[idx, 'iavx'] = '\n'.join(merged)
+
+            # Enrich other fields (only if empty)
+            other_mappings = {
+                'description': 'description',
+                'solution': 'solution',
+                'synopsis': 'synopsis',
+                'cvss3_base_score': 'cvss3_base_score',
+                'cvss2_base_score': 'cvss_base_score',
+                'risk_factor': 'risk_factor',
+                'stig_severity': 'stig_severity',
+                'exploit_ease': 'exploit_ease',
+                'exploit_available': 'exploit_available',
+                'exploit_frameworks': 'exploit_frameworks',
+                'cpe': 'cpe',
+                'vuln_publication_date': 'vuln_publication_date',
+                'patch_publication_date': 'patch_publication_date',
+                'plugin_publication_date': 'plugin_publication_date',
+                'plugin_modification_date': 'plugin_modification_date',
+            }
+
+            for df_col, plugin_key in other_mappings.items():
+                if plugin_key in plugin_info and plugin_info[plugin_key]:
+                    # Only fill where empty
+                    empty_mask = mask & (self.historical_df[df_col].isna() | (self.historical_df[df_col] == ''))
+                    if empty_mask.any():
+                        self.historical_df.loc[empty_mask, df_col] = str(plugin_info[plugin_key])
+
+            # Check if we added new data
+            now_has_cve = self.historical_df.loc[mask, 'cves'].fillna('').str.len().sum() > 0
+            now_has_iavx = self.historical_df.loc[mask, 'iavx'].fillna('').str.len().sum() > 0
+
+            if not had_cve and now_has_cve:
+                cve_added += mask.sum()
+            if not had_iavx and now_has_iavx:
+                iavx_added += mask.sum()
+
+            enriched_count += 1
+
+        self._log(f"Enriched {enriched_count} plugins")
+        self._log(f"Added CVEs to {cve_added} findings")
+        self._log(f"Added IAVX to {iavx_added} findings")
+
+        # Refresh analysis to update lifecycle with new data
+        self._refresh_analysis_internal()
+
+        # Show summary
+        messagebox.showinfo("Re-enrichment Complete",
+            f"Enriched data from {enriched_count} plugins:\n"
+            f"• CVEs added to {cve_added} findings\n"
+            f"• IAVX added to {iavx_added} findings\n\n"
+            f"Analysis has been refreshed.")
+
     def _refresh_analysis_internal(self):
         """Internal analysis refresh."""
         self._log("Running analysis...")
