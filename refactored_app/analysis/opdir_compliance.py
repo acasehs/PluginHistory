@@ -376,18 +376,32 @@ def create_opdir_lookup(opdir_df: pd.DataFrame) -> Dict[str, Any]:
     if opdir_df.empty:
         return lookup
 
+    # Clean: drop unnamed columns (blank columns from Excel import)
+    unnamed_cols = [col for col in opdir_df.columns if 'unnamed' in str(col).lower()]
+    if unnamed_cols:
+        print(f"Dropping {len(unnamed_cols)} unnamed columns: {unnamed_cols}")
+        opdir_df = opdir_df.drop(columns=unnamed_cols)
+
     # Check if we need to parse legacy format (database loaded without iavab columns)
     needs_parsing = 'iavab_full' not in opdir_df.columns and 'iavab_suffix' not in opdir_df.columns
 
     # Debug: print available columns
     print(f"OPDIR columns: {list(opdir_df.columns)}")
 
+    # Debug: Check what values are in potential IAVA/B columns
+    candidate_cols = ['iavab', 'iava_b', 'iava/b', 'iava', 'iavb', 'opdir_number_normalized']
+    for col in candidate_cols:
+        if col in opdir_df.columns:
+            non_empty = opdir_df[col].notna() & (opdir_df[col].astype(str).str.strip() != '') & (opdir_df[col].astype(str).str.lower() != 'nan')
+            print(f"  Column '{col}': {non_empty.sum()} non-empty values out of {len(opdir_df)}")
+
+    rows_processed = 0
+    rows_skipped = 0
+
     for _, row in opdir_df.iterrows():
         if needs_parsing:
             # Legacy format - try to get IAVA/B from various possible columns
             iavab_raw = None
-            # Try multiple possible column names for IAVA/B data
-            candidate_cols = ['iavab', 'iava_b', 'iava/b', 'iava', 'iavb', 'opdir_number_normalized']
             for col in candidate_cols:
                 if col in row.index and pd.notna(row.get(col)) and row.get(col):
                     val = str(row.get(col)).strip()
@@ -397,7 +411,9 @@ def create_opdir_lookup(opdir_df: pd.DataFrame) -> Dict[str, Any]:
 
             if not iavab_raw:
                 # No IAVA/B found in legacy columns - skip this row
+                rows_skipped += 1
                 continue
+            rows_processed += 1
 
             # Parse the IAVA/B reference
             opdir_year = row.get('opdir_year')
@@ -429,6 +445,9 @@ def create_opdir_lookup(opdir_df: pd.DataFrame) -> Dict[str, Any]:
         if key_suffix not in lookup['by_suffix']:
             lookup['by_suffix'][key_suffix] = []
         lookup['by_suffix'][key_suffix].append(row_dict)
+
+    if needs_parsing:
+        print(f"OPDIR parsing: {rows_processed} rows processed, {rows_skipped} rows skipped (no IAVA/B data)")
 
     print(f"Created lookup: {len(lookup['by_full'])} full entries, {len(lookup['by_suffix'])} suffix entries")
 
