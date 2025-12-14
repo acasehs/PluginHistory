@@ -252,6 +252,197 @@ def load_from_sqlite(filepath: str) -> Dict[str, pd.DataFrame]:
     return tables
 
 
+def get_info_findings_db_path(base_dir: str, year: int) -> str:
+    """
+    Get the path for an informational findings database for a specific year.
+
+    Args:
+        base_dir: Base directory for storing databases
+        year: Calendar year
+
+    Returns:
+        Path to the yearly info database
+    """
+    import os
+    info_db_dir = os.path.join(base_dir, 'info_findings')
+    os.makedirs(info_db_dir, exist_ok=True)
+    return os.path.join(info_db_dir, f'info_findings_{year}.db')
+
+
+def save_informational_findings_by_year(historical_df: pd.DataFrame, base_dir: str) -> Dict[int, int]:
+    """
+    Save informational findings to separate yearly databases.
+
+    Automatically separates Info severity findings by calendar year and saves
+    each year to its own database file.
+
+    Args:
+        historical_df: DataFrame with all historical findings
+        base_dir: Base directory for storing databases
+
+    Returns:
+        Dictionary mapping year to count of findings saved
+    """
+    if historical_df.empty:
+        return {}
+
+    # Filter to only informational findings
+    info_df = historical_df[historical_df['severity_text'] == 'Info'].copy()
+
+    if info_df.empty:
+        return {}
+
+    # Ensure scan_date is datetime
+    info_df['scan_date'] = pd.to_datetime(info_df['scan_date'])
+
+    # Group by year
+    info_df['year'] = info_df['scan_date'].dt.year
+
+    results = {}
+
+    for year, year_df in info_df.groupby('year'):
+        db_path = get_info_findings_db_path(base_dir, int(year))
+
+        try:
+            conn = sqlite3.connect(db_path)
+
+            # Prepare DataFrame for SQLite
+            save_df = year_df.drop(columns=['year']).copy()
+            for col in save_df.columns:
+                if pd.api.types.is_datetime64_any_dtype(save_df[col]):
+                    save_df[col] = save_df[col].dt.strftime('%Y-%m-%d %H:%M:%S')
+
+            # Append to existing data (don't replace)
+            existing_count = 0
+            try:
+                existing = pd.read_sql_query("SELECT COUNT(*) as cnt FROM info_findings", conn)
+                existing_count = existing['cnt'].iloc[0]
+            except:
+                pass
+
+            save_df.to_sql('info_findings', conn, if_exists='append', index=False)
+
+            # Remove duplicates by keeping unique combinations
+            conn.execute('''
+                DELETE FROM info_findings
+                WHERE rowid NOT IN (
+                    SELECT MIN(rowid) FROM info_findings
+                    GROUP BY plugin_id, hostname, ip_address, scan_date
+                )
+            ''')
+
+            # Update summary
+            final_count = pd.read_sql_query("SELECT COUNT(*) as cnt FROM info_findings", conn)['cnt'].iloc[0]
+
+            summary_data = {
+                'last_updated': [datetime.now().strftime('%Y-%m-%d %H:%M:%S')],
+                'year': [int(year)],
+                'total_findings': [final_count]
+            }
+            pd.DataFrame(summary_data).to_sql('summary', conn, if_exists='replace', index=False)
+
+            # Add indexes
+            try:
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_info_plugin_id ON info_findings(plugin_id)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_info_hostname ON info_findings(hostname)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_info_scan_date ON info_findings(scan_date)")
+            except:
+                pass
+
+            conn.commit()
+            conn.close()
+
+            new_added = final_count - existing_count
+            results[int(year)] = new_added
+            print(f"Saved {new_added} new info findings to {year} database (total: {final_count})")
+
+        except Exception as e:
+            print(f"Error saving info findings for year {year}: {e}")
+            import traceback
+            traceback.print_exc()
+
+    return results
+
+
+def list_available_info_databases(base_dir: str) -> List[Dict[str, Any]]:
+    """
+    List all available informational findings databases.
+
+    Args:
+        base_dir: Base directory for databases
+
+    Returns:
+        List of dictionaries with year, path, and count
+    """
+    import os
+    info_db_dir = os.path.join(base_dir, 'info_findings')
+
+    if not os.path.exists(info_db_dir):
+        return []
+
+    databases = []
+
+    for filename in os.listdir(info_db_dir):
+        if filename.startswith('info_findings_') and filename.endswith('.db'):
+            try:
+                year = int(filename.replace('info_findings_', '').replace('.db', ''))
+                filepath = os.path.join(info_db_dir, filename)
+
+                # Get count from database
+                conn = sqlite3.connect(filepath)
+                try:
+                    count_df = pd.read_sql_query("SELECT COUNT(*) as cnt FROM info_findings", conn)
+                    count = count_df['cnt'].iloc[0]
+                except:
+                    count = 0
+                conn.close()
+
+                databases.append({
+                    'year': year,
+                    'path': filepath,
+                    'count': count,
+                    'filename': filename
+                })
+            except:
+                continue
+
+    # Sort by year descending
+    databases.sort(key=lambda x: x['year'], reverse=True)
+    return databases
+
+
+def load_informational_findings(filepaths: List[str]) -> pd.DataFrame:
+    """
+    Load informational findings from one or more yearly databases.
+
+    Args:
+        filepaths: List of database file paths
+
+    Returns:
+        Combined DataFrame of informational findings
+    """
+    all_dfs = []
+
+    for filepath in filepaths:
+        try:
+            conn = sqlite3.connect(filepath)
+            df = pd.read_sql_query("SELECT * FROM info_findings", conn)
+            df['scan_date'] = pd.to_datetime(df['scan_date'], errors='coerce')
+            all_dfs.append(df)
+            conn.close()
+            print(f"Loaded {len(df)} info findings from {filepath}")
+        except Exception as e:
+            print(f"Error loading info findings from {filepath}: {e}")
+
+    if all_dfs:
+        combined = pd.concat(all_dfs, ignore_index=True)
+        # Remove duplicates
+        combined = combined.drop_duplicates(subset=['plugin_id', 'hostname', 'ip_address', 'scan_date'])
+        return combined
+
+    return pd.DataFrame()
+
+
 def query_database(filepath: str, query: str) -> pd.DataFrame:
     """
     Execute a custom SQL query on the database.
