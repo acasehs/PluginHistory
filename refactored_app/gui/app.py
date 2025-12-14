@@ -285,26 +285,30 @@ class NessusHistoryTrackerApp:
         ttk.Button(iavm_row, text="...", command=self._select_iavm_file, width=3).pack(side=tk.RIGHT)
 
     def _build_filter_panel(self, parent):
-        """Build filter controls section with compact inline layout."""
+        """Build filter controls section with 2-column layout."""
         filter_frame = ttk.LabelFrame(parent, text="Filters", padding=5)
         filter_frame.pack(fill=tk.X, pady=(0, 5))
 
-        # Row 1: Include Info checkbox
-        ttk.Checkbutton(filter_frame, text="Include Info Severity",
-                       variable=self.filter_include_info).pack(anchor=tk.W)
+        # Calculate default 180-day date range
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=self.settings_manager.settings.default_date_range_days)
+        self.filter_start_date.set(start_date.strftime('%Y-%m-%d'))
+        self.filter_end_date.set(end_date.strftime('%Y-%m-%d'))
 
-        # Row 2: Date Range (inline)
+        # Row 1: Date Range (full width)
         date_row = ttk.Frame(filter_frame)
         date_row.pack(fill=tk.X, pady=3)
-        ttk.Label(date_row, text="Dates:", width=8).pack(side=tk.LEFT)
-        ttk.Entry(date_row, textvariable=self.filter_start_date, width=10).pack(side=tk.LEFT, padx=1)
-        ttk.Label(date_row, text="-").pack(side=tk.LEFT)
-        ttk.Entry(date_row, textvariable=self.filter_end_date, width=10).pack(side=tk.LEFT, padx=1)
+        date_label = tk.Label(date_row, text="Dates:", width=8, bg='#1a3a5c', fg='white', anchor='w')
+        date_label.pack(side=tk.LEFT)
+        ttk.Entry(date_row, textvariable=self.filter_start_date, width=12).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
+        ttk.Label(date_row, text="to").pack(side=tk.LEFT, padx=2)
+        ttk.Entry(date_row, textvariable=self.filter_end_date, width=12).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
 
-        # Row 3: Severity toggle buttons with colored highlights
+        # Row 2: Severity toggle buttons (full width)
         sev_row = ttk.Frame(filter_frame)
         sev_row.pack(fill=tk.X, pady=3)
-        ttk.Label(sev_row, text="Severity:", width=8).pack(side=tk.LEFT)
+        sev_label = tk.Label(sev_row, text="Severity:", width=8, bg='#1a3a5c', fg='white', anchor='w')
+        sev_label.pack(side=tk.LEFT)
 
         # Severity colors (from settings or defaults)
         sev_colors = self.settings_manager.settings.get_severity_colors()
@@ -329,66 +333,104 @@ class NessusHistoryTrackerApp:
         ttk.Button(sev_row, text="None", width=4,
                   command=self._select_no_severities).pack(side=tk.LEFT, padx=1)
 
-        # Row 3b: Status filter
-        status_row = ttk.Frame(filter_frame)
-        status_row.pack(fill=tk.X, pady=3)
-        ttk.Label(status_row, text="Status:", width=8).pack(side=tk.LEFT)
+        # Two-column layout frame
+        two_col_frame = ttk.Frame(filter_frame)
+        two_col_frame.pack(fill=tk.X, pady=3)
+        two_col_frame.columnconfigure(0, weight=1)
+        two_col_frame.columnconfigure(1, weight=1)
+
+        # Left column
+        left_col = ttk.Frame(two_col_frame)
+        left_col.grid(row=0, column=0, sticky='ew', padx=(0, 5))
+
+        # Right column
+        right_col = ttk.Frame(two_col_frame)
+        right_col.grid(row=0, column=1, sticky='ew', padx=(5, 0))
+
+        # Left Column Row 1: Status filter
+        status_row = ttk.Frame(left_col)
+        status_row.pack(fill=tk.X, pady=2)
+        status_label = tk.Label(status_row, text="Status:", width=8, bg='#1a3a5c', fg='white', anchor='w')
+        status_label.pack(side=tk.LEFT)
         ttk.Combobox(status_row, textvariable=self.filter_status,
-                    values=["All", "Active", "Resolved"], state="readonly", width=10).pack(side=tk.LEFT, padx=1)
+                    values=["All", "Active", "Resolved"], state="readonly", width=10).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
 
-        # Row 4: Host Type + Env Type (inline)
-        host_row = ttk.Frame(filter_frame)
-        host_row.pack(fill=tk.X, pady=3)
-        ttk.Label(host_row, text="Type:", width=8).pack(side=tk.LEFT)
-        ttk.Combobox(host_row, textvariable=self.filter_host_type,
-                    values=["All", "Physical", "Virtual", "ILOM"], state="readonly", width=8).pack(side=tk.LEFT, padx=1)
-        ttk.Label(host_row, text="Env:").pack(side=tk.LEFT, padx=(5, 0))
-        ttk.Combobox(host_row, textvariable=self.filter_env_type,
-                    values=["All", "Production", "PSS", "Shared"], state="readonly", width=9).pack(side=tk.LEFT, padx=1)
+        # Right Column Row 1: Host Type
+        type_row = ttk.Frame(right_col)
+        type_row.pack(fill=tk.X, pady=2)
+        type_label = tk.Label(type_row, text="Type:", width=8, bg='#1a3a5c', fg='white', anchor='w')
+        type_label.pack(side=tk.LEFT)
+        ttk.Combobox(type_row, textvariable=self.filter_host_type,
+                    values=["All", "Physical", "Virtual", "ILOM"], state="readonly", width=10).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
 
-        # Row 5: Location + Host Pattern (inline)
-        loc_row = ttk.Frame(filter_frame)
-        loc_row.pack(fill=tk.X, pady=3)
-        ttk.Label(loc_row, text="Loc:", width=8).pack(side=tk.LEFT)
-        ttk.Entry(loc_row, textvariable=self.filter_location, width=6).pack(side=tk.LEFT, padx=1)
-        ttk.Label(loc_row, text="Host:").pack(side=tk.LEFT, padx=(5, 0))
-        ttk.Entry(loc_row, textvariable=self.filter_host, width=10).pack(side=tk.LEFT, padx=1)
-        ttk.Button(loc_row, text="...", command=self._show_host_selector, width=2).pack(side=tk.LEFT, padx=1)
-        self.host_count_label = ttk.Label(loc_row, text="", foreground="cyan", width=6)
-        self.host_count_label.pack(side=tk.LEFT)
+        # Left Column Row 2: Environment
+        env_row = ttk.Frame(left_col)
+        env_row.pack(fill=tk.X, pady=2)
+        env_label = tk.Label(env_row, text="Env:", width=8, bg='#1a3a5c', fg='white', anchor='w')
+        env_label.pack(side=tk.LEFT)
+        # Get environment types from settings
+        env_types = ["All"] + self.settings_manager.settings.environment_types
+        self.env_combo = ttk.Combobox(env_row, textvariable=self.filter_env_type,
+                    values=env_types, state="readonly", width=10)
+        self.env_combo.pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
+        ttk.Button(env_row, text="⚙", command=self._show_environment_config, width=2).pack(side=tk.LEFT, padx=1)
 
-        # Row 6: CVSS Range (inline)
-        cvss_row = ttk.Frame(filter_frame)
-        cvss_row.pack(fill=tk.X, pady=3)
-        ttk.Label(cvss_row, text="CVSS:", width=8).pack(side=tk.LEFT)
+        # Right Column Row 2: Location
+        loc_row = ttk.Frame(right_col)
+        loc_row.pack(fill=tk.X, pady=2)
+        loc_label = tk.Label(loc_row, text="Loc:", width=8, bg='#1a3a5c', fg='white', anchor='w')
+        loc_label.pack(side=tk.LEFT)
+        ttk.Entry(loc_row, textvariable=self.filter_location, width=10).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
+
+        # Left Column Row 3: Host Pattern
+        host_row = ttk.Frame(left_col)
+        host_row.pack(fill=tk.X, pady=2)
+        host_label = tk.Label(host_row, text="Host:", width=8, bg='#1a3a5c', fg='white', anchor='w')
+        host_label.pack(side=tk.LEFT)
+        ttk.Entry(host_row, textvariable=self.filter_host, width=10).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
+        ttk.Button(host_row, text="...", command=self._show_host_selector, width=2).pack(side=tk.LEFT, padx=1)
+
+        # Right Column Row 3: CVSS Range
+        cvss_row = ttk.Frame(right_col)
+        cvss_row.pack(fill=tk.X, pady=2)
+        cvss_label = tk.Label(cvss_row, text="CVSS:", width=8, bg='#1a3a5c', fg='white', anchor='w')
+        cvss_label.pack(side=tk.LEFT)
         ttk.Entry(cvss_row, textvariable=self.filter_cvss_min, width=5).pack(side=tk.LEFT, padx=1)
         ttk.Label(cvss_row, text="-").pack(side=tk.LEFT)
-        ttk.Entry(cvss_row, textvariable=self.filter_cvss_max, width=5).pack(side=tk.LEFT, padx=1)
+        ttk.Entry(cvss_row, textvariable=self.filter_cvss_max, width=5).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
 
-        # Row 7: OPDIR Status filter
-        opdir_row = ttk.Frame(filter_frame)
-        opdir_row.pack(fill=tk.X, pady=3)
-        ttk.Label(opdir_row, text="OPDIR:", width=8).pack(side=tk.LEFT)
+        # Left Column Row 4: OPDIR Status
+        opdir_row = ttk.Frame(left_col)
+        opdir_row.pack(fill=tk.X, pady=2)
+        opdir_label = tk.Label(opdir_row, text="OPDIR:", width=8, bg='#1a3a5c', fg='white', anchor='w')
+        opdir_label.pack(side=tk.LEFT)
         opdir_options = ["All", "Overdue", "Due Soon", "On Track", "OPDIR Mapped", "No OPDIR"]
         ttk.Combobox(opdir_row, textvariable=self.filter_opdir_status,
-                    values=opdir_options, state="readonly", width=12).pack(side=tk.LEFT, padx=1)
+                    values=opdir_options, state="readonly", width=10).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
 
-        # Row 8: CVE and IAVX filters
-        vuln_row = ttk.Frame(filter_frame)
-        vuln_row.pack(fill=tk.X, pady=3)
-        ttk.Label(vuln_row, text="CVE:", width=8).pack(side=tk.LEFT)
-        ttk.Entry(vuln_row, textvariable=self.filter_cve, width=15).pack(side=tk.LEFT, padx=1)
+        # Right Column Row 4: CVE filter
+        cve_row = ttk.Frame(right_col)
+        cve_row.pack(fill=tk.X, pady=2)
+        cve_label = tk.Label(cve_row, text="CVE:", width=8, bg='#1a3a5c', fg='white', anchor='w')
+        cve_label.pack(side=tk.LEFT)
+        ttk.Entry(cve_row, textvariable=self.filter_cve, width=15).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
 
+        # Full width: IAVX filter
         iavx_row = ttk.Frame(filter_frame)
-        iavx_row.pack(fill=tk.X, pady=3)
-        ttk.Label(iavx_row, text="IAV:", width=8).pack(side=tk.LEFT)
-        ttk.Entry(iavx_row, textvariable=self.filter_iavx, width=15).pack(side=tk.LEFT, padx=1)
+        iavx_row.pack(fill=tk.X, pady=2)
+        iavx_label = tk.Label(iavx_row, text="IAV:", width=8, bg='#1a3a5c', fg='white', anchor='w')
+        iavx_label.pack(side=tk.LEFT)
+        ttk.Entry(iavx_row, textvariable=self.filter_iavx, width=15).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
 
-        # Row 9: Apply and Reset buttons
+        # Host count display
+        self.host_count_label = ttk.Label(filter_frame, text="", foreground="cyan")
+        self.host_count_label.pack(anchor=tk.W, pady=2)
+
+        # Apply and Reset buttons
         btn_row = ttk.Frame(filter_frame)
         btn_row.pack(fill=tk.X, pady=3)
-        ttk.Button(btn_row, text="Apply", command=self._apply_filters, width=10).pack(side=tk.LEFT, padx=1)
-        ttk.Button(btn_row, text="Reset", command=self._reset_filters, width=10).pack(side=tk.LEFT, padx=1)
+        ttk.Button(btn_row, text="Apply", command=self._apply_filters, width=10).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+        ttk.Button(btn_row, text="Reset", command=self._reset_filters, width=10).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
 
     def _build_action_buttons(self, parent):
         """Build action buttons section with compact 2-per-row layout."""
@@ -634,6 +676,9 @@ class NessusHistoryTrackerApp:
         hsb.grid(row=1, column=0, sticky='ew')
         tree_frame.grid_rowconfigure(0, weight=1)
         tree_frame.grid_columnconfigure(0, weight=1)
+
+        # Bind double-click to show finding details
+        self.lifecycle_tree.bind('<Double-1>', self._show_finding_detail)
 
         # Configure treeview colors for dark theme
         style = ttk.Style()
@@ -1322,9 +1367,46 @@ class NessusHistoryTrackerApp:
         # Default to monthly
         return DATE_INTERVAL_MONTHLY
 
+    def _get_chart_data(self, data_type: str = 'lifecycle') -> pd.DataFrame:
+        """
+        Get the appropriate data for charts, ensuring filtered data is used when available.
+
+        Args:
+            data_type: Type of data to get - 'lifecycle', 'historical', 'scan_changes', 'host'
+
+        Returns:
+            DataFrame with the requested data
+        """
+        if data_type == 'lifecycle':
+            if hasattr(self, 'filtered_lifecycle_df') and not self.filtered_lifecycle_df.empty:
+                return self.filtered_lifecycle_df
+            elif hasattr(self, 'lifecycle_df') and not self.lifecycle_df.empty:
+                return self.lifecycle_df
+        elif data_type == 'historical':
+            if hasattr(self, 'filtered_historical_df') and not self.filtered_historical_df.empty:
+                return self.filtered_historical_df
+            elif hasattr(self, 'historical_df') and not self.historical_df.empty:
+                return self.historical_df
+        elif data_type == 'scan_changes':
+            if hasattr(self, 'filtered_scan_changes_df') and not self.filtered_scan_changes_df.empty:
+                return self.filtered_scan_changes_df
+            elif hasattr(self, 'scan_changes_df') and not self.scan_changes_df.empty:
+                return self.scan_changes_df
+        elif data_type == 'host':
+            if hasattr(self, 'filtered_host_df') and not self.filtered_host_df.empty:
+                return self.filtered_host_df
+            elif hasattr(self, 'host_presence_df') and not self.host_presence_df.empty:
+                return self.host_presence_df
+        return pd.DataFrame()
+
     def _get_environment_type(self, hostname: str) -> str:
         """
-        Classify hostname by environment type (Production/PSS/Shared/Unknown).
+        Classify hostname by environment type using settings-based mappings.
+
+        Detection priority:
+        1. Explicit hostname mappings from settings
+        2. Pattern matching from settings
+        3. Auto-detection from hostname_structure module
 
         Args:
             hostname: The hostname to classify
@@ -1335,6 +1417,23 @@ class NessusHistoryTrackerApp:
         if not isinstance(hostname, str) or not hostname:
             return 'Unknown'
 
+        hostname_lower = hostname.lower().strip()
+        settings = self.settings_manager.settings
+
+        # Priority 1: Check explicit hostname mappings from settings
+        if hostname_lower in settings.environment_mappings:
+            return settings.environment_mappings[hostname_lower]
+
+        # Priority 2: Check pattern mappings from settings
+        import re
+        for pattern, env_type in settings.environment_patterns.items():
+            try:
+                if re.match(pattern, hostname_lower, re.IGNORECASE):
+                    return env_type
+            except re.error:
+                continue  # Skip invalid regex patterns
+
+        # Priority 3: Use auto-detection from hostname_structure module
         from ..models.hostname_structure import parse_hostname, EnvironmentType
         parsed = parse_hostname(hostname)
 
@@ -1751,6 +1850,18 @@ class NessusHistoryTrackerApp:
         # Initialize filtered data and update displays
         self.filtered_lifecycle_df = self.lifecycle_df.copy()
         self.filtered_host_df = self.host_presence_df.copy()
+        self.filtered_historical_df = self.historical_df.copy()
+        self.filtered_scan_changes_df = self.scan_changes_df.copy()
+
+        # Add environment type to lifecycle data for grouping
+        if not self.filtered_lifecycle_df.empty and 'hostname' in self.filtered_lifecycle_df.columns:
+            self.filtered_lifecycle_df['environment_type'] = self.filtered_lifecycle_df['hostname'].apply(
+                self._get_environment_type
+            )
+            self.lifecycle_df['environment_type'] = self.lifecycle_df['hostname'].apply(
+                self._get_environment_type
+            )
+
         self._update_dashboard()
         self._update_lifecycle_tree()
         self._update_host_tree()
@@ -2451,7 +2562,7 @@ class NessusHistoryTrackerApp:
 
     def _update_dashboard(self):
         """Update dashboard statistics from filtered data."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty:
             return
@@ -2522,7 +2633,7 @@ class NessusHistoryTrackerApp:
         for item in self.lifecycle_tree.get_children():
             self.lifecycle_tree.delete(item)
 
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty:
             self.lifecycle_count_label.config(text="Showing 0 findings")
@@ -2727,7 +2838,7 @@ class NessusHistoryTrackerApp:
 
     def _lifecycle_next_page(self):
         """Navigate to next page."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
         total = len(df)
         page_size = self.lifecycle_page_size.get()
         if page_size > 0:
@@ -2738,7 +2849,7 @@ class NessusHistoryTrackerApp:
 
     def _lifecycle_last_page(self):
         """Navigate to last page."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
         total = len(df)
         page_size = self.lifecycle_page_size.get()
         if page_size > 0:
@@ -2751,7 +2862,7 @@ class NessusHistoryTrackerApp:
         """Jump to specific row number."""
         try:
             target = int(self.lifecycle_jump_to.get()) - 1  # Convert to 0-based index
-            df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+            df = self._get_chart_data('lifecycle')
             total = len(df)
             if 0 <= target < total:
                 self.lifecycle_current_start = target
@@ -2760,6 +2871,330 @@ class NessusHistoryTrackerApp:
                 messagebox.showwarning("Invalid Row", f"Row number must be between 1 and {total}")
         except ValueError:
             messagebox.showwarning("Invalid Input", "Please enter a valid row number")
+
+    def _show_finding_detail(self, event):
+        """Show detailed popup for double-clicked finding."""
+        # Get selected item
+        selection = self.lifecycle_tree.selection()
+        if not selection:
+            return
+
+        item = selection[0]
+        values = self.lifecycle_tree.item(item, 'values')
+
+        if not values or len(values) < 2:
+            return
+
+        hostname = values[0]
+        plugin_id = values[1]
+
+        # Get full data from lifecycle_df
+        df = self._get_chart_data('lifecycle')
+        if df.empty:
+            return
+
+        # Find the matching row
+        mask = (df['hostname'].astype(str) == str(hostname)) & \
+               (df['plugin_id'].astype(str) == str(plugin_id))
+        matches = df[mask]
+
+        if matches.empty:
+            return
+
+        finding = matches.iloc[0]
+
+        # Get additional details from historical_df if available
+        hist_details = {}
+        if not self.historical_df.empty:
+            hist_mask = (self.historical_df['hostname'].astype(str) == str(hostname)) & \
+                       (self.historical_df['plugin_id'].astype(str) == str(plugin_id))
+            hist_matches = self.historical_df[hist_mask]
+            if not hist_matches.empty:
+                # Get the most recent entry
+                latest_hist = hist_matches.sort_values('scan_date', ascending=False).iloc[0]
+                hist_details = {
+                    'output': latest_hist.get('output', ''),
+                    'description': latest_hist.get('description', ''),
+                    'solution': latest_hist.get('solution', ''),
+                    'synopsis': latest_hist.get('synopsis', ''),
+                    'see_also': latest_hist.get('see_also', ''),
+                    'risk_factor': latest_hist.get('risk_factor', ''),
+                    'port': latest_hist.get('port', ''),
+                    'protocol': latest_hist.get('protocol', ''),
+                }
+
+        # Create the detail popup
+        self._create_finding_detail_popup(finding, hist_details)
+
+    def _create_finding_detail_popup(self, finding, hist_details):
+        """Create and display the finding detail popup modal."""
+        modal = tk.Toplevel(self.window)
+        modal.title(f"Finding Details: {finding.get('plugin_name', 'Unknown')[:50]}")
+        modal.geometry("900x700")
+        modal.configure(bg=GUI_DARK_THEME['bg'])
+        modal.transient(self.window)
+
+        # Make resizable
+        modal.resizable(True, True)
+        modal.minsize(700, 500)
+
+        # Main container with scrollbar
+        main_frame = ttk.Frame(modal)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Create canvas with scrollbar for the entire content
+        canvas = tk.Canvas(main_frame, bg=GUI_DARK_THEME['bg'], highlightthickness=0)
+        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Enable mousewheel scrolling
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # Title section
+        title_frame = tk.Frame(scrollable_frame, bg='#1a3a5c')
+        title_frame.pack(fill=tk.X, pady=(0, 10))
+        tk.Label(title_frame, text=finding.get('plugin_name', 'Unknown'),
+                font=('Arial', 14, 'bold'), bg='#1a3a5c', fg='white',
+                wraplength=850).pack(padx=10, pady=10)
+
+        # Helper function to add a section
+        def add_section(parent, title, content, is_resizable=False):
+            if not content or content == 'nan' or pd.isna(content):
+                return
+
+            section_frame = ttk.LabelFrame(parent, text=title)
+            section_frame.pack(fill=tk.X, pady=5, padx=5)
+
+            if is_resizable:
+                # Create resizable text widget for large content
+                text_frame = ttk.Frame(section_frame)
+                text_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+                text_widget = tk.Text(text_frame, wrap=tk.WORD,
+                                     bg=GUI_DARK_THEME['entry_bg'],
+                                     fg=GUI_DARK_THEME['fg'],
+                                     font=('Consolas', 9),
+                                     height=10)
+                text_scrollbar = ttk.Scrollbar(text_frame, command=text_widget.yview)
+                text_widget.configure(yscrollcommand=text_scrollbar.set)
+
+                text_widget.insert('1.0', str(content))
+                text_widget.configure(state='disabled')
+
+                text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+                text_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+                # Add resize grip
+                grip = ttk.Sizegrip(text_frame)
+                grip.pack(side=tk.BOTTOM, anchor='se')
+            else:
+                label = tk.Label(section_frame, text=str(content),
+                               bg=GUI_DARK_THEME['bg'], fg=GUI_DARK_THEME['fg'],
+                               wraplength=850, justify=tk.LEFT, anchor='w')
+                label.pack(fill=tk.X, padx=5, pady=5)
+
+        # Helper function to add key-value row
+        def add_row(parent, label, value, row_num):
+            if value is None or value == '' or value == 'nan' or (isinstance(value, float) and pd.isna(value)):
+                return row_num
+
+            tk.Label(parent, text=f"{label}:", font=('Arial', 9, 'bold'),
+                    bg=GUI_DARK_THEME['bg'], fg='#17a2b8',
+                    anchor='e', width=18).grid(row=row_num, column=0, sticky='e', padx=(5, 10), pady=2)
+            tk.Label(parent, text=str(value), bg=GUI_DARK_THEME['bg'],
+                    fg=GUI_DARK_THEME['fg'], anchor='w',
+                    wraplength=700).grid(row=row_num, column=1, sticky='w', pady=2)
+            return row_num + 1
+
+        # Basic Information section
+        basic_frame = ttk.LabelFrame(scrollable_frame, text="Basic Information")
+        basic_frame.pack(fill=tk.X, pady=5, padx=5)
+
+        info_grid = ttk.Frame(basic_frame)
+        info_grid.pack(fill=tk.X, padx=5, pady=5)
+
+        row = 0
+        row = add_row(info_grid, "Hostname", finding.get('hostname'), row)
+        row = add_row(info_grid, "IP Address", finding.get('ip_address'), row)
+        row = add_row(info_grid, "Plugin ID", finding.get('plugin_id'), row)
+        row = add_row(info_grid, "Severity", finding.get('severity_text'), row)
+        row = add_row(info_grid, "CVSS v3 Score", finding.get('cvss3_base_score'), row)
+        row = add_row(info_grid, "Status", finding.get('status'), row)
+
+        # Port/Protocol from historical
+        if hist_details.get('port'):
+            port_info = f"{hist_details.get('port')}/{hist_details.get('protocol', 'tcp')}"
+            row = add_row(info_grid, "Port/Protocol", port_info, row)
+
+        row = add_row(info_grid, "Risk Factor", hist_details.get('risk_factor'), row)
+
+        # Timeline section
+        timeline_frame = ttk.LabelFrame(scrollable_frame, text="Timeline")
+        timeline_frame.pack(fill=tk.X, pady=5, padx=5)
+
+        time_grid = ttk.Frame(timeline_frame)
+        time_grid.pack(fill=tk.X, padx=5, pady=5)
+
+        row = 0
+        row = add_row(time_grid, "First Observed", finding.get('first_seen'), row)
+        row = add_row(time_grid, "Last Seen", finding.get('last_seen'), row)
+        row = add_row(time_grid, "Days Open", finding.get('days_open'), row)
+        row = add_row(time_grid, "Total Observations", finding.get('total_observations'), row)
+        row = add_row(time_grid, "Reappearances", finding.get('reappearances'), row)
+
+        # CVE/IAVX section
+        cve_iavx_frame = ttk.LabelFrame(scrollable_frame, text="CVE & IAVX References")
+        cve_iavx_frame.pack(fill=tk.X, pady=5, padx=5)
+
+        ref_grid = ttk.Frame(cve_iavx_frame)
+        ref_grid.pack(fill=tk.X, padx=5, pady=5)
+
+        row = 0
+        row = add_row(ref_grid, "CVEs", finding.get('cves'), row)
+        row = add_row(ref_grid, "IAVX", finding.get('iavx'), row)
+
+        # OPDIR information if available
+        opdir_num = finding.get('opdir_number')
+        if opdir_num and not pd.isna(opdir_num):
+            opdir_frame = ttk.LabelFrame(scrollable_frame, text="OPDIR Information")
+            opdir_frame.pack(fill=tk.X, pady=5, padx=5)
+
+            opdir_grid = ttk.Frame(opdir_frame)
+            opdir_grid.pack(fill=tk.X, padx=5, pady=5)
+
+            row = 0
+            row = add_row(opdir_grid, "OPDIR Number", opdir_num, row)
+            row = add_row(opdir_grid, "OPDIR Title", finding.get('opdir_title'), row)
+            row = add_row(opdir_grid, "OPDIR Due Date", finding.get('opdir_due_date'), row)
+            row = add_row(opdir_grid, "OPDIR Status", finding.get('opdir_status'), row)
+
+        # Synopsis
+        add_section(scrollable_frame, "Synopsis", hist_details.get('synopsis'))
+
+        # Description
+        add_section(scrollable_frame, "Description", hist_details.get('description'), is_resizable=True)
+
+        # Solution
+        add_section(scrollable_frame, "Solution", hist_details.get('solution'), is_resizable=True)
+
+        # Plugin Output (resizable) - this is the big one
+        add_section(scrollable_frame, "Plugin Output", hist_details.get('output'), is_resizable=True)
+
+        # See Also
+        add_section(scrollable_frame, "References (See Also)", hist_details.get('see_also'), is_resizable=True)
+
+        # Gap details if reappearances exist
+        gap_details = finding.get('gap_details')
+        if gap_details and gap_details != '' and not pd.isna(gap_details):
+            try:
+                import json
+                gaps = json.loads(gap_details)
+                if gaps:
+                    gap_text = "\n".join([
+                        f"Gap {i+1}: {g['gap_start']} to {g['gap_end']} ({g['days']} days)"
+                        for i, g in enumerate(gaps)
+                    ])
+                    add_section(scrollable_frame, "Reappearance Gaps", gap_text)
+            except:
+                pass
+
+        # Close button
+        btn_frame = ttk.Frame(modal)
+        btn_frame.pack(fill=tk.X, pady=10)
+
+        ttk.Button(btn_frame, text="Copy to Clipboard",
+                  command=lambda: self._copy_finding_to_clipboard(finding, hist_details)).pack(side=tk.LEFT, padx=20)
+        ttk.Button(btn_frame, text="Close", command=modal.destroy).pack(side=tk.RIGHT, padx=20)
+
+        # Clean up mousewheel binding when modal closes
+        def on_close():
+            canvas.unbind_all("<MouseWheel>")
+            modal.destroy()
+
+        modal.protocol("WM_DELETE_WINDOW", on_close)
+
+        # Focus modal
+        modal.focus_set()
+        modal.grab_set()
+
+    def _copy_finding_to_clipboard(self, finding, hist_details):
+        """Copy finding details to clipboard as formatted text."""
+        lines = []
+        lines.append("=" * 60)
+        lines.append(f"FINDING DETAILS: {finding.get('plugin_name', 'Unknown')}")
+        lines.append("=" * 60)
+        lines.append("")
+
+        lines.append("BASIC INFORMATION")
+        lines.append("-" * 40)
+        lines.append(f"Hostname:       {finding.get('hostname', '')}")
+        lines.append(f"IP Address:     {finding.get('ip_address', '')}")
+        lines.append(f"Plugin ID:      {finding.get('plugin_id', '')}")
+        lines.append(f"Severity:       {finding.get('severity_text', '')}")
+        lines.append(f"CVSS v3 Score:  {finding.get('cvss3_base_score', '')}")
+        lines.append(f"Status:         {finding.get('status', '')}")
+        lines.append("")
+
+        lines.append("TIMELINE")
+        lines.append("-" * 40)
+        lines.append(f"First Observed: {finding.get('first_seen', '')}")
+        lines.append(f"Last Seen:      {finding.get('last_seen', '')}")
+        lines.append(f"Days Open:      {finding.get('days_open', '')}")
+        lines.append("")
+
+        if finding.get('cves') or finding.get('iavx'):
+            lines.append("REFERENCES")
+            lines.append("-" * 40)
+            if finding.get('cves'):
+                lines.append(f"CVEs: {finding.get('cves')}")
+            if finding.get('iavx'):
+                lines.append(f"IAVX: {finding.get('iavx')}")
+            lines.append("")
+
+        if hist_details.get('synopsis'):
+            lines.append("SYNOPSIS")
+            lines.append("-" * 40)
+            lines.append(hist_details.get('synopsis'))
+            lines.append("")
+
+        if hist_details.get('description'):
+            lines.append("DESCRIPTION")
+            lines.append("-" * 40)
+            lines.append(hist_details.get('description'))
+            lines.append("")
+
+        if hist_details.get('solution'):
+            lines.append("SOLUTION")
+            lines.append("-" * 40)
+            lines.append(hist_details.get('solution'))
+            lines.append("")
+
+        if hist_details.get('output'):
+            lines.append("PLUGIN OUTPUT")
+            lines.append("-" * 40)
+            lines.append(hist_details.get('output'))
+            lines.append("")
+
+        text = "\n".join(lines)
+
+        # Copy to clipboard
+        self.window.clipboard_clear()
+        self.window.clipboard_append(text)
+
+        messagebox.showinfo("Copied", "Finding details copied to clipboard!")
 
     def _sort_host_tree(self, col):
         """Sort host treeview by column."""
@@ -2788,7 +3223,7 @@ class NessusHistoryTrackerApp:
         interval_label = get_interval_label(interval)
 
         # Use filtered scan_changes_df to show trends over time
-        scan_df = self.filtered_scan_changes_df if not self.filtered_scan_changes_df.empty else self.scan_changes_df
+        scan_df = self._get_chart_data('scan_changes')
         if not scan_df.empty and 'scan_date' in scan_df.columns:
             df = scan_df.copy()
             df['scan_date'] = pd.to_datetime(df['scan_date'])
@@ -2810,7 +3245,7 @@ class NessusHistoryTrackerApp:
                                      labelcolor=GUI_DARK_THEME['fg'])
 
         # If no scan_changes, try to use historical_df to show cumulative counts
-        hist_df = self.filtered_historical_df if not self.filtered_historical_df.empty else self.historical_df
+        hist_df = self._get_chart_data('historical')
         if scan_df.empty and not hist_df.empty and 'scan_date' in hist_df.columns:
             df = hist_df.copy()
             df['scan_date'] = pd.to_datetime(df['scan_date'])
@@ -2838,8 +3273,8 @@ class NessusHistoryTrackerApp:
         if not HAS_MATPLOTLIB or not hasattr(self, 'timeline_ax1'):
             return
 
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
-        hist_df = self.filtered_historical_df if not self.filtered_historical_df.empty else self.historical_df
+        df = self._get_chart_data('lifecycle')
+        hist_df = self._get_chart_data('historical')
         show_labels = self.settings_manager.settings.show_data_labels
 
         # Get the appropriate date interval based on date range
@@ -2897,7 +3332,7 @@ class NessusHistoryTrackerApp:
         self.timeline_ax2.set_title('Findings by Severity', color=GUI_DARK_THEME['fg'], fontsize=10)
 
         # Chart 3: New vs Resolved with data labels (grouped by interval)
-        scan_df = self.filtered_scan_changes_df if not self.filtered_scan_changes_df.empty else self.scan_changes_df
+        scan_df = self._get_chart_data('scan_changes')
         if not scan_df.empty and 'change_type' in scan_df.columns:
             changes = scan_df.copy()
             changes['scan_date'] = pd.to_datetime(changes['scan_date'])
@@ -2957,7 +3392,7 @@ class NessusHistoryTrackerApp:
         if not HAS_MATPLOTLIB or not hasattr(self, 'risk_ax1'):
             return
 
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         for ax in [self.risk_ax1, self.risk_ax2, self.risk_ax3, self.risk_ax4]:
             ax.clear()
@@ -3105,9 +3540,9 @@ class NessusHistoryTrackerApp:
 
         self.risk_canvas.get_tk_widget().bind('<Double-Button-1>', on_double_click)
 
-    def _draw_cvss_popout(self, fig, ax, enlarged=False, show_labels=True):
+    def _draw_cvss_popout(self, fig, ax, enlarged=False, show_labels=True, filter_settings=None):
         """Draw CVSS distribution chart for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
         if df.empty or 'cvss3_base_score' not in df.columns:
             ax.text(0.5, 0.5, 'No CVSS data available', ha='center', va='center',
                    color='white', fontsize=12)
@@ -3151,7 +3586,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_mttr_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw MTTR by severity chart for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
         if df.empty or 'severity_text' not in df.columns or 'days_open' not in df.columns:
             ax.text(0.5, 0.5, 'No MTTR data available', ha='center', va='center',
                    color='white', fontsize=12)
@@ -3188,7 +3623,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_age_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw findings by age chart for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
         if df.empty or 'days_open' not in df.columns:
             ax.text(0.5, 0.5, 'No age data available', ha='center', va='center',
                    color='white', fontsize=12)
@@ -3222,7 +3657,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_risky_hosts_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw top risky hosts chart for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
         if df.empty or 'hostname' not in df.columns or 'severity_value' not in df.columns:
             ax.text(0.5, 0.5, 'No host risk data available', ha='center', va='center',
                    color='white', fontsize=12)
@@ -3286,8 +3721,8 @@ class NessusHistoryTrackerApp:
 
     def _draw_remediation_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw remediation status chart for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
-        hist_df = self.filtered_historical_df if not self.filtered_historical_df.empty else self.historical_df
+        df = self._get_chart_data('lifecycle')
+        hist_df = self._get_chart_data('historical')
 
         if df.empty:
             ax.text(0.5, 0.5, 'No data available', ha='center', va='center',
@@ -3351,7 +3786,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_risk_trend_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw risk score trend chart for pop-out."""
-        hist_df = self.filtered_historical_df if not self.filtered_historical_df.empty else self.historical_df
+        hist_df = self._get_chart_data('historical')
 
         risk_trend = calculate_risk_reduction_trend(hist_df)
 
@@ -3405,7 +3840,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_sla_status_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw SLA status chart for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty:
             ax.text(0.5, 0.5, 'No data available', ha='center', va='center',
@@ -3464,8 +3899,8 @@ class NessusHistoryTrackerApp:
 
     def _draw_vulns_per_host_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw vulnerabilities per host trend chart for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
-        hist_df = self.filtered_historical_df if not self.filtered_historical_df.empty else self.historical_df
+        df = self._get_chart_data('lifecycle')
+        hist_df = self._get_chart_data('historical')
 
         normalized_metrics = calculate_normalized_metrics(hist_df, df)
         norm_trend = normalized_metrics.get('trend', [])
@@ -3548,7 +3983,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_total_findings_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw total findings over time chart for pop-out."""
-        hist_df = self.filtered_historical_df if not self.filtered_historical_df.empty else self.historical_df
+        hist_df = self._get_chart_data('historical')
 
         if hist_df.empty or 'scan_date' not in hist_df.columns:
             ax.text(0.5, 0.5, 'No historical data available', ha='center', va='center',
@@ -3604,7 +4039,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_severity_timeline_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw findings by severity over time for pop-out."""
-        hist_df = self.filtered_historical_df if not self.filtered_historical_df.empty else self.historical_df
+        hist_df = self._get_chart_data('historical')
 
         if hist_df.empty or 'scan_date' not in hist_df.columns or 'severity' not in hist_df.columns:
             ax.text(0.5, 0.5, 'No historical data available', ha='center', va='center',
@@ -3704,7 +4139,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_cumulative_risk_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw cumulative risk exposure for pop-out."""
-        hist_df = self.filtered_historical_df if not self.filtered_historical_df.empty else self.historical_df
+        hist_df = self._get_chart_data('historical')
 
         if hist_df.empty or 'scan_date' not in hist_df.columns or 'severity_value' not in hist_df.columns:
             ax.text(0.5, 0.5, 'No historical data available', ha='center', va='center',
@@ -3786,7 +4221,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_opdir_coverage_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw OPDIR coverage pie chart for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'opdir_number' not in df.columns:
             ax.text(0.5, 0.5, 'No OPDIR data available\n(Load OPDIR mapping first)', ha='center', va='center',
@@ -3820,7 +4255,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_opdir_status_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw OPDIR status distribution for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'opdir_status' not in df.columns:
             ax.text(0.5, 0.5, 'No OPDIR status data\n(Load OPDIR mapping first)', ha='center', va='center',
@@ -3858,7 +4293,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_opdir_age_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw finding age for OPDIR mapped items for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'days_open' not in df.columns or 'opdir_number' not in df.columns:
             ax.text(0.5, 0.5, 'No data available', ha='center', va='center',
@@ -3904,7 +4339,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_opdir_year_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw compliance by OPDIR year for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'opdir_year' not in df.columns:
             ax.text(0.5, 0.5, 'No OPDIR year data\n(Load OPDIR mapping with year info)',
@@ -3979,7 +4414,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_sla_compliance_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw SLA compliance status pie chart for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'sla_status' not in df.columns:
             ax.text(0.5, 0.5, 'No SLA data available', ha='center', va='center',
@@ -4012,7 +4447,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_sla_overdue_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw overdue findings by severity for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'sla_status' not in df.columns or 'severity' not in df.columns:
             ax.text(0.5, 0.5, 'No SLA data available', ha='center', va='center',
@@ -4055,7 +4490,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_sla_approaching_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw findings approaching SLA deadline for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'days_until_sla' not in df.columns:
             ax.text(0.5, 0.5, 'No SLA timeline data available', ha='center', va='center',
@@ -4101,7 +4536,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_sla_days_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw days until/past SLA scatter plot for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'days_until_sla' not in df.columns or 'severity' not in df.columns:
             ax.text(0.5, 0.5, 'No SLA data available', ha='center', va='center',
@@ -4211,7 +4646,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_reappearance_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw reappearance analysis for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'appearance_count' not in df.columns:
             ax.text(0.5, 0.5, 'No reappearance data available', ha='center', va='center',
@@ -4252,7 +4687,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_host_burden_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw host vulnerability burden for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'hostname' not in df.columns:
             ax.text(0.5, 0.5, 'No host data available', ha='center', va='center',
@@ -4347,7 +4782,7 @@ class NessusHistoryTrackerApp:
                 ('Top Subnets by Vulnerability', self._draw_top_subnets_popout),
                 ('Subnet Risk Scores', self._draw_subnet_risk_popout),
                 ('Host Criticality Distribution', self._draw_host_criticality_popout),
-                ('Network Segment Analysis', self._draw_network_segment_popout),
+                ('Environment Distribution', self._draw_environment_breakdown_popout),
             ]
             title, redraw_func = chart_info[quadrant]
             ChartPopoutModal(self.window, title, redraw_func)
@@ -4356,7 +4791,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_top_subnets_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw top subnets by vulnerability count for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'ip' not in df.columns:
             ax.text(0.5, 0.5, 'No IP data available', ha='center', va='center',
@@ -4397,7 +4832,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_subnet_risk_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw subnet risk scores for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'ip' not in df.columns or 'severity_value' not in df.columns:
             ax.text(0.5, 0.5, 'No IP/severity data available', ha='center', va='center',
@@ -4442,7 +4877,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_host_criticality_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw host criticality distribution for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'hostname' not in df.columns or 'severity_value' not in df.columns:
             ax.text(0.5, 0.5, 'No host severity data available', ha='center', va='center',
@@ -4473,7 +4908,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_network_segment_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw network segment analysis for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'ip' not in df.columns or 'severity' not in df.columns:
             ax.text(0.5, 0.5, 'No network segment data available', ha='center', va='center',
@@ -4516,6 +4951,136 @@ class NessusHistoryTrackerApp:
         ax.set_title('Network Segment Analysis')
         ax.set_ylabel('Vulnerability Count')
 
+    def _draw_environment_breakdown_popout(self, fig, ax, enlarged=False, show_labels=True, filter_settings=None):
+        """Draw environment breakdown analysis for pop-out."""
+        df = self._get_chart_data('lifecycle')
+
+        if df.empty:
+            ax.text(0.5, 0.5, 'No data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Ensure environment_type column exists
+        if 'environment_type' not in df.columns and 'hostname' in df.columns:
+            df = df.copy()
+            df['environment_type'] = df['hostname'].apply(self._get_environment_type)
+
+        if 'environment_type' not in df.columns:
+            ax.text(0.5, 0.5, 'No environment data', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Count by environment and severity
+        env_colors = {'Production': '#28a745', 'PSS': '#007bff', 'Shared': '#ffc107', 'Unknown': '#6c757d'}
+        env_order = self.settings_manager.settings.environment_types
+
+        if 'severity_text' in df.columns:
+            # Create grouped bar chart by environment and severity
+            env_sev = df.groupby(['environment_type', 'severity_text']).size().unstack(fill_value=0)
+            env_sev = env_sev.reindex([e for e in env_order if e in env_sev.index])
+
+            if not env_sev.empty:
+                x = np.arange(len(env_sev))
+                width = 0.15
+                severity_order = ['Critical', 'High', 'Medium', 'Low', 'Info']
+                severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107',
+                                  'Low': '#28a745', 'Info': '#17a2b8'}
+
+                for i, sev in enumerate(severity_order):
+                    if sev in env_sev.columns:
+                        offset = (i - len(severity_order)/2) * width
+                        bars = ax.bar(x + offset, env_sev[sev], width, label=sev,
+                                      color=severity_colors.get(sev, '#6c757d'))
+                        if show_labels and enlarged:
+                            for bar in bars:
+                                height = bar.get_height()
+                                if height > 0:
+                                    ax.annotate(f'{int(height)}',
+                                               xy=(bar.get_x() + bar.get_width()/2, height),
+                                               ha='center', va='bottom', fontsize=7, color='white')
+
+                ax.set_xticks(x)
+                ax.set_xticklabels(env_sev.index, fontsize=9)
+                ax.legend(loc='upper right', fontsize=8)
+        else:
+            # Simple count by environment
+            env_counts = df['environment_type'].value_counts()
+            env_counts = env_counts.reindex([e for e in env_order if e in env_counts.index])
+
+            if len(env_counts) > 0:
+                colors = [env_colors.get(e, '#6c757d') for e in env_counts.index]
+                bars = ax.bar(range(len(env_counts)), env_counts.values, color=colors)
+                ax.set_xticks(range(len(env_counts)))
+                ax.set_xticklabels(env_counts.index, fontsize=9)
+                if show_labels:
+                    for bar, val in zip(bars, env_counts.values):
+                        ax.annotate(f'{int(val)}', xy=(bar.get_x() + bar.get_width()/2, val),
+                                   ha='center', va='bottom', fontsize=9, color='white')
+
+        ax.set_title('Findings by Environment', fontsize=12)
+        ax.set_ylabel('Finding Count')
+
+        # Add summary stats
+        total = len(df)
+        active = len(df[df['status'] == 'Active']) if 'status' in df.columns else total
+        ax.text(0.98, 0.98, f'Total: {total} | Active: {active}',
+               transform=ax.transAxes, fontsize=9, va='top', ha='right', color='white')
+
+    def _draw_env_severity_matrix_popout(self, fig, ax, enlarged=False, show_labels=True, filter_settings=None):
+        """Draw environment vs severity matrix heatmap for pop-out."""
+        df = self._get_chart_data('lifecycle')
+
+        if df.empty:
+            ax.text(0.5, 0.5, 'No data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Ensure environment_type column exists
+        if 'environment_type' not in df.columns and 'hostname' in df.columns:
+            df = df.copy()
+            df['environment_type'] = df['hostname'].apply(self._get_environment_type)
+
+        if 'environment_type' not in df.columns or 'severity_text' not in df.columns:
+            ax.text(0.5, 0.5, 'Missing required data', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Create pivot table
+        pivot = df.groupby(['environment_type', 'severity_text']).size().unstack(fill_value=0)
+
+        # Order by environment and severity
+        env_order = self.settings_manager.settings.environment_types
+        sev_order = ['Critical', 'High', 'Medium', 'Low', 'Info']
+
+        pivot = pivot.reindex([e for e in env_order if e in pivot.index])
+        pivot = pivot.reindex(columns=[s for s in sev_order if s in pivot.columns])
+
+        if pivot.empty:
+            ax.text(0.5, 0.5, 'No data for matrix', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Create heatmap
+        cmap = plt.cm.YlOrRd
+        im = ax.imshow(pivot.values, cmap=cmap, aspect='auto')
+
+        ax.set_xticks(range(len(pivot.columns)))
+        ax.set_yticks(range(len(pivot.index)))
+        ax.set_xticklabels(pivot.columns, fontsize=9)
+        ax.set_yticklabels(pivot.index, fontsize=9)
+
+        # Add text annotations
+        if show_labels:
+            for i in range(len(pivot.index)):
+                for j in range(len(pivot.columns)):
+                    val = pivot.iloc[i, j]
+                    text_color = 'white' if val > pivot.values.max() * 0.5 else 'black'
+                    ax.text(j, i, f'{int(val)}', ha='center', va='center',
+                           color=text_color, fontsize=10, fontweight='bold')
+
+        ax.set_title('Environment vs Severity Matrix', fontsize=12)
+        fig.colorbar(im, ax=ax, label='Finding Count')
+
     # ==================== Plugin Tab Pop-outs ====================
 
     def _bind_chart_popouts_plugin(self):
@@ -4546,7 +5111,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_top_plugins_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw top most common plugins for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'plugin_id' not in df.columns:
             ax.text(0.5, 0.5, 'No plugin data available', ha='center', va='center',
@@ -4584,7 +5149,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_plugin_severity_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw plugin severity distribution for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'plugin_id' not in df.columns or 'severity' not in df.columns:
             ax.text(0.5, 0.5, 'No plugin severity data available', ha='center', va='center',
@@ -4619,7 +5184,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_plugins_by_hosts_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw plugins affecting most hosts for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'plugin_id' not in df.columns or 'hostname' not in df.columns:
             ax.text(0.5, 0.5, 'No plugin/host data available', ha='center', va='center',
@@ -4656,7 +5221,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_plugin_age_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw plugin average age for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'plugin_id' not in df.columns or 'days_open' not in df.columns:
             ax.text(0.5, 0.5, 'No plugin age data available', ha='center', va='center',
@@ -4726,7 +5291,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_priority_matrix_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw remediation priority matrix (CVSS vs Age) for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'cvss' not in df.columns or 'days_open' not in df.columns:
             ax.text(0.5, 0.5, 'No CVSS/age data available', ha='center', va='center',
@@ -4775,7 +5340,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_priority_distribution_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw priority distribution pie for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'cvss' not in df.columns or 'days_open' not in df.columns:
             ax.text(0.5, 0.5, 'No priority data available', ha='center', va='center',
@@ -4817,7 +5382,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_top_priority_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw top priority findings for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'cvss' not in df.columns or 'days_open' not in df.columns:
             ax.text(0.5, 0.5, 'No priority data available', ha='center', va='center',
@@ -4854,7 +5419,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_priority_by_severity_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw priority score by severity for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'severity' not in df.columns or 'cvss' not in df.columns or 'days_open' not in df.columns:
             ax.text(0.5, 0.5, 'No priority data available', ha='center', va='center',
@@ -4956,7 +5521,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_host_presence_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw host presence over time for pop-out."""
-        hist_df = self.filtered_historical_df if not self.filtered_historical_df.empty else self.historical_df
+        hist_df = self._get_chart_data('historical')
 
         if hist_df.empty or 'scan_date' not in hist_df.columns or 'hostname' not in hist_df.columns:
             ax.text(0.5, 0.5, 'No historical host data available', ha='center', va='center',
@@ -5170,7 +5735,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_heatmap_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw Risk Heatmap for pop-out."""
-        hist_df = self.filtered_historical_df if not self.filtered_historical_df.empty else self.historical_df
+        hist_df = self._get_chart_data('historical')
 
         if hist_df.empty or 'scan_date' not in hist_df.columns:
             ax.text(0.5, 0.5, 'Insufficient historical data for heatmap', ha='center', va='center',
@@ -5218,7 +5783,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_bubble_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw Bubble Chart for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'days_open' not in df.columns:
             ax.text(0.5, 0.5, 'No vulnerability age data', ha='center', va='center',
@@ -5283,8 +5848,8 @@ class NessusHistoryTrackerApp:
 
     def _draw_sankey_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw Sankey-style lifecycle flow for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
-        hist_df = self.filtered_historical_df if not self.filtered_historical_df.empty else self.historical_df
+        df = self._get_chart_data('lifecycle')
+        hist_df = self._get_chart_data('historical')
 
         if df.empty or 'status' not in df.columns:
             ax.text(0.5, 0.5, 'No lifecycle data available', ha='center', va='center',
@@ -5330,7 +5895,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_treemap_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw Plugin Family Distribution for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'plugin_family' not in df.columns:
             ax.text(0.5, 0.5, 'No plugin family data', ha='center', va='center',
@@ -5366,7 +5931,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_radar_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw Radar Chart for pop-out (requires polar projection)."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty:
             ax.text(0.5, 0.5, 'No data available', ha='center', va='center',
@@ -5419,8 +5984,8 @@ class NessusHistoryTrackerApp:
 
     def _draw_gauge_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw Remediation Velocity Gauge for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
-        hist_df = self.filtered_historical_df if not self.filtered_historical_df.empty else self.historical_df
+        df = self._get_chart_data('lifecycle')
+        hist_df = self._get_chart_data('historical')
 
         if df.empty:
             ax.text(0.5, 0.5, 'No data for velocity calculation', ha='center', va='center',
@@ -5471,7 +6036,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_sla_prediction_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw SLA Breach Prediction for pop-out."""
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         if df.empty or 'days_until_sla' not in df.columns:
             ax.text(0.5, 0.5, 'No SLA data for prediction', ha='center', va='center',
@@ -5518,7 +6083,7 @@ class NessusHistoryTrackerApp:
 
     def _draw_period_comparison_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw Period Comparison for pop-out."""
-        hist_df = self.filtered_historical_df if not self.filtered_historical_df.empty else self.historical_df
+        hist_df = self._get_chart_data('historical')
 
         if hist_df.empty or 'scan_date' not in hist_df.columns:
             ax.text(0.5, 0.5, 'Insufficient historical data', ha='center', va='center',
@@ -5590,7 +6155,7 @@ class NessusHistoryTrackerApp:
         if not HAS_MATPLOTLIB or not hasattr(self, 'opdir_ax1'):
             return
 
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         for ax in [self.opdir_ax1, self.opdir_ax2, self.opdir_ax3, self.opdir_ax4]:
             ax.clear()
@@ -5736,7 +6301,7 @@ class NessusHistoryTrackerApp:
         if not HAS_MATPLOTLIB or not hasattr(self, 'efficiency_ax1'):
             return
 
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
         host_df = self.filtered_host_df if not self.filtered_host_df.empty else self.host_presence_df
         show_labels = self.settings_manager.settings.show_data_labels
 
@@ -5851,7 +6416,7 @@ class NessusHistoryTrackerApp:
         if not HAS_MATPLOTLIB or not hasattr(self, 'network_ax1'):
             return
 
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
         show_labels = self.settings_manager.settings.show_data_labels
 
         for ax in [self.network_ax1, self.network_ax2, self.network_ax3, self.network_ax4]:
@@ -5954,7 +6519,7 @@ class NessusHistoryTrackerApp:
         if not HAS_MATPLOTLIB or not hasattr(self, 'plugin_ax1'):
             return
 
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
         show_labels = self.settings_manager.settings.show_data_labels
 
         for ax in [self.plugin_ax1, self.plugin_ax2, self.plugin_ax3, self.plugin_ax4]:
@@ -6109,7 +6674,7 @@ class NessusHistoryTrackerApp:
         if not HAS_MATPLOTLIB or not hasattr(self, 'priority_ax1'):
             return
 
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
         show_labels = self.settings_manager.settings.show_data_labels
 
         for ax in [self.priority_ax1, self.priority_ax2, self.priority_ax3, self.priority_ax4]:
@@ -6256,7 +6821,7 @@ class NessusHistoryTrackerApp:
         if not HAS_MATPLOTLIB or not hasattr(self, 'sla_ax1'):
             return
 
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
+        df = self._get_chart_data('lifecycle')
 
         for ax in [self.sla_ax1, self.sla_ax2, self.sla_ax3, self.sla_ax4]:
             ax.clear()
@@ -6425,7 +6990,7 @@ class NessusHistoryTrackerApp:
             return
 
         host_df = self.filtered_host_df if not self.filtered_host_df.empty else self.host_presence_df
-        hist_df = self.filtered_historical_df if not self.filtered_historical_df.empty else self.historical_df
+        hist_df = self._get_chart_data('historical')
 
         for ax in [self.host_tracking_ax1, self.host_tracking_ax2, self.host_tracking_ax3, self.host_tracking_ax4]:
             ax.clear()
@@ -6582,8 +7147,8 @@ class NessusHistoryTrackerApp:
         if not HAS_MATPLOTLIB or not hasattr(self, 'metrics_ax1'):
             return
 
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
-        hist_df = self.filtered_historical_df if not self.filtered_historical_df.empty else self.historical_df
+        df = self._get_chart_data('lifecycle')
+        hist_df = self._get_chart_data('historical')
 
         for ax in [self.metrics_ax1, self.metrics_ax2, self.metrics_ax3, self.metrics_ax4]:
             ax.clear()
@@ -6716,8 +7281,8 @@ class NessusHistoryTrackerApp:
         if not HAS_MATPLOTLIB or not hasattr(self, 'heatmap_ax'):
             return
 
-        df = self.filtered_lifecycle_df if not self.filtered_lifecycle_df.empty else self.lifecycle_df
-        hist_df = self.filtered_historical_df if not self.filtered_historical_df.empty else self.historical_df
+        df = self._get_chart_data('lifecycle')
+        hist_df = self._get_chart_data('historical')
         show_labels = self.settings_manager.settings.show_data_labels
 
         # Clear all axes
@@ -7458,6 +8023,152 @@ class NessusHistoryTrackerApp:
         if settings.recent_sqlite_db and os.path.exists(settings.recent_sqlite_db):
             self.existing_db_path = settings.recent_sqlite_db
             self.existing_db_label.config(text=self._truncate_filename(os.path.basename(settings.recent_sqlite_db)), foreground="white")
+
+    def _show_environment_config(self):
+        """Show environment mapping configuration dialog."""
+        settings = self.settings_manager.settings
+
+        dialog = tk.Toplevel(self.window)
+        dialog.title("Environment Configuration")
+        dialog.geometry("600x550")
+        dialog.configure(bg=GUI_DARK_THEME['bg'])
+        dialog.transient(self.window)
+        dialog.grab_set()
+
+        # Create notebook for tabbed configuration
+        notebook = ttk.Notebook(dialog)
+        notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # === Environment Types Tab ===
+        types_frame = ttk.Frame(notebook, padding=10)
+        notebook.add(types_frame, text="Environment Types")
+
+        ttk.Label(types_frame, text="Define custom environment types (one per line):").pack(anchor=tk.W, pady=(0, 5))
+        ttk.Label(types_frame, text="These will appear in the Environment filter dropdown.",
+                 foreground='gray').pack(anchor=tk.W, pady=(0, 10))
+
+        # Text widget for environment types
+        env_types_text = tk.Text(types_frame, height=10, width=40,
+                                bg=GUI_DARK_THEME['entry_bg'], fg=GUI_DARK_THEME['fg'],
+                                insertbackground=GUI_DARK_THEME['fg'])
+        env_types_text.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        # Pre-populate with current environment types
+        current_types = settings.environment_types
+        env_types_text.insert('1.0', '\n'.join(current_types))
+
+        # === Hostname Mappings Tab ===
+        mappings_frame = ttk.Frame(notebook, padding=10)
+        notebook.add(mappings_frame, text="Hostname Mappings")
+
+        ttk.Label(mappings_frame, text="Map specific hostnames to environments:").pack(anchor=tk.W, pady=(0, 5))
+        ttk.Label(mappings_frame, text="Format: hostname = EnvironmentType (e.g., server01 = Production)",
+                 foreground='gray').pack(anchor=tk.W, pady=(0, 10))
+
+        # Text widget for hostname mappings
+        mappings_text = tk.Text(mappings_frame, height=10, width=50,
+                               bg=GUI_DARK_THEME['entry_bg'], fg=GUI_DARK_THEME['fg'],
+                               insertbackground=GUI_DARK_THEME['fg'])
+        mappings_text.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        # Pre-populate with current mappings
+        current_mappings = settings.environment_mappings
+        mapping_lines = [f"{hostname} = {env}" for hostname, env in current_mappings.items()]
+        mappings_text.insert('1.0', '\n'.join(mapping_lines))
+
+        # === Pattern Mappings Tab ===
+        patterns_frame = ttk.Frame(notebook, padding=10)
+        notebook.add(patterns_frame, text="Pattern Mappings")
+
+        ttk.Label(patterns_frame, text="Map hostname patterns (regex) to environments:").pack(anchor=tk.W, pady=(0, 5))
+        ttk.Label(patterns_frame, text="Format: pattern = EnvironmentType (e.g., ^prod-.* = Production)",
+                 foreground='gray').pack(anchor=tk.W, pady=(0, 10))
+
+        # Text widget for pattern mappings
+        patterns_text = tk.Text(patterns_frame, height=10, width=50,
+                               bg=GUI_DARK_THEME['entry_bg'], fg=GUI_DARK_THEME['fg'],
+                               insertbackground=GUI_DARK_THEME['fg'])
+        patterns_text.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        # Pre-populate with current patterns
+        current_patterns = settings.environment_patterns
+        pattern_lines = [f"{pattern} = {env}" for pattern, env in current_patterns.items()]
+        patterns_text.insert('1.0', '\n'.join(pattern_lines))
+
+        # === Auto-Detection Tab ===
+        auto_frame = ttk.Frame(notebook, padding=10)
+        notebook.add(auto_frame, text="Auto-Detection")
+
+        ttk.Label(auto_frame, text="Automatic environment detection rules:").pack(anchor=tk.W, pady=(0, 10))
+
+        ttk.Label(auto_frame, text="Standard 9-character hostname format: LLLLTTCEP").pack(anchor=tk.W, pady=2)
+        ttk.Label(auto_frame, text="  • L (4 chars): Location code").pack(anchor=tk.W, padx=20)
+        ttk.Label(auto_frame, text="  • T (2 chars): Tier code").pack(anchor=tk.W, padx=20)
+        ttk.Label(auto_frame, text="  • C (1 char): Cluster identifier").pack(anchor=tk.W, padx=20)
+        ttk.Label(auto_frame, text="  • E (1 char): Environment - Letter=Production, Number=PSS").pack(anchor=tk.W, padx=20)
+        ttk.Label(auto_frame, text="  • P (1 char): Physical (p) or Virtual (v)").pack(anchor=tk.W, padx=20)
+
+        ttk.Separator(auto_frame, orient='horizontal').pack(fill=tk.X, pady=15)
+
+        ttk.Label(auto_frame, text="Detection priority:").pack(anchor=tk.W, pady=5)
+        ttk.Label(auto_frame, text="  1. Explicit hostname mappings (Hostname Mappings tab)").pack(anchor=tk.W, padx=20)
+        ttk.Label(auto_frame, text="  2. Pattern matching (Pattern Mappings tab)").pack(anchor=tk.W, padx=20)
+        ttk.Label(auto_frame, text="  3. Auto-detection from 9-char format").pack(anchor=tk.W, padx=20)
+        ttk.Label(auto_frame, text="  4. Default to 'Unknown'").pack(anchor=tk.W, padx=20)
+
+        # Buttons
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(fill=tk.X, padx=10, pady=10)
+
+        def save_config():
+            # Parse environment types
+            types_content = env_types_text.get('1.0', tk.END).strip()
+            new_types = [t.strip() for t in types_content.split('\n') if t.strip()]
+            if not new_types:
+                new_types = ['Production', 'PSS', 'Shared', 'Unknown']
+
+            # Parse hostname mappings
+            mappings_content = mappings_text.get('1.0', tk.END).strip()
+            new_mappings = {}
+            for line in mappings_content.split('\n'):
+                if '=' in line:
+                    parts = line.split('=', 1)
+                    if len(parts) == 2:
+                        hostname = parts[0].strip().lower()
+                        env = parts[1].strip()
+                        if hostname and env:
+                            new_mappings[hostname] = env
+
+            # Parse pattern mappings
+            patterns_content = patterns_text.get('1.0', tk.END).strip()
+            new_patterns = {}
+            for line in patterns_content.split('\n'):
+                if '=' in line:
+                    parts = line.split('=', 1)
+                    if len(parts) == 2:
+                        pattern = parts[0].strip()
+                        env = parts[1].strip()
+                        if pattern and env:
+                            new_patterns[pattern] = env
+
+            # Update settings
+            settings.environment_types = new_types
+            settings.environment_mappings = new_mappings
+            settings.environment_patterns = new_patterns
+
+            # Save settings
+            self.settings_manager.save()
+
+            # Update the environment filter dropdown
+            env_types = ["All"] + new_types
+            self.env_combo['values'] = env_types
+
+            self._log(f"Saved environment config: {len(new_types)} types, {len(new_mappings)} mappings, {len(new_patterns)} patterns")
+            messagebox.showinfo("Saved", "Environment configuration saved successfully.")
+            dialog.destroy()
+
+        ttk.Button(btn_frame, text="Save", command=save_config, width=10).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=dialog.destroy, width=10).pack(side=tk.RIGHT)
 
     def _show_settings_dialog(self):
         """Show settings configuration dialog."""

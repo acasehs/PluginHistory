@@ -388,9 +388,21 @@ class ChartPopoutModal:
         self.toolbar = NavigationToolbar2Tk(self.canvas, toolbar_frame)
         self.toolbar.update()
 
-        # Close button
+        # Button frame with Copy and Close
         btn_frame = ttk.Frame(self.modal)
         btn_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        # Info button (left side)
+        if self.description:
+            info_btn = tk.Button(btn_frame, text="ⓘ Info", bg='#1a3a5c', fg='white',
+                               command=self._show_chart_info, relief='flat', padx=10)
+            info_btn.pack(side=tk.LEFT, padx=5)
+
+        # Copy to clipboard button
+        ttk.Button(btn_frame, text="📋 Copy to Clipboard",
+                  command=self._copy_to_clipboard).pack(side=tk.LEFT, padx=5)
+
+        # Close button
         ttk.Button(btn_frame, text="Close", command=self.modal.destroy).pack(side=tk.RIGHT)
 
     def _draw_chart(self):
@@ -510,6 +522,146 @@ class ChartPopoutModal:
     def _apply_filters(self):
         """Apply filter settings and redraw chart."""
         self._draw_chart()
+
+    def _copy_to_clipboard(self):
+        """Copy chart image and data to clipboard."""
+        import io
+        try:
+            # Save figure to bytes buffer
+            buf = io.BytesIO()
+            self.fig.savefig(buf, format='png', dpi=150, facecolor=self.BG_COLOR,
+                           edgecolor='none', bbox_inches='tight')
+            buf.seek(0)
+
+            # Try to copy to clipboard (platform-dependent)
+            try:
+                from PIL import Image
+                import subprocess
+                import platform
+
+                img = Image.open(buf)
+
+                if platform.system() == 'Windows':
+                    # Windows clipboard
+                    import win32clipboard
+                    from io import BytesIO
+
+                    output = BytesIO()
+                    img.convert('RGB').save(output, 'BMP')
+                    data = output.getvalue()[14:]  # BMP header offset
+                    output.close()
+
+                    win32clipboard.OpenClipboard()
+                    win32clipboard.EmptyClipboard()
+                    win32clipboard.SetClipboardData(win32clipboard.CF_DIB, data)
+                    win32clipboard.CloseClipboard()
+
+                elif platform.system() == 'Darwin':
+                    # macOS - save temp and use pbcopy
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as f:
+                        img.save(f, 'PNG')
+                        temp_path = f.name
+                    subprocess.run(['osascript', '-e',
+                                  f'set the clipboard to (read (POSIX file "{temp_path}") as TIFF picture)'])
+
+                else:
+                    # Linux - try xclip
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as f:
+                        img.save(f, 'PNG')
+                        temp_path = f.name
+                    subprocess.run(['xclip', '-selection', 'clipboard', '-t', 'image/png', '-i', temp_path])
+
+                # Show success message
+                self._show_copy_success("Chart image copied to clipboard!")
+
+            except ImportError:
+                # Fallback: save to temp file and show path
+                import tempfile
+                temp_path = tempfile.mktemp(suffix='.png')
+                self.fig.savefig(temp_path, format='png', dpi=150, facecolor=self.BG_COLOR,
+                               bbox_inches='tight')
+                self._show_copy_success(f"Chart saved to:\n{temp_path}")
+
+        except Exception as e:
+            self._show_copy_success(f"Copy failed: {str(e)}")
+
+    def _show_copy_success(self, message: str):
+        """Show a brief success message."""
+        popup = tk.Toplevel(self.modal)
+        popup.wm_overrideredirect(True)
+        popup.configure(bg='#28a745')
+
+        # Center on modal
+        x = self.modal.winfo_x() + self.modal.winfo_width() // 2 - 100
+        y = self.modal.winfo_y() + self.modal.winfo_height() // 2 - 25
+        popup.geometry(f"+{x}+{y}")
+
+        label = tk.Label(popup, text=message, bg='#28a745', fg='white',
+                        padx=20, pady=10, font=('Arial', 10))
+        label.pack()
+
+        # Auto-close after 2 seconds
+        popup.after(2000, popup.destroy)
+
+    def _show_chart_info(self):
+        """Show detailed chart information dialog."""
+        info_dialog = tk.Toplevel(self.modal)
+        info_dialog.title(f"Chart Info: {self.title}")
+        info_dialog.geometry("500x400")
+        info_dialog.configure(bg=self.BG_COLOR)
+        info_dialog.transient(self.modal)
+
+        # Title
+        title_frame = tk.Frame(info_dialog, bg='#1a3a5c')
+        title_frame.pack(fill=tk.X, padx=10, pady=10)
+        tk.Label(title_frame, text=self.title, font=('Arial', 14, 'bold'),
+                bg='#1a3a5c', fg='white').pack(padx=10, pady=5)
+
+        # Scrollable content
+        content_frame = ttk.Frame(info_dialog)
+        content_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        text = tk.Text(content_frame, wrap=tk.WORD, bg=self.ENTRY_BG, fg=self.FG_COLOR,
+                      font=('Arial', 10), padx=10, pady=10)
+        scrollbar = ttk.Scrollbar(content_frame, command=text.yview)
+        text.configure(yscrollcommand=scrollbar.set)
+
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        text.pack(fill=tk.BOTH, expand=True)
+
+        # Format description content
+        if isinstance(self.description, dict):
+            # Structured description from chart_descriptions
+            sections = [
+                ('Description', self.description.get('description', '')),
+                ('Cyber Security Context', self.description.get('cyber_context', '')),
+                ('Data Inputs', self.description.get('inputs', '')),
+                ('How to Interpret', self.description.get('interpretation', '')),
+                ('Available Filters', ', '.join(self.description.get('filters', []))),
+            ]
+            for title, content in sections:
+                if content:
+                    text.insert(tk.END, f"{title}\n", 'heading')
+                    text.insert(tk.END, f"{content}\n\n")
+        else:
+            # Plain string description
+            text.insert(tk.END, self.description)
+
+        # Add current filter settings
+        text.insert(tk.END, "\nCurrent Filters Applied\n", 'heading')
+        filters = self.get_filter_settings()
+        for key, value in filters.items():
+            if value and value != 'All':
+                text.insert(tk.END, f"  • {key}: {value}\n")
+
+        # Style headings
+        text.tag_configure('heading', font=('Arial', 11, 'bold'), foreground='#17a2b8')
+        text.configure(state=tk.DISABLED)
+
+        # Close button
+        ttk.Button(info_dialog, text="Close", command=info_dialog.destroy).pack(pady=10)
 
     def get_filter_settings(self) -> Dict[str, Any]:
         """Get current filter settings for use in redraw function."""

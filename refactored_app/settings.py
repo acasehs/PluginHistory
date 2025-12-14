@@ -125,6 +125,14 @@ class UserSettings:
     shared_asset_mappings: Dict[str, str] = field(default_factory=dict)
     shared_asset_patterns: List[str] = field(default_factory=list)
 
+    # Environment configuration
+    environment_types: List[str] = field(default_factory=lambda: ['Production', 'PSS', 'Shared', 'Unknown'])
+    environment_mappings: Dict[str, str] = field(default_factory=dict)  # hostname -> environment
+    environment_patterns: Dict[str, str] = field(default_factory=dict)  # regex pattern -> environment
+
+    # Default filter date range (days back from today)
+    default_date_range_days: int = 180
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return asdict(self)
