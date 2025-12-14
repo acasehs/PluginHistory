@@ -1391,28 +1391,37 @@ class NessusHistoryTrackerApp:
         try:
             self._log("Starting processing...")
 
-            # Load OPDIR if available
-            if self.opdir_file_path:
-                self._log("Loading OPDIR mapping...")
-                self.opdir_df = load_opdir_mapping(self.opdir_file_path)
-
-            # Load IAVM notices if available
-            if self.iavm_file_path:
-                self._log("Loading IAVM notice summaries...")
-                self.iavm_df = load_iavm_summaries(self.iavm_file_path)
-                if not self.iavm_df.empty:
-                    self._log(f"Loaded {len(self.iavm_df)} IAVM notices")
-
-            # Load plugins database
+            # Load plugins database first (needed for processing new archives)
             if self.plugins_db_path:
                 self._log("Loading plugins database...")
                 self.plugins_dict = load_plugins_database(self.plugins_db_path)
 
-            # Process archives or load existing DB
+            # Process archives or load existing DB FIRST
             if self.existing_db_path and not self.archive_paths:
                 self._load_existing_database()
             else:
                 self._process_new_archives()
+
+            # After loading database, check if we need to load OPDIR from file
+            # Only load from file if: file selected AND (no data in DB OR file is different)
+            if self.opdir_file_path:
+                if self.opdir_df.empty:
+                    self._log("Loading OPDIR mapping from file...")
+                    self.opdir_df = load_opdir_mapping(self.opdir_file_path)
+                    if not self.opdir_df.empty:
+                        self._log(f"Loaded {len(self.opdir_df)} OPDIR mappings from file")
+                else:
+                    self._log(f"Using {len(self.opdir_df)} OPDIR mappings from database")
+
+            # Same for IAVM notices
+            if self.iavm_file_path:
+                if self.iavm_df.empty:
+                    self._log("Loading IAVM notice summaries from file...")
+                    self.iavm_df = load_iavm_summaries(self.iavm_file_path)
+                    if not self.iavm_df.empty:
+                        self._log(f"Loaded {len(self.iavm_df)} IAVM notices from file")
+                else:
+                    self._log(f"Using {len(self.iavm_df)} IAVM notices from database")
 
             # Set date filter defaults
             if not self.historical_df.empty and 'scan_date' in self.historical_df.columns:
