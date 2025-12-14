@@ -7137,14 +7137,13 @@ class NessusHistoryTrackerApp:
 
         # Add data labels on bars
         if show_labels:
-            for bar, val in zip(bars1, p1_values):
+            for idx, (bar, val) in enumerate(zip(bars1, p1_values)):
                 if val > 0:
-                    label_text = f'{int(val)}' if i < 4 else f'{val:.1f}'
                     ax.annotate(f'{int(val) if isinstance(val, int) or val == int(val) else val:.1f}',
                                xy=(bar.get_x() + bar.get_width()/2, val),
                                xytext=(0, 2), textcoords='offset points',
                                ha='center', fontsize=6, color='white')
-            for bar, val in zip(bars2, p2_values):
+            for idx, (bar, val) in enumerate(zip(bars2, p2_values)):
                 if val > 0:
                     ax.annotate(f'{int(val) if isinstance(val, int) or val == int(val) else val:.1f}',
                                xy=(bar.get_x() + bar.get_width()/2, val),
