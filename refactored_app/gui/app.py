@@ -3390,8 +3390,13 @@ class NessusHistoryTrackerApp:
             lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
 
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas_window = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Make scrollable_frame expand to canvas width
+        def on_canvas_configure(event):
+            canvas.itemconfig(canvas_window, width=event.width)
+        canvas.bind('<Configure>', on_canvas_configure)
 
         # Enable mousewheel scrolling
         def _on_mousewheel(event):
@@ -3516,16 +3521,52 @@ class NessusHistoryTrackerApp:
             col_offset = i % 2
             add_row(time_grid, label, value, row_num, col_offset)
 
-        # CVE/IAVX section
+        # CVE/IAVX section - multi-column layout for long lists
         cve_iavx_frame = ttk.LabelFrame(scrollable_frame, text="CVE & IAVX References")
         cve_iavx_frame.pack(fill=tk.X, pady=5, padx=5)
 
-        ref_grid = ttk.Frame(cve_iavx_frame)
-        ref_grid.pack(fill=tk.X, padx=5, pady=5)
+        def add_multi_column_list(parent, label, values_str, num_cols=4):
+            """Display a list of values in multiple columns."""
+            if not values_str or values_str == 'nan' or pd.isna(values_str):
+                return
 
-        row = 0
-        row = add_row(ref_grid, "CVEs", finding.get('cves'), row)
-        row = add_row(ref_grid, "IAVX", finding.get('iavx'), row)
+            container = ttk.Frame(parent)
+            container.pack(fill=tk.X, padx=5, pady=5)
+
+            # Label row
+            tk.Label(container, text=f"{label}:", font=('Arial', 9, 'bold'),
+                    bg=GUI_DARK_THEME['bg'], fg='#17a2b8',
+                    anchor='w').pack(anchor='w')
+
+            # Parse values (comma or space separated)
+            values_str = str(values_str)
+            if ',' in values_str:
+                values = [v.strip() for v in values_str.split(',') if v.strip()]
+            else:
+                values = [v.strip() for v in values_str.split() if v.strip()]
+
+            if not values:
+                return
+
+            # Create grid for values
+            grid_frame = ttk.Frame(container)
+            grid_frame.pack(fill=tk.X, pady=(2, 0))
+
+            # Configure columns to expand equally
+            for col in range(num_cols):
+                grid_frame.columnconfigure(col, weight=1)
+
+            # Place values in grid
+            for i, val in enumerate(values):
+                row_num = i // num_cols
+                col_num = i % num_cols
+                tk.Label(grid_frame, text=val, bg=GUI_DARK_THEME['bg'],
+                        fg=GUI_DARK_THEME['fg'], anchor='w',
+                        font=('Consolas', 9)).grid(row=row_num, column=col_num,
+                                                   sticky='w', padx=(0, 10), pady=1)
+
+        add_multi_column_list(cve_iavx_frame, "CVEs", finding.get('cves'), num_cols=4)
+        add_multi_column_list(cve_iavx_frame, "IAVX", finding.get('iavx'), num_cols=3)
 
         # OPDIR information if available
         opdir_num = finding.get('opdir_number')
