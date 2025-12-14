@@ -160,8 +160,8 @@ class MenuBar:
             command=self.app._apply_filters
         )
         analysis_menu.add_command(
-            label="Clear Filters",
-            command=self.app._clear_filters
+            label="Reset Filters",
+            command=self.app._reset_filters
         )
 
         analysis_menu.add_separator()
