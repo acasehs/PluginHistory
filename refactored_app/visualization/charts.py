@@ -5,13 +5,211 @@ Functions for creating individual charts using matplotlib.
 
 import pandas as pd
 import numpy as np
-from datetime import datetime
-from typing import Dict, List, Tuple, Optional, Any
+from datetime import datetime, timedelta
+from typing import Dict, List, Tuple, Optional, Any, Callable
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 import matplotlib.dates as mdates
 
 from ..config import SEVERITY_COLORS, SEVERITY_ORDER, OPDIR_STATUS_COLORS
+
+
+# Date interval constants
+DATE_INTERVAL_WEEKLY = 'weekly'
+DATE_INTERVAL_MONTHLY = 'monthly'
+DATE_INTERVAL_QUARTERLY = 'quarterly'
+DATE_INTERVAL_YEARLY = 'yearly'
+
+
+def get_date_interval(start_date: datetime, end_date: datetime) -> str:
+    """
+    Determine the appropriate date interval for visualizations based on date range.
+
+    Rules:
+    - ≤60 days: weekly intervals
+    - >60 and ≤180 days: monthly intervals
+    - >180 and ≤540 days: quarterly intervals
+    - >540 days: yearly intervals
+
+    Args:
+        start_date: Start of date range
+        end_date: End of date range
+
+    Returns:
+        Interval type string: 'weekly', 'monthly', 'quarterly', or 'yearly'
+    """
+    if pd.isna(start_date) or pd.isna(end_date):
+        return DATE_INTERVAL_MONTHLY
+
+    # Ensure datetime objects
+    if isinstance(start_date, str):
+        start_date = pd.to_datetime(start_date)
+    if isinstance(end_date, str):
+        end_date = pd.to_datetime(end_date)
+
+    days_range = (end_date - start_date).days
+
+    if days_range <= 60:
+        return DATE_INTERVAL_WEEKLY
+    elif days_range <= 180:
+        return DATE_INTERVAL_MONTHLY
+    elif days_range <= 540:
+        return DATE_INTERVAL_QUARTERLY
+    else:
+        return DATE_INTERVAL_YEARLY
+
+
+def get_interval_label(interval: str) -> str:
+    """Get human-readable label for interval type."""
+    labels = {
+        DATE_INTERVAL_WEEKLY: 'Week',
+        DATE_INTERVAL_MONTHLY: 'Month',
+        DATE_INTERVAL_QUARTERLY: 'Quarter',
+        DATE_INTERVAL_YEARLY: 'Year'
+    }
+    return labels.get(interval, 'Period')
+
+
+def get_period_format(interval: str) -> str:
+    """Get pandas period format string for interval type."""
+    formats = {
+        DATE_INTERVAL_WEEKLY: 'W',
+        DATE_INTERVAL_MONTHLY: 'M',
+        DATE_INTERVAL_QUARTERLY: 'Q',
+        DATE_INTERVAL_YEARLY: 'Y'
+    }
+    return formats.get(interval, 'M')
+
+
+def get_date_format(interval: str) -> str:
+    """Get matplotlib date format string for interval type."""
+    formats = {
+        DATE_INTERVAL_WEEKLY: '%m/%d',
+        DATE_INTERVAL_MONTHLY: '%b %Y',
+        DATE_INTERVAL_QUARTERLY: 'Q%q %Y',
+        DATE_INTERVAL_YEARLY: '%Y'
+    }
+    return formats.get(interval, '%Y-%m')
+
+
+def format_period_label(period, interval: str) -> str:
+    """Format a period object to a display label based on interval."""
+    if interval == DATE_INTERVAL_WEEKLY:
+        # Week format: "Jan 01" or "W01"
+        start = period.start_time
+        return start.strftime('%b %d')
+    elif interval == DATE_INTERVAL_MONTHLY:
+        return str(period)  # 2024-01 format
+    elif interval == DATE_INTERVAL_QUARTERLY:
+        return f"Q{period.quarter} {period.year}"
+    elif interval == DATE_INTERVAL_YEARLY:
+        return str(period.year)
+    return str(period)
+
+
+def group_by_interval(df: pd.DataFrame, date_column: str, interval: str,
+                      agg_func: str = 'size') -> pd.Series:
+    """
+    Group DataFrame by date interval and aggregate.
+
+    Args:
+        df: DataFrame to group
+        date_column: Name of date column
+        interval: Interval type from get_date_interval()
+        agg_func: Aggregation function ('size', 'sum', 'mean', 'count')
+
+    Returns:
+        Grouped and aggregated Series
+    """
+    if df.empty or date_column not in df.columns:
+        return pd.Series()
+
+    df = df.copy()
+    df[date_column] = pd.to_datetime(df[date_column])
+
+    period_format = get_period_format(interval)
+    grouped = df.groupby(df[date_column].dt.to_period(period_format))
+
+    if agg_func == 'size':
+        return grouped.size()
+    elif agg_func == 'sum':
+        return grouped.sum()
+    elif agg_func == 'mean':
+        return grouped.mean()
+    elif agg_func == 'count':
+        return grouped.count()
+    else:
+        return grouped.size()
+
+
+def group_by_interval_column(df: pd.DataFrame, date_column: str, value_column: str,
+                             interval: str, agg_func: str = 'sum') -> pd.Series:
+    """
+    Group DataFrame by date interval and aggregate a specific column.
+
+    Args:
+        df: DataFrame to group
+        date_column: Name of date column
+        value_column: Name of column to aggregate
+        interval: Interval type from get_date_interval()
+        agg_func: Aggregation function
+
+    Returns:
+        Grouped and aggregated Series
+    """
+    if df.empty or date_column not in df.columns or value_column not in df.columns:
+        return pd.Series()
+
+    df = df.copy()
+    df[date_column] = pd.to_datetime(df[date_column])
+
+    period_format = get_period_format(interval)
+    grouped = df.groupby(df[date_column].dt.to_period(period_format))[value_column]
+
+    if agg_func == 'sum':
+        return grouped.sum()
+    elif agg_func == 'mean':
+        return grouped.mean()
+    elif agg_func == 'count':
+        return grouped.count()
+    elif agg_func == 'max':
+        return grouped.max()
+    elif agg_func == 'min':
+        return grouped.min()
+    else:
+        return grouped.sum()
+
+
+def get_period_labels(periods: pd.PeriodIndex, interval: str) -> List[str]:
+    """
+    Get formatted labels for period index.
+
+    Args:
+        periods: PeriodIndex from groupby
+        interval: Interval type
+
+    Returns:
+        List of formatted label strings
+    """
+    return [format_period_label(p, interval) for p in periods]
+
+
+def calculate_date_range_from_df(df: pd.DataFrame, date_column: str) -> Tuple[Optional[datetime], Optional[datetime]]:
+    """
+    Calculate the date range from a DataFrame's date column.
+
+    Args:
+        df: DataFrame
+        date_column: Name of date column
+
+    Returns:
+        Tuple of (start_date, end_date)
+    """
+    if df.empty or date_column not in df.columns:
+        return (None, None)
+
+    dates = pd.to_datetime(df[date_column])
+    return (dates.min(), dates.max())
 
 
 def get_dark_style():
