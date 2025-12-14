@@ -698,3 +698,16 @@ def extract_opdir_from_iavx(iavx_string: str, reference_year: int = None) -> Lis
     refs = normalize_iavx_from_scan(iavx_string)
     # Convert to legacy format
     return [{'number': r['suffix'].lower(), 'year': r['year'], 'full': r['full']} for r in refs]
+
+
+def match_opdir(opdir_info: Dict[str, Any], lookup: Dict[str, Any],
+                reference_year: int = None) -> Optional[Dict[str, Any]]:
+    """Legacy alias for match_finding_to_opdir with format conversion."""
+    # Convert old format to new format
+    refs = [{
+        'full': opdir_info.get('full', ''),
+        'suffix': opdir_info.get('number', '').upper(),
+        'year': opdir_info.get('year') or reference_year,
+        'type': ''
+    }]
+    return match_finding_to_opdir(refs, lookup)
