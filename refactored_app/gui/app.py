@@ -8,7 +8,7 @@ from tkinter import ttk, filedialog, messagebox
 import pandas as pd
 import numpy as np
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 
 # Matplotlib for charts (with Tk backend)
@@ -1346,6 +1346,7 @@ class NessusHistoryTrackerApp:
             self.plugins_db_path = path
             self.plugins_label.config(text=self._truncate_filename(os.path.basename(path)), foreground="white")
             self._log(f"Selected plugins DB: {os.path.basename(path)}")
+            self.settings_manager.update_recent_file('plugins_db', path)
 
     def _select_existing_db(self):
         """Select existing database file."""
@@ -1356,6 +1357,7 @@ class NessusHistoryTrackerApp:
             self.existing_db_path = path
             self.existing_db_label.config(text=self._truncate_filename(os.path.basename(path)), foreground="white")
             self._log(f"Selected existing DB: {os.path.basename(path)}")
+            self.settings_manager.update_recent_file('sqlite', path)
 
     def _select_opdir_file(self):
         """Select OPDIR mapping file."""
@@ -1366,6 +1368,7 @@ class NessusHistoryTrackerApp:
             self.opdir_file_path = path
             self.opdir_label.config(text=self._truncate_filename(os.path.basename(path)), foreground="white")
             self._log(f"Selected OPDIR file: {os.path.basename(path)}")
+            self.settings_manager.update_recent_file('opdir', path)
 
     def _select_iavm_file(self):
         """Select IAVM Notice Summaries file."""
@@ -1376,6 +1379,7 @@ class NessusHistoryTrackerApp:
             self.iavm_file_path = path
             self.iavm_label.config(text=self._truncate_filename(os.path.basename(path)), foreground="white")
             self._log(f"Selected IAVM file: {os.path.basename(path)}")
+            self.settings_manager.update_recent_file('iavm', path)
 
     # Processing methods
     def _process_archives(self):
@@ -1387,28 +1391,37 @@ class NessusHistoryTrackerApp:
         try:
             self._log("Starting processing...")
 
-            # Load OPDIR if available
-            if self.opdir_file_path:
-                self._log("Loading OPDIR mapping...")
-                self.opdir_df = load_opdir_mapping(self.opdir_file_path)
-
-            # Load IAVM notices if available
-            if self.iavm_file_path:
-                self._log("Loading IAVM notice summaries...")
-                self.iavm_df = load_iavm_summaries(self.iavm_file_path)
-                if not self.iavm_df.empty:
-                    self._log(f"Loaded {len(self.iavm_df)} IAVM notices")
-
-            # Load plugins database
+            # Load plugins database first (needed for processing new archives)
             if self.plugins_db_path:
                 self._log("Loading plugins database...")
                 self.plugins_dict = load_plugins_database(self.plugins_db_path)
 
-            # Process archives or load existing DB
+            # Process archives or load existing DB FIRST
             if self.existing_db_path and not self.archive_paths:
                 self._load_existing_database()
             else:
                 self._process_new_archives()
+
+            # After loading database, check if we need to load OPDIR from file
+            # Only load from file if: file selected AND (no data in DB OR file is different)
+            if self.opdir_file_path:
+                if self.opdir_df.empty:
+                    self._log("Loading OPDIR mapping from file...")
+                    self.opdir_df = load_opdir_mapping(self.opdir_file_path)
+                    if not self.opdir_df.empty:
+                        self._log(f"Loaded {len(self.opdir_df)} OPDIR mappings from file")
+                else:
+                    self._log(f"Using {len(self.opdir_df)} OPDIR mappings from database")
+
+            # Same for IAVM notices
+            if self.iavm_file_path:
+                if self.iavm_df.empty:
+                    self._log("Loading IAVM notice summaries from file...")
+                    self.iavm_df = load_iavm_summaries(self.iavm_file_path)
+                    if not self.iavm_df.empty:
+                        self._log(f"Loaded {len(self.iavm_df)} IAVM notices from file")
+                else:
+                    self._log(f"Using {len(self.iavm_df)} IAVM notices from database")
 
             # Set date filter defaults
             if not self.historical_df.empty and 'scan_date' in self.historical_df.columns:
@@ -7124,14 +7137,13 @@ class NessusHistoryTrackerApp:
 
         # Add data labels on bars
         if show_labels:
-            for bar, val in zip(bars1, p1_values):
+            for idx, (bar, val) in enumerate(zip(bars1, p1_values)):
                 if val > 0:
-                    label_text = f'{int(val)}' if i < 4 else f'{val:.1f}'
                     ax.annotate(f'{int(val) if isinstance(val, int) or val == int(val) else val:.1f}',
                                xy=(bar.get_x() + bar.get_width()/2, val),
                                xytext=(0, 2), textcoords='offset points',
                                ha='center', fontsize=6, color='white')
-            for bar, val in zip(bars2, p2_values):
+            for idx, (bar, val) in enumerate(zip(bars2, p2_values)):
                 if val > 0:
                     ax.annotate(f'{int(val) if isinstance(val, int) or val == int(val) else val:.1f}',
                                xy=(bar.get_x() + bar.get_width()/2, val),
@@ -7254,10 +7266,16 @@ class NessusHistoryTrackerApp:
         # Load recent files if they exist
         if settings.recent_plugins_db and os.path.exists(settings.recent_plugins_db):
             self.plugins_db_path = settings.recent_plugins_db
+            self.plugins_label.config(text=self._truncate_filename(os.path.basename(settings.recent_plugins_db)), foreground="white")
         if settings.recent_opdir_file and os.path.exists(settings.recent_opdir_file):
             self.opdir_file_path = settings.recent_opdir_file
+            self.opdir_label.config(text=self._truncate_filename(os.path.basename(settings.recent_opdir_file)), foreground="white")
+        if settings.recent_iavm_file and os.path.exists(settings.recent_iavm_file):
+            self.iavm_file_path = settings.recent_iavm_file
+            self.iavm_label.config(text=self._truncate_filename(os.path.basename(settings.recent_iavm_file)), foreground="white")
         if settings.recent_sqlite_db and os.path.exists(settings.recent_sqlite_db):
             self.existing_db_path = settings.recent_sqlite_db
+            self.existing_db_label.config(text=self._truncate_filename(os.path.basename(settings.recent_sqlite_db)), foreground="white")
 
     def _show_settings_dialog(self):
         """Show settings configuration dialog."""

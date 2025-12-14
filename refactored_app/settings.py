@@ -111,6 +111,7 @@ class UserSettings:
     # Recent files (persisted)
     recent_plugins_db: str = ''
     recent_opdir_file: str = ''
+    recent_iavm_file: str = ''
     recent_sqlite_db: str = ''
 
     # Window settings
@@ -298,6 +299,8 @@ class SettingsManager:
             self.settings.recent_plugins_db = path
         elif file_type == 'opdir':
             self.settings.recent_opdir_file = path
+        elif file_type == 'iavm':
+            self.settings.recent_iavm_file = path
         elif file_type == 'sqlite':
             self.settings.recent_sqlite_db = path
         self.save()
