@@ -49,6 +49,7 @@ from .chart_utils import (
     add_data_labels, add_horizontal_data_labels, add_line_data_labels,
     ChartPopoutModal
 )
+from .menu_bar import create_menu_bar
 
 
 class NessusHistoryTrackerApp:
@@ -121,6 +122,12 @@ class NessusHistoryTrackerApp:
         # Build UI
         self._setup_styles()
         self._build_ui()
+
+        # Add menu bar
+        self.menu_bar = create_menu_bar(self)
+
+        # Initialize AI client asynchronously if configured
+        self._init_ai_client_async()
 
     def _setup_styles(self):
         """Configure ttk styles for dark theme."""
@@ -346,6 +353,29 @@ class NessusHistoryTrackerApp:
         row3.pack(fill=tk.X, pady=2)
         ttk.Button(row3, text="Save JSON", command=self._export_json).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
         ttk.Button(row3, text="Settings", command=self._show_settings_dialog).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+
+        # AI Predictions section
+        ai_frame = ttk.LabelFrame(parent, text="AI Predictions", padding=5)
+        ai_frame.pack(fill=tk.X, pady=(5, 0))
+
+        # AI status indicator
+        self.ai_status_frame = ttk.Frame(ai_frame)
+        self.ai_status_frame.pack(fill=tk.X, pady=(0, 2))
+        self.ai_status_label = ttk.Label(self.ai_status_frame, text="AI: Not configured", foreground="gray")
+        self.ai_status_label.pack(side=tk.LEFT)
+
+        # Row AI-1: AI Analysis + Configure
+        ai_row1 = ttk.Frame(ai_frame)
+        ai_row1.pack(fill=tk.X, pady=2)
+        self.ai_analyze_btn = ttk.Button(ai_row1, text="AI Analysis", command=self._run_ai_analysis)
+        self.ai_analyze_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+        ttk.Button(ai_row1, text="Configure", command=self._show_ai_settings).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+
+        # Row AI-2: Threat Intel
+        ai_row2 = ttk.Frame(ai_frame)
+        ai_row2.pack(fill=tk.X, pady=2)
+        ttk.Button(ai_row2, text="Threat Feeds", command=self._show_threat_intel_dialog).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+        ttk.Button(ai_row2, text="Sync Intel", command=self._quick_sync_threat_intel).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
 
     def _build_status_tab(self):
         """Build status/log tab."""
@@ -6921,6 +6951,116 @@ class NessusHistoryTrackerApp:
         self.status_text.insert(tk.END, f"[{timestamp}] {message}\n")
         self.status_text.see(tk.END)
         self.window.update()
+
+    # =========================================================================
+    # AI Predictions Integration
+    # =========================================================================
+
+    def _init_ai_client_async(self):
+        """Initialize AI client asynchronously on startup."""
+        import threading
+
+        def _check_ai():
+            if self.settings_manager.is_ai_configured():
+                try:
+                    from ..ai.openwebui_client import OpenWebUIClient, OpenWebUIConfig
+
+                    ai_settings = self.settings_manager.ai_settings
+                    config = OpenWebUIConfig(
+                        base_url=ai_settings.base_url,
+                        api_key=ai_settings.api_key,
+                        model=ai_settings.model
+                    )
+                    client = OpenWebUIClient(config)
+
+                    # Test connection and refresh models
+                    if client.test_connection():
+                        models = client.refresh_models()
+                        model_count = len(models)
+
+                        # Check if configured model is available
+                        if ai_settings.model and ai_settings.model not in models:
+                            self.window.after(0, lambda: self._update_ai_status(
+                                f"AI: Model '{ai_settings.model}' not found",
+                                "orange"
+                            ))
+                        else:
+                            self.window.after(0, lambda: self._update_ai_status(
+                                f"AI: Ready ({model_count} models)",
+                                "green"
+                            ))
+                    else:
+                        self.window.after(0, lambda: self._update_ai_status(
+                            "AI: Connection failed",
+                            "red"
+                        ))
+                except Exception as e:
+                    self.window.after(0, lambda: self._update_ai_status(
+                        f"AI: Error - {str(e)[:30]}",
+                        "red"
+                    ))
+            else:
+                self.window.after(0, lambda: self._update_ai_status(
+                    "AI: Not configured",
+                    "gray"
+                ))
+
+        thread = threading.Thread(target=_check_ai, daemon=True)
+        thread.start()
+
+    def _update_ai_status(self, message: str, color: str):
+        """Update AI status label."""
+        if hasattr(self, 'ai_status_label'):
+            self.ai_status_label.config(text=message, foreground=color)
+
+    def _run_ai_analysis(self):
+        """Run AI analysis from button click."""
+        if hasattr(self, 'menu_bar') and self.menu_bar:
+            self.menu_bar._run_ai_analysis()
+
+    def _show_ai_settings(self):
+        """Show AI settings dialog."""
+        try:
+            from .ai_settings_dialog import show_ai_settings_dialog
+        except ImportError:
+            from refactored_app.gui.ai_settings_dialog import show_ai_settings_dialog
+
+        def on_save():
+            self._log("AI settings saved")
+            self._init_ai_client_async()  # Re-check connection
+
+        show_ai_settings_dialog(
+            parent=self.window,
+            settings_manager=self.settings_manager,
+            on_save=on_save
+        )
+
+    def _show_threat_intel_dialog(self):
+        """Show threat intel configuration dialog."""
+        try:
+            from .threat_intel_dialog import show_threat_intel_dialog
+        except ImportError:
+            from refactored_app.gui.threat_intel_dialog import show_threat_intel_dialog
+
+        show_threat_intel_dialog(
+            parent=self.window,
+            settings_manager=self.settings_manager,
+            on_sync_complete=lambda stats: self._log(
+                f"Threat intel sync: {stats.get('total_records', 0)} records synced"
+            )
+        )
+
+    def _quick_sync_threat_intel(self):
+        """Quick sync threat intelligence."""
+        if not self.settings_manager.is_ai_configured():
+            messagebox.showwarning(
+                "Not Configured",
+                "Please configure AI settings first."
+            )
+            self._show_ai_settings()
+            return
+
+        self._show_threat_intel_dialog()
 
     def run(self):
         """Run the application."""
