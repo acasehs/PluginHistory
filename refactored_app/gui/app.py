@@ -199,6 +199,19 @@ class NessusHistoryTrackerApp:
 
     def _build_ui(self):
         """Build the main user interface."""
+        # Status bar at bottom (create first, pack last)
+        self.status_bar = tk.Frame(self.window, bg='#1a1a2e', height=24)
+        self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+        self.status_bar.pack_propagate(False)
+
+        self.status_label = tk.Label(self.status_bar, text="Ready", bg='#1a1a2e', fg='#888888',
+                                     anchor='w', padx=10, font=('Arial', 9))
+        self.status_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        self.progress_label = tk.Label(self.status_bar, text="", bg='#1a1a2e', fg='#17a2b8',
+                                       anchor='e', padx=10, font=('Arial', 9))
+        self.progress_label.pack(side=tk.RIGHT)
+
         # Main container
         main_frame = ttk.Frame(self.window)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
@@ -219,7 +232,7 @@ class NessusHistoryTrackerApp:
         self.notebook = ttk.Notebook(right_panel)
         self.notebook.pack(fill=tk.BOTH, expand=True)
 
-        self._build_status_tab()
+        # Build tabs - Logging tab last
         self._build_dashboard_tab()
         self._build_lifecycle_tab()
         self._build_host_tab()
@@ -234,6 +247,7 @@ class NessusHistoryTrackerApp:
         self._build_metrics_tab()
         self._build_host_tracking_tab()
         self._build_advanced_tab()
+        self._build_logging_tab()  # Moved to last
 
     def _build_file_selection(self, parent):
         """Build file selection section with compact layout."""
@@ -512,18 +526,18 @@ class NessusHistoryTrackerApp:
         ttk.Button(ai_row2, text="Threat Feeds", command=self._show_threat_intel_dialog).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
         ttk.Button(ai_row2, text="Sync Intel", command=self._quick_sync_threat_intel).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
 
-    def _build_status_tab(self):
-        """Build status/log tab."""
-        status_frame = ttk.Frame(self.notebook)
-        self.notebook.add(status_frame, text="Status")
+    def _build_logging_tab(self):
+        """Build logging tab (formerly Status tab)."""
+        logging_frame = ttk.Frame(self.notebook)
+        self.notebook.add(logging_frame, text="Logging")
 
-        self.status_text = tk.Text(status_frame, wrap=tk.WORD,
+        self.status_text = tk.Text(logging_frame, wrap=tk.WORD,
                                    bg=GUI_DARK_THEME['text_bg'],
                                    fg=GUI_DARK_THEME['fg'],
                                    font=('Consolas', 10))
         self.status_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        scrollbar = ttk.Scrollbar(status_frame, command=self.status_text.yview)
+        scrollbar = ttk.Scrollbar(logging_frame, command=self.status_text.yview)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.status_text.config(yscrollcommand=scrollbar.set)
 
@@ -1559,64 +1573,183 @@ class NessusHistoryTrackerApp:
 
     # Processing methods
     def _process_archives(self):
-        """Process selected archives."""
+        """Process selected archives in a background thread."""
         if not self.archive_paths and not self.existing_db_path:
             messagebox.showwarning("No Data", "Please select archives or an existing database")
             return
 
-        try:
-            self._log("Starting processing...")
+        # Check if already processing
+        if hasattr(self, '_is_processing') and self._is_processing:
+            messagebox.showinfo("Processing", "Processing is already in progress")
+            return
 
-            # Load plugins database first (needed for processing new archives)
-            if self.plugins_db_path:
-                self._log("Loading plugins database...")
-                self.plugins_dict = load_plugins_database(self.plugins_db_path)
+        self._is_processing = True
+        self._set_processing(True, "Starting processing...")
 
-            # Process archives or load existing DB FIRST
-            if self.existing_db_path and not self.archive_paths:
-                self._load_existing_database()
-            else:
-                self._process_new_archives()
+        import threading
 
-            # After loading database, check if we need to load OPDIR from file
-            # Only load from file if: file selected AND (no data in DB OR file is different)
-            if self.opdir_file_path:
-                if self.opdir_df.empty:
-                    self._log("Loading OPDIR mapping from file...")
-                    self.opdir_df = load_opdir_mapping(self.opdir_file_path)
-                    if not self.opdir_df.empty:
-                        self._log(f"Loaded {len(self.opdir_df)} OPDIR mappings from file")
+        def process_thread():
+            """Background processing thread."""
+            try:
+                self._log_safe("Starting processing...")
+
+                # Load plugins database first (needed for processing new archives)
+                if self.plugins_db_path:
+                    self._log_safe("Loading plugins database...")
+                    self.plugins_dict = load_plugins_database(self.plugins_db_path)
+
+                # Process archives or load existing DB FIRST
+                if self.existing_db_path and not self.archive_paths:
+                    self._load_existing_database_thread()
                 else:
-                    self._log(f"Using {len(self.opdir_df)} OPDIR mappings from database")
+                    self._process_new_archives_thread()
 
-            # Same for IAVM notices
-            if self.iavm_file_path:
-                if self.iavm_df.empty:
-                    self._log("Loading IAVM notice summaries from file...")
-                    self.iavm_df = load_iavm_summaries(self.iavm_file_path)
-                    if not self.iavm_df.empty:
-                        self._log(f"Loaded {len(self.iavm_df)} IAVM notices from file")
-                else:
-                    self._log(f"Using {len(self.iavm_df)} IAVM notices from database")
+                # After loading database, check if we need to load OPDIR from file
+                if self.opdir_file_path:
+                    if self.opdir_df.empty:
+                        self._log_safe("Loading OPDIR mapping from file...")
+                        self.opdir_df = load_opdir_mapping(self.opdir_file_path)
+                        if not self.opdir_df.empty:
+                            self._log_safe(f"Loaded {len(self.opdir_df)} OPDIR mappings from file")
+                    else:
+                        self._log_safe(f"Using {len(self.opdir_df)} OPDIR mappings from database")
 
-            # Set date filter defaults
-            if not self.historical_df.empty and 'scan_date' in self.historical_df.columns:
-                # Ensure scan_date is datetime for min/max operations
-                scan_dates = pd.to_datetime(self.historical_df['scan_date'])
-                start_date = scan_dates.min().strftime('%Y-%m-%d')
-                end_date = scan_dates.max().strftime('%Y-%m-%d')
-                self.filter_start_date.set(start_date)
-                self.filter_end_date.set(end_date)
+                # Same for IAVM notices
+                if self.iavm_file_path:
+                    if self.iavm_df.empty:
+                        self._log_safe("Loading IAVM notice summaries from file...")
+                        self.iavm_df = load_iavm_summaries(self.iavm_file_path)
+                        if not self.iavm_df.empty:
+                            self._log_safe(f"Loaded {len(self.iavm_df)} IAVM notices from file")
+                    else:
+                        self._log_safe(f"Using {len(self.iavm_df)} IAVM notices from database")
 
-            # Auto-save informational findings to yearly databases
-            self._auto_save_info_findings()
+                # Apply default 180-day date filter (must be on main thread)
+                self.window.after(0, self._apply_default_date_filter)
 
-            self._log("Processing complete!")
+                # Auto-save informational findings
+                self._auto_save_info_findings()
+
+                self._log_safe("Processing complete!")
+                self.window.after(0, lambda: self._on_processing_complete(True))
+
+            except Exception as e:
+                self._log_safe(f"ERROR: {str(e)}")
+                self.window.after(0, lambda: self._on_processing_complete(False, str(e)))
+
+        # Start background thread
+        thread = threading.Thread(target=process_thread, daemon=True)
+        thread.start()
+
+    def _on_processing_complete(self, success: bool, error_msg: str = ""):
+        """Called when processing completes (on main thread)."""
+        self._is_processing = False
+        if success:
+            self._set_processing(False, "Processing complete")
             messagebox.showinfo("Success", "Data processed successfully!")
+        else:
+            self._set_processing(False, "Processing failed")
+            messagebox.showerror("Error", f"Processing failed: {error_msg}")
 
-        except Exception as e:
-            self._log(f"ERROR: {str(e)}")
-            messagebox.showerror("Error", f"Processing failed: {str(e)}")
+    def _log_safe(self, message: str):
+        """Thread-safe logging - schedules log on main thread."""
+        self.window.after(0, lambda: self._log(message))
+
+    def _load_existing_database_thread(self):
+        """Load data from existing database (called from thread)."""
+        import sqlite3
+
+        self._log_safe("Loading existing database...")
+
+        conn = sqlite3.connect(self.existing_db_path)
+
+        try:
+            self.historical_df = pd.read_sql_query("SELECT * FROM historical_findings", conn)
+            self.historical_df['scan_date'] = pd.to_datetime(self.historical_df['scan_date'])
+            self._log_safe(f"Loaded {len(self.historical_df)} historical findings")
+
+            try:
+                self.lifecycle_df = pd.read_sql_query("SELECT * FROM finding_lifecycle", conn)
+                self._log_safe(f"Loaded {len(self.lifecycle_df)} lifecycle records")
+            except:
+                pass
+
+            try:
+                self.host_presence_df = pd.read_sql_query("SELECT * FROM host_presence", conn)
+                self._log_safe(f"Loaded {len(self.host_presence_df)} host presence records")
+            except:
+                pass
+
+            try:
+                self.scan_changes_df = pd.read_sql_query("SELECT * FROM scan_changes", conn)
+                self._log_safe(f"Loaded {len(self.scan_changes_df)} scan change records")
+            except:
+                pass
+
+            # Load OPDIR mapping if present
+            try:
+                self.opdir_df = pd.read_sql_query("SELECT * FROM opdir_mapping", conn)
+                if not self.opdir_df.empty:
+                    # Convert date columns from string to datetime
+                    for date_col in ['poam_due_date', 'final_due_date', 'release_date']:
+                        if date_col in self.opdir_df.columns:
+                            self.opdir_df[date_col] = pd.to_datetime(
+                                self.opdir_df[date_col], errors='coerce'
+                            )
+                    self._log_safe(f"Loaded {len(self.opdir_df)} OPDIR mappings from database")
+            except:
+                pass
+
+            # Load IAVM notices if present
+            try:
+                self.iavm_df = pd.read_sql_query("SELECT * FROM iavm_notices", conn)
+                if not self.iavm_df.empty:
+                    self._log_safe(f"Loaded {len(self.iavm_df)} IAVM notices from database")
+            except:
+                pass
+
+        finally:
+            conn.close()
+
+        # Run analysis refresh on main thread
+        self.window.after(0, self._refresh_analysis_internal)
+
+    def _process_new_archives_thread(self):
+        """Process new archive files (called from thread)."""
+        import tempfile
+
+        self._log_safe("Processing archives...")
+
+        all_findings = []
+        temp_dirs = []
+
+        for archive_path in self.archive_paths:
+            self._log_safe(f"Processing: {os.path.basename(archive_path)}")
+
+            if archive_path.endswith('.zip'):
+                temp_dir = tempfile.mkdtemp()
+                temp_dirs.append(temp_dir)
+                extract_nested_archives(archive_path, temp_dir)
+                nessus_files = find_files_by_extension(temp_dir, '.nessus')
+            else:
+                nessus_files = [archive_path]
+
+            if nessus_files:
+                findings_df, _ = parse_multiple_nessus_files(nessus_files, self.plugins_dict)
+                if not findings_df.empty:
+                    findings_df = enrich_findings_with_severity(findings_df)
+                    all_findings.append(findings_df)
+
+        # Cleanup temp directories
+        for temp_dir in temp_dirs:
+            cleanup_temp_directory(temp_dir)
+
+        if all_findings:
+            self.historical_df = pd.concat(all_findings, ignore_index=True)
+            self._log_safe(f"Total findings: {len(self.historical_df)}")
+
+        # Run analysis refresh on main thread
+        self.window.after(0, self._refresh_analysis_internal)
 
     def _load_existing_database(self):
         """Load data from existing database."""
@@ -1653,6 +1786,12 @@ class NessusHistoryTrackerApp:
             try:
                 self.opdir_df = pd.read_sql_query("SELECT * FROM opdir_mapping", conn)
                 if not self.opdir_df.empty:
+                    # Convert date columns from string to datetime
+                    for date_col in ['poam_due_date', 'final_due_date', 'release_date']:
+                        if date_col in self.opdir_df.columns:
+                            self.opdir_df[date_col] = pd.to_datetime(
+                                self.opdir_df[date_col], errors='coerce'
+                            )
                     self._log(f"Loaded {len(self.opdir_df)} OPDIR mappings from database")
             except:
                 pass
@@ -3229,13 +3368,13 @@ class NessusHistoryTrackerApp:
         """Create and display the finding detail popup modal."""
         modal = tk.Toplevel(self.window)
         modal.title(f"Finding Details: {finding.get('plugin_name', 'Unknown')[:50]}")
-        modal.geometry("900x700")
+        modal.geometry("900x900")
         modal.configure(bg=GUI_DARK_THEME['bg'])
         modal.transient(self.window)
 
         # Make resizable
         modal.resizable(True, True)
-        modal.minsize(700, 600)
+        modal.minsize(700, 900)
 
         # Main container with scrollbar
         main_frame = ttk.Frame(modal)
@@ -3251,8 +3390,13 @@ class NessusHistoryTrackerApp:
             lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
 
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas_window = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Make scrollable_frame expand to canvas width
+        def on_canvas_configure(event):
+            canvas.itemconfig(canvas_window, width=event.width)
+        canvas.bind('<Configure>', on_canvas_configure)
 
         # Enable mousewheel scrolling
         def _on_mousewheel(event):
@@ -3377,16 +3521,52 @@ class NessusHistoryTrackerApp:
             col_offset = i % 2
             add_row(time_grid, label, value, row_num, col_offset)
 
-        # CVE/IAVX section
+        # CVE/IAVX section - multi-column layout for long lists
         cve_iavx_frame = ttk.LabelFrame(scrollable_frame, text="CVE & IAVX References")
         cve_iavx_frame.pack(fill=tk.X, pady=5, padx=5)
 
-        ref_grid = ttk.Frame(cve_iavx_frame)
-        ref_grid.pack(fill=tk.X, padx=5, pady=5)
+        def add_multi_column_list(parent, label, values_str, num_cols=4):
+            """Display a list of values in multiple columns."""
+            if not values_str or values_str == 'nan' or pd.isna(values_str):
+                return
 
-        row = 0
-        row = add_row(ref_grid, "CVEs", finding.get('cves'), row)
-        row = add_row(ref_grid, "IAVX", finding.get('iavx'), row)
+            container = ttk.Frame(parent)
+            container.pack(fill=tk.X, padx=5, pady=5)
+
+            # Label row
+            tk.Label(container, text=f"{label}:", font=('Arial', 9, 'bold'),
+                    bg=GUI_DARK_THEME['bg'], fg='#17a2b8',
+                    anchor='w').pack(anchor='w')
+
+            # Parse values (comma or space separated)
+            values_str = str(values_str)
+            if ',' in values_str:
+                values = [v.strip() for v in values_str.split(',') if v.strip()]
+            else:
+                values = [v.strip() for v in values_str.split() if v.strip()]
+
+            if not values:
+                return
+
+            # Create grid for values
+            grid_frame = ttk.Frame(container)
+            grid_frame.pack(fill=tk.X, pady=(2, 0))
+
+            # Configure columns to expand equally
+            for col in range(num_cols):
+                grid_frame.columnconfigure(col, weight=1)
+
+            # Place values in grid
+            for i, val in enumerate(values):
+                row_num = i // num_cols
+                col_num = i % num_cols
+                tk.Label(grid_frame, text=val, bg=GUI_DARK_THEME['bg'],
+                        fg=GUI_DARK_THEME['fg'], anchor='w',
+                        font=('Consolas', 9)).grid(row=row_num, column=col_num,
+                                                   sticky='w', padx=(0, 10), pady=1)
+
+        add_multi_column_list(cve_iavx_frame, "CVEs", finding.get('cves'), num_cols=4)
+        add_multi_column_list(cve_iavx_frame, "IAVX", finding.get('iavx'), num_cols=3)
 
         # OPDIR information if available
         opdir_num = finding.get('opdir_number')
@@ -8472,18 +8652,27 @@ class NessusHistoryTrackerApp:
         content_frame.pack(fill=tk.BOTH, expand=True)
         content_frame.columnconfigure(0, weight=1)
         content_frame.columnconfigure(1, weight=1)
+        content_frame.rowconfigure(0, weight=1)
 
         # Left side: Host list with checkboxes and dropdowns
         left_frame = ttk.LabelFrame(content_frame, text="All Hosts", padding=5)
         left_frame.grid(row=0, column=0, sticky='nsew', padx=(0, 5))
 
-        # Search filter
+        # Search filter row
         search_frame = ttk.Frame(left_frame)
         search_frame.pack(fill=tk.X, pady=(0, 5))
         ttk.Label(search_frame, text="Filter:").pack(side=tk.LEFT)
         search_var = tk.StringVar()
-        search_entry = ttk.Entry(search_frame, textvariable=search_var, width=20)
-        search_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        search_entry = ttk.Entry(search_frame, textvariable=search_var, width=15)
+        search_entry.pack(side=tk.LEFT, padx=5)
+
+        # Environment filter dropdown
+        ttk.Label(search_frame, text="Env:").pack(side=tk.LEFT, padx=(10, 0))
+        env_filter_var = tk.StringVar(value="All")
+        env_filter_options = ["All"] + env_options
+        env_filter_combo = ttk.Combobox(search_frame, textvariable=env_filter_var,
+                                        values=env_filter_options, state="readonly", width=12)
+        env_filter_combo.pack(side=tk.LEFT, padx=5)
 
         # Scrollable host list
         host_canvas = tk.Canvas(left_frame, bg=GUI_DARK_THEME['entry_bg'], highlightthickness=0)
@@ -8505,7 +8694,7 @@ class NessusHistoryTrackerApp:
                 return mapping_state['mappings'][h_lower]
             return self._get_environment_type(hostname)
 
-        def update_mapping(hostname, env):
+        def update_mapping(hostname, env, rebuild_list=True):
             """Update mapping for a hostname."""
             h_lower = hostname.lower()
             if env and env != 'Unknown':
@@ -8513,15 +8702,23 @@ class NessusHistoryTrackerApp:
             elif h_lower in mapping_state['mappings']:
                 del mapping_state['mappings'][h_lower]
             update_env_lists()
+            # Rebuild host list if filtering by environment (host may need to disappear)
+            if rebuild_list and env_filter_var.get() != "All":
+                build_host_list(search_var.get(), env_filter_var.get())
 
-        def build_host_list(filter_text=""):
+        def build_host_list(filter_text="", env_filter="All"):
             """Build/rebuild the host list with checkboxes."""
             # Clear existing widgets
             for widget in host_list_frame.winfo_children():
                 widget.destroy()
             host_widgets.clear()
 
+            # Filter by text
             filtered_hosts = [h for h in all_hostnames if filter_text.lower() in h.lower()]
+
+            # Filter by environment if specified
+            if env_filter and env_filter != "All":
+                filtered_hosts = [h for h in filtered_hosts if get_current_env(h) == env_filter]
 
             for i, hostname in enumerate(sorted(filtered_hosts)):
                 row_frame = ttk.Frame(host_list_frame)
@@ -8552,17 +8749,27 @@ class NessusHistoryTrackerApp:
         def apply_bulk_assignment():
             """Apply bulk environment assignment to selected hosts."""
             env = bulk_env_var.get()
+            changed_hosts = []
             for hostname, widgets in host_widgets.items():
                 if widgets['check'].get():
                     widgets['env'].set(env)
-                    update_mapping(hostname, env)
+                    # Update mapping without rebuilding list each time
+                    update_mapping(hostname, env, rebuild_list=False)
+                    changed_hosts.append(hostname)
+                    # Uncheck after assignment
+                    widgets['check'].set(False)
+
+            # Rebuild host list once at the end if we're filtering by environment
+            if changed_hosts and env_filter_var.get() != "All":
+                build_host_list(search_var.get(), env_filter_var.get())
 
         ttk.Button(bulk_frame, text="Apply", command=apply_bulk_assignment).pack(side=tk.LEFT, padx=5)
 
-        # Bind search filter
-        def on_search(*args):
-            build_host_list(search_var.get())
-        search_var.trace('w', on_search)
+        # Bind search and environment filter
+        def on_filter_change(*args):
+            build_host_list(search_var.get(), env_filter_var.get())
+        search_var.trace('w', on_filter_change)
+        env_filter_combo.bind('<<ComboboxSelected>>', on_filter_change)
 
         # Right side: Environment lists showing hosts in each environment
         right_frame = ttk.LabelFrame(content_frame, text="Hosts by Environment", padding=5)
@@ -8930,11 +9137,31 @@ class NessusHistoryTrackerApp:
             self._show_settings_dialog()  # Refresh dialog
 
     def _log(self, message: str):
-        """Add message to status log."""
+        """Add message to status log and update status bar."""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.status_text.insert(tk.END, f"[{timestamp}] {message}\n")
         self.status_text.see(tk.END)
-        self.window.update()
+        # Update status bar with latest message (truncated)
+        self._set_status(message[:80] if len(message) > 80 else message)
+        self.window.update_idletasks()
+
+    def _set_status(self, message: str, progress: str = ""):
+        """Update the status bar at the bottom of the window."""
+        if hasattr(self, 'status_label'):
+            self.status_label.config(text=message)
+        if hasattr(self, 'progress_label'):
+            self.progress_label.config(text=progress)
+
+    def _set_processing(self, is_processing: bool, message: str = ""):
+        """Set processing state - updates status bar and optionally disables/enables buttons."""
+        if is_processing:
+            self._set_status(message, "⏳ Processing...")
+            if hasattr(self, 'status_label'):
+                self.status_label.config(fg='#17a2b8')  # Cyan for active
+        else:
+            self._set_status(message if message else "Ready", "")
+            if hasattr(self, 'status_label'):
+                self.status_label.config(fg='#888888')  # Gray for idle
 
     # =========================================================================
     # AI Predictions Integration

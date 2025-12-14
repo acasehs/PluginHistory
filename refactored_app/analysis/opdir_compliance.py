@@ -338,6 +338,16 @@ def load_opdir_mapping(opdir_file: str) -> pd.DataFrame:
             if len(years) > 0:
                 print(f"Years covered: {sorted([int(y) for y in years if pd.notna(y)])}")
 
+        # Debug: Check date columns
+        for date_col in ['poam_due_date', 'final_due_date']:
+            if date_col in opdir_df.columns:
+                valid = opdir_df[date_col].notna()
+                print(f"  Date column '{date_col}': {valid.sum()} valid out of {len(opdir_df)}")
+                if valid.any():
+                    print(f"    Sample dates: {opdir_df[date_col].dropna().head(3).tolist()}")
+            else:
+                print(f"  Date column '{date_col}': NOT FOUND")
+
         # Debug: show sample of parsed data
         if len(opdir_df) > 0:
             sample = opdir_df[['opdir_number_raw', 'opdir_year', 'iavab_full', 'iavab_suffix']].head(3)
@@ -592,8 +602,18 @@ def enrich_with_opdir(lifecycle_df: pd.DataFrame, opdir_df: pd.DataFrame) -> pd.
 
     print(f"OPDIR enrichment: {match_count} matched, {no_match_count} unmatched, {no_iavx_count} no IAVX")
 
+    # Debug: Check how many matched entries have valid due dates
+    has_due_date = lifecycle_df['opdir_due_date'].notna()
+    has_opdir_num = lifecycle_df['opdir_number'].notna() & (lifecycle_df['opdir_number'] != '')
+    print(f"  Debug: {has_opdir_num.sum()} findings with opdir_number, {has_due_date.sum()} with due dates")
+
     # Calculate compliance status
     lifecycle_df = calculate_opdir_compliance_status(lifecycle_df)
+
+    # Debug: Check status distribution
+    if 'opdir_status' in lifecycle_df.columns:
+        status_counts = lifecycle_df['opdir_status'].value_counts()
+        print(f"  Status distribution: {status_counts.to_dict()}")
 
     return lifecycle_df
 
