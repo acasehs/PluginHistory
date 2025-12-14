@@ -256,8 +256,23 @@ def add_indexes_to_database(conn: sqlite3.Connection) -> None:
     """
     cursor = conn.cursor()
 
+    # Get existing tables and their columns
+    table_columns = {}
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    for (table_name,) in cursor.fetchall():
+        cursor.execute(f"PRAGMA table_info({table_name})")
+        table_columns[table_name] = {row[1] for row in cursor.fetchall()}
+
     for table, columns in SQLITE_INDEXES.items():
+        # Skip if table doesn't exist
+        if table not in table_columns:
+            continue
+
         for column in columns:
+            # Skip if column doesn't exist in this table
+            if column not in table_columns[table]:
+                continue
+
             try:
                 index_name = f"idx_{table}_{column}"
                 cursor.execute(f"CREATE INDEX IF NOT EXISTS {index_name} ON {table}({column})")

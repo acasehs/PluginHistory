@@ -7,6 +7,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from typing import TYPE_CHECKING, Optional, Callable, Dict, Any
 
+from .database_browser import show_database_browser
+
 if TYPE_CHECKING:
     from .app import NessusHistoryTrackerApp
 
@@ -79,6 +81,13 @@ class MenuBar:
         file_menu.add_command(
             label="Export to JSON...",
             command=self.app._export_json
+        )
+
+        file_menu.add_separator()
+
+        file_menu.add_command(
+            label="Database Browser...",
+            command=self._show_database_browser
         )
 
         file_menu.add_separator()
@@ -413,6 +422,12 @@ class MenuBar:
             on_save=on_save,
             hostnames=hostnames
         )
+
+    def _show_database_browser(self):
+        """Show the database browser dialog."""
+        # Use currently loaded database path if available
+        db_path = getattr(self.app, 'existing_db_path', None)
+        show_database_browser(self.window, db_path)
 
     def _show_user_guide(self):
         """Show user guide."""

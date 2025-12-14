@@ -1444,11 +1444,35 @@ class NessusHistoryTrackerApp:
 
             try:
                 self.lifecycle_df = pd.read_sql_query("SELECT * FROM finding_lifecycle", conn)
+                self._log(f"Loaded {len(self.lifecycle_df)} lifecycle records")
             except:
                 pass
 
             try:
                 self.host_presence_df = pd.read_sql_query("SELECT * FROM host_presence", conn)
+                self._log(f"Loaded {len(self.host_presence_df)} host presence records")
+            except:
+                pass
+
+            try:
+                self.scan_changes_df = pd.read_sql_query("SELECT * FROM scan_changes", conn)
+                self._log(f"Loaded {len(self.scan_changes_df)} scan change records")
+            except:
+                pass
+
+            # Load OPDIR mapping if present
+            try:
+                self.opdir_df = pd.read_sql_query("SELECT * FROM opdir_mapping", conn)
+                if not self.opdir_df.empty:
+                    self._log(f"Loaded {len(self.opdir_df)} OPDIR mappings from database")
+            except:
+                pass
+
+            # Load IAVM notices if present
+            try:
+                self.iavm_df = pd.read_sql_query("SELECT * FROM iavm_notices", conn)
+                if not self.iavm_df.empty:
+                    self._log(f"Loaded {len(self.iavm_df)} IAVM notices from database")
             except:
                 pass
 
@@ -3949,8 +3973,9 @@ class NessusHistoryTrackerApp:
         ax.set_ylabel('Host Count')
 
         if enlarged:
-            avg = presence.mean()
-            median = np.median(presence)
+            presence_numeric = pd.to_numeric(pd.Series(presence), errors='coerce')
+            avg = presence_numeric.mean()
+            median = np.median(presence_numeric.dropna()) if len(presence_numeric.dropna()) > 0 else 0
             ax.axvline(x=avg, color='white', linestyle='--', linewidth=1, alpha=0.7)
             ax.text(0.02, 0.98, f'Avg: {avg:.1f}% | Median: {median:.1f}%',
                    transform=ax.transAxes, fontsize=10, va='top', color='#17a2b8')
@@ -4571,6 +4596,8 @@ class NessusHistoryTrackerApp:
             return
 
         df_copy = df.copy()
+        df_copy['days_open'] = pd.to_numeric(df_copy['days_open'], errors='coerce')
+        df_copy['cvss'] = pd.to_numeric(df_copy['cvss'], errors='coerce')
         df_copy['priority_score'] = df_copy['cvss'].fillna(0) * np.log1p(df_copy['days_open'].fillna(0))
 
         num_findings = 15 if enlarged else 10
@@ -4606,6 +4633,8 @@ class NessusHistoryTrackerApp:
             return
 
         df_copy = df.copy()
+        df_copy['days_open'] = pd.to_numeric(df_copy['days_open'], errors='coerce')
+        df_copy['cvss'] = pd.to_numeric(df_copy['cvss'], errors='coerce')
         df_copy['priority_score'] = df_copy['cvss'].fillna(0) * np.log1p(df_copy['days_open'].fillna(0))
 
         avg_priority = df_copy.groupby('severity')['priority_score'].mean()
@@ -4982,6 +5011,10 @@ class NessusHistoryTrackerApp:
                 return
 
         if 'plugin_id' in active.columns:
+            # Convert to numeric before aggregation
+            active = active.copy()
+            active[cvss_col] = pd.to_numeric(active[cvss_col], errors='coerce')
+            active['days_open'] = pd.to_numeric(active['days_open'], errors='coerce')
             grouped = active.groupby('plugin_id').agg({
                 cvss_col: 'mean',
                 'days_open': 'mean',
@@ -4990,8 +5023,8 @@ class NessusHistoryTrackerApp:
             grouped.columns = ['plugin_id', 'cvss', 'age', 'hosts']
         else:
             grouped = pd.DataFrame({
-                'cvss': active[cvss_col].values,
-                'age': active['days_open'].values,
+                'cvss': pd.to_numeric(active[cvss_col], errors='coerce').values,
+                'age': pd.to_numeric(active['days_open'], errors='coerce').values,
                 'hosts': [1] * len(active)
             })
 
@@ -6638,6 +6671,10 @@ class NessusHistoryTrackerApp:
 
         # Group by plugin_id to get aggregated bubbles
         if 'plugin_id' in active.columns:
+            # Convert to numeric before aggregation
+            active = active.copy()
+            active[cvss_col] = pd.to_numeric(active[cvss_col], errors='coerce')
+            active['days_open'] = pd.to_numeric(active['days_open'], errors='coerce')
             grouped = active.groupby('plugin_id').agg({
                 cvss_col: 'mean',
                 'days_open': 'mean',
