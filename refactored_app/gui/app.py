@@ -2910,6 +2910,8 @@ class NessusHistoryTrackerApp:
                    color='white', fontsize=12)
             return
 
+        resolved = resolved.copy()
+        resolved['days_open'] = pd.to_numeric(resolved['days_open'], errors='coerce')
         mttr = resolved.groupby('severity_text')['days_open'].mean()
         severity_order = ['Critical', 'High', 'Medium', 'Low', 'Info']
         mttr = mttr.reindex([s for s in severity_order if s in mttr.index])
@@ -4404,6 +4406,8 @@ class NessusHistoryTrackerApp:
             return
 
         num_plugins = 15 if enlarged else 10
+        df = df.copy()
+        df['days_open'] = pd.to_numeric(df['days_open'], errors='coerce')
         avg_age = df.groupby('plugin_id')['days_open'].mean().nlargest(num_plugins)
 
         if len(avg_age) == 0:
@@ -5793,7 +5797,9 @@ class NessusHistoryTrackerApp:
 
         # Chart 4: Plugin average age with color coding
         if 'plugin_id' in df.columns and 'days_open' in df.columns:
-            plugin_age = df.groupby('plugin_id')['days_open'].mean().nlargest(10)
+            df_age = df.copy()
+            df_age['days_open'] = pd.to_numeric(df_age['days_open'], errors='coerce')
+            plugin_age = df_age.groupby('plugin_id')['days_open'].mean().nlargest(10)
             if len(plugin_age) > 0:
                 if 'plugin_name' in df.columns:
                     names = df.groupby('plugin_id')['plugin_name'].first()
@@ -6845,12 +6851,12 @@ class NessusHistoryTrackerApp:
             total = len(subnet_df)
             critical = len(subnet_df[subnet_df.get('severity_text', '') == 'Critical']) if 'severity_text' in subnet_df.columns else 0
             high = len(subnet_df[subnet_df.get('severity_text', '') == 'High']) if 'severity_text' in subnet_df.columns else 0
-            avg_age = subnet_df['days_open'].mean() if 'days_open' in subnet_df.columns else 0
+            avg_age = pd.to_numeric(subnet_df['days_open'], errors='coerce').mean() if 'days_open' in subnet_df.columns else 0
             hosts = subnet_df['hostname'].nunique() if 'hostname' in subnet_df.columns else 0
 
             # Normalize values (0-100 scale)
             max_total = df_copy.groupby('subnet').size().max()
-            max_age = df_copy['days_open'].max() if 'days_open' in df_copy.columns else 1
+            max_age = pd.to_numeric(df_copy['days_open'], errors='coerce').max() if 'days_open' in df_copy.columns else 1
             max_hosts = df_copy.groupby('subnet')['hostname'].nunique().max() if 'hostname' in df_copy.columns else 1
 
             values = [
@@ -7051,7 +7057,7 @@ class NessusHistoryTrackerApp:
             len(period1[period1.get('severity_text', '') == 'Critical']) if 'severity_text' in period1.columns else 0,
             len(period1[period1.get('severity_text', '') == 'High']) if 'severity_text' in period1.columns else 0,
             len(period1[period1.get('severity_text', '') == 'Medium']) if 'severity_text' in period1.columns else 0,
-            period1['days_open'].mean() if 'days_open' in period1.columns and not period1.empty else 0
+            pd.to_numeric(period1['days_open'], errors='coerce').mean() if 'days_open' in period1.columns and not period1.empty else 0
         ]
 
         p2_values = [
@@ -7059,7 +7065,7 @@ class NessusHistoryTrackerApp:
             len(period2[period2.get('severity_text', '') == 'Critical']) if 'severity_text' in period2.columns else 0,
             len(period2[period2.get('severity_text', '') == 'High']) if 'severity_text' in period2.columns else 0,
             len(period2[period2.get('severity_text', '') == 'Medium']) if 'severity_text' in period2.columns else 0,
-            period2['days_open'].mean() if 'days_open' in period2.columns and not period2.empty else 0
+            pd.to_numeric(period2['days_open'], errors='coerce').mean() if 'days_open' in period2.columns and not period2.empty else 0
         ]
 
         x = np.arange(len(metrics))
