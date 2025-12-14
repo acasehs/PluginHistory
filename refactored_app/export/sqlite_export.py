@@ -211,12 +211,14 @@ def create_sqlite_database(filepath: str) -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS opdir_mapping (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             opdir_number TEXT,
-            opdir_subject TEXT,
-            opdir_release_date TEXT,
-            opdir_final_due_date TEXT,
-            opdir_days_to_remediate INTEGER,
-            opdir_number_normalized TEXT,
-            opdir_year INTEGER
+            opdir_number_raw TEXT,
+            opdir_year INTEGER,
+            subject TEXT,
+            iavab TEXT,
+            iavab_full TEXT,
+            iavab_suffix TEXT,
+            poam_due_date TEXT,
+            final_due_date TEXT
         )
     ''')
 

@@ -72,8 +72,16 @@ def analyze_finding_lifecycle(historical_df: pd.DataFrame) -> pd.DataFrame:
         # Determine status
         status = 'Active' if last_seen == latest_scan_date else 'Resolved'
 
-        # Calculate days open
-        days_open = (last_seen - first_seen).days
+        # Calculate days open: current_date - first_seen (from scanner's first observation)
+        # This represents total exposure time from when vulnerability was first detected
+        current_date = datetime.now()
+        days_open = (current_date - first_seen).days
+
+        # Also calculate days_to_remediation for resolved findings (how long it took to fix)
+        if status == 'Resolved':
+            days_to_remediation = (last_seen - first_seen).days
+        else:
+            days_to_remediation = None
 
         lifecycle_records.append({
             'hostname': hostname,
@@ -85,6 +93,7 @@ def analyze_finding_lifecycle(historical_df: pd.DataFrame) -> pd.DataFrame:
             'first_seen': first_seen,
             'last_seen': last_seen,
             'days_open': days_open,
+            'days_to_remediation': days_to_remediation,
             'total_observations': len(scan_dates),
             'reappearances': reappearances,
             'status': status,

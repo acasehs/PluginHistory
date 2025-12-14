@@ -124,15 +124,15 @@ class FindingLifecycle:
 
     # OPDIR compliance (optional)
     opdir_number: str = ''
-    opdir_subject: str = ''
-    opdir_release_date: Optional[datetime] = None
-    opdir_final_due_date: Optional[datetime] = None
-    opdir_days_to_remediate: Optional[int] = None
+    opdir_year: Optional[int] = None
+    opdir_title: str = ''
+    opdir_poam_due_date: Optional[datetime] = None
+    opdir_due_date: Optional[datetime] = None
     opdir_status: str = ''
     opdir_days_until_due: Optional[int] = None
 
     # IAVx mapping
-    iavx_mapped: str = ''
+    iavx_matched: str = ''
 
     @property
     def finding_key(self) -> str:

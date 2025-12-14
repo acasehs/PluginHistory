@@ -130,6 +130,9 @@ class UserSettings:
     environment_mappings: Dict[str, str] = field(default_factory=dict)  # hostname -> environment
     environment_patterns: Dict[str, str] = field(default_factory=dict)  # regex pattern -> environment
 
+    # Hostname auto-detection settings
+    hostname_length: int = 9  # Expected hostname length for auto-detection
+
     # Default filter date range (days back from today)
     default_date_range_days: int = 180
 

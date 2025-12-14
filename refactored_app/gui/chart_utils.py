@@ -524,68 +524,121 @@ class ChartPopoutModal:
         self._draw_chart()
 
     def _copy_to_clipboard(self):
-        """Copy chart image and data to clipboard."""
-        import io
+        """Copy chart image to clipboard or save to file."""
+        import tempfile
+        import os
+
         try:
-            # Save figure to bytes buffer
-            buf = io.BytesIO()
-            self.fig.savefig(buf, format='png', dpi=150, facecolor=self.BG_COLOR,
+            # Save to temp file first
+            temp_dir = tempfile.gettempdir()
+            temp_path = os.path.join(temp_dir, f'chart_export_{id(self)}.png')
+            self.fig.savefig(temp_path, format='png', dpi=150, facecolor=self.BG_COLOR,
                            edgecolor='none', bbox_inches='tight')
-            buf.seek(0)
 
-            # Try to copy to clipboard (platform-dependent)
+            copied = False
+            import platform
+            system = platform.system()
+
+            # Try platform-specific clipboard copy
             try:
-                from PIL import Image
-                import subprocess
-                import platform
+                if system == 'Windows':
+                    try:
+                        from PIL import Image
+                        import win32clipboard
+                        from io import BytesIO
 
-                img = Image.open(buf)
+                        img = Image.open(temp_path)
+                        output = BytesIO()
+                        img.convert('RGB').save(output, 'BMP')
+                        data = output.getvalue()[14:]  # BMP header offset
+                        output.close()
 
-                if platform.system() == 'Windows':
-                    # Windows clipboard
-                    import win32clipboard
-                    from io import BytesIO
+                        win32clipboard.OpenClipboard()
+                        win32clipboard.EmptyClipboard()
+                        win32clipboard.SetClipboardData(win32clipboard.CF_DIB, data)
+                        win32clipboard.CloseClipboard()
+                        copied = True
+                    except ImportError:
+                        pass
 
-                    output = BytesIO()
-                    img.convert('RGB').save(output, 'BMP')
-                    data = output.getvalue()[14:]  # BMP header offset
-                    output.close()
-
-                    win32clipboard.OpenClipboard()
-                    win32clipboard.EmptyClipboard()
-                    win32clipboard.SetClipboardData(win32clipboard.CF_DIB, data)
-                    win32clipboard.CloseClipboard()
-
-                elif platform.system() == 'Darwin':
-                    # macOS - save temp and use pbcopy
-                    import tempfile
-                    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as f:
-                        img.save(f, 'PNG')
-                        temp_path = f.name
-                    subprocess.run(['osascript', '-e',
-                                  f'set the clipboard to (read (POSIX file "{temp_path}") as TIFF picture)'])
+                elif system == 'Darwin':
+                    import subprocess
+                    result = subprocess.run(
+                        ['osascript', '-e', f'set the clipboard to (read (POSIX file "{temp_path}") as TIFF picture)'],
+                        capture_output=True
+                    )
+                    copied = (result.returncode == 0)
 
                 else:
                     # Linux - try xclip
-                    import tempfile
-                    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as f:
-                        img.save(f, 'PNG')
-                        temp_path = f.name
-                    subprocess.run(['xclip', '-selection', 'clipboard', '-t', 'image/png', '-i', temp_path])
+                    import subprocess
+                    result = subprocess.run(
+                        ['xclip', '-selection', 'clipboard', '-t', 'image/png', '-i', temp_path],
+                        capture_output=True
+                    )
+                    copied = (result.returncode == 0)
 
-                # Show success message
-                self._show_copy_success("Chart image copied to clipboard!")
+            except Exception:
+                pass
 
-            except ImportError:
-                # Fallback: save to temp file and show path
-                import tempfile
-                temp_path = tempfile.mktemp(suffix='.png')
-                self.fig.savefig(temp_path, format='png', dpi=150, facecolor=self.BG_COLOR,
-                               bbox_inches='tight')
-                self._show_copy_success(f"Chart saved to:\n{temp_path}")
+            if copied:
+                self._show_copy_success("Chart copied to clipboard!")
+            else:
+                # Fallback: offer to open or show path
+                self._show_copy_dialog(temp_path)
 
         except Exception as e:
-            self._show_copy_success(f"Copy failed: {str(e)}")
+            self._show_copy_success(f"Export failed: {str(e)}")
+
+    def _show_copy_dialog(self, file_path: str):
+        """Show dialog with export options when clipboard copy fails."""
+        dialog = tk.Toplevel(self.modal)
+        dialog.title("Chart Exported")
+        dialog.geometry("400x180")
+        dialog.configure(bg=self.BG_COLOR)
+        dialog.transient(self.modal)
+
+        # Center on modal
+        x = self.modal.winfo_x() + (self.modal.winfo_width() // 2) - 200
+        y = self.modal.winfo_y() + (self.modal.winfo_height() // 2) - 90
+        dialog.geometry(f"+{x}+{y}")
+
+        ttk.Label(dialog, text="Chart saved to temporary file:").pack(pady=(15, 5))
+
+        # File path (truncated if too long)
+        path_display = file_path if len(file_path) < 50 else f"...{file_path[-47:]}"
+        path_label = ttk.Label(dialog, text=path_display, font=('Consolas', 9))
+        path_label.pack(pady=5)
+
+        # Copy path to clipboard button
+        def copy_path():
+            self.modal.clipboard_clear()
+            self.modal.clipboard_append(file_path)
+            copy_btn.config(text="✓ Path Copied")
+
+        # Open file button
+        def open_file():
+            import subprocess
+            import platform
+            try:
+                if platform.system() == 'Windows':
+                    os.startfile(file_path)
+                elif platform.system() == 'Darwin':
+                    subprocess.run(['open', file_path])
+                else:
+                    subprocess.run(['xdg-open', file_path])
+                dialog.destroy()
+            except Exception as e:
+                ttk.Label(dialog, text=f"Could not open: {e}", foreground='red').pack()
+
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(pady=15)
+
+        copy_btn = ttk.Button(btn_frame, text="Copy Path", command=copy_path)
+        copy_btn.pack(side=tk.LEFT, padx=10)
+
+        ttk.Button(btn_frame, text="Open Image", command=open_file).pack(side=tk.LEFT, padx=10)
+        ttk.Button(btn_frame, text="Close", command=dialog.destroy).pack(side=tk.LEFT, padx=10)
 
     def _show_copy_success(self, message: str):
         """Show a brief success message."""
