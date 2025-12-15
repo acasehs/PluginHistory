@@ -875,13 +875,15 @@ class PackageImpactDialog:
         self.summary_text.insert(tk.END, "=" * 50 + "\n")
         self.summary_text.insert(tk.END, "DETAILED PACKAGE LIST\n", 'header')
         self.summary_text.insert(tk.END, "=" * 50 + "\n\n")
-        self.summary_text.insert(tk.END, f"{'#':<4} {'Package':<40} {'Target Version':<20} {'Hosts':<8} {'Findings':<10} {'Critical':<10} {'High':<8}\n")
-        self.summary_text.insert(tk.END, "-" * 100 + "\n")
+        self.summary_text.insert(tk.END, f"{'#':<4} {'Package':<35} {'Target Ver':<15} {'Hosts':<7} {'Finds':<7} {'Crit':<6} {'High':<6} {'Med':<6} {'Low':<6}\n")
+        self.summary_text.insert(tk.END, "-" * 98 + "\n")
 
         for i, pkg in enumerate(self.plan.packages):
             crit_count = pkg.severity_breakdown.get('Critical', 0)
             high_count = pkg.severity_breakdown.get('High', 0)
-            line = f"{i+1:<4} {pkg.package_name[:38]:<40} {str(pkg.target_version)[:18]:<20} {pkg.affected_hosts:<8} {pkg.total_impact:<10} {crit_count:<10} {high_count:<8}\n"
+            med_count = pkg.severity_breakdown.get('Medium', 0)
+            low_count = pkg.severity_breakdown.get('Low', 0)
+            line = f"{i+1:<4} {pkg.package_name[:33]:<35} {str(pkg.target_version)[:13]:<15} {pkg.affected_hosts:<7} {pkg.total_impact:<7} {crit_count:<6} {high_count:<6} {med_count:<6} {low_count:<6}\n"
             # Highlight rows with critical findings
             if crit_count > 0:
                 self.summary_text.insert(tk.END, line, 'warning')
