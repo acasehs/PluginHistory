@@ -2414,6 +2414,15 @@ class NessusHistoryTrackerApp:
                 self._get_environment_type
             )
 
+        # Add environment type to historical data for 8-week rolling charts
+        if not self.filtered_historical_df.empty and 'hostname' in self.filtered_historical_df.columns:
+            self.filtered_historical_df['environment_type'] = self.filtered_historical_df['hostname'].apply(
+                self._get_environment_type
+            )
+            self.historical_df['environment_type'] = self.historical_df['hostname'].apply(
+                self._get_environment_type
+            )
+
         # Apply default 180-day filter after loading data
         self._apply_default_date_filter()
 
@@ -4368,6 +4377,14 @@ class NessusHistoryTrackerApp:
         width = 0.7
         bottom = np.zeros(len(weeks))
 
+        # Label colors - use dark text for light backgrounds (Medium/Low)
+        label_colors = {
+            'Critical': 'white',
+            'High': 'white',
+            'Medium': '#333333',  # Dark text for yellow background
+            'Low': '#333333'      # Dark text for green background
+        }
+
         for sev in severities:
             counts = []
             for week in weeks:
@@ -4382,10 +4399,12 @@ class NessusHistoryTrackerApp:
 
             bars = ax.bar(x, counts, width, bottom=bottom, label=sev, color=colors[sev])
             if show_labels:
+                text_color = label_colors.get(sev, 'white')
                 for i, (xi, val) in enumerate(zip(x, counts)):
                     if val > 0:
                         ax.annotate(f'{val}', xy=(xi, bottom[i] + val/2),
-                                   ha='center', va='center', fontsize=6, color='white')
+                                   ha='center', va='center', fontsize=6, color=text_color,
+                                   fontweight='bold')
             bottom += np.array(counts)
 
         ax.set_xticks(x)
@@ -4398,6 +4417,14 @@ class NessusHistoryTrackerApp:
         x = np.arange(len(weeks))
         width = 0.7
         bottom = np.zeros(len(weeks))
+
+        # Label colors - use dark text for light backgrounds (Medium/Low)
+        label_colors = {
+            'Critical': 'white',
+            'High': 'white',
+            'Medium': '#333333',  # Dark text for yellow background
+            'Low': '#333333'      # Dark text for green background
+        }
 
         for sev in severities:
             counts = []
@@ -4413,10 +4440,12 @@ class NessusHistoryTrackerApp:
 
             bars = ax.bar(x, counts, width, bottom=bottom, label=sev, color=colors[sev])
             if show_labels:
+                text_color = label_colors.get(sev, 'white')
                 for i, (xi, val) in enumerate(zip(x, counts)):
                     if val > 0:
                         ax.annotate(f'{val}', xy=(xi, bottom[i] + val/2),
-                                   ha='center', va='center', fontsize=6, color='white')
+                                   ha='center', va='center', fontsize=6, color=text_color,
+                                   fontweight='bold')
             bottom += np.array(counts)
 
         ax.set_xticks(x)

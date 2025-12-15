@@ -613,9 +613,15 @@ class PackageImpactDialog:
 
         ttk.Button(
             options_frame,
-            text="Validate CVEs",
+            text="Validate Top N",
             command=self._validate_cves
         ).pack(side=tk.LEFT, padx=(20, 0))
+
+        ttk.Button(
+            options_frame,
+            text="Validate All",
+            command=self._validate_all_cves
+        ).pack(side=tk.LEFT, padx=(5, 0))
 
         # Results
         results_frame = ttk.LabelFrame(tab, text="Validation Results", padding="10")
@@ -1228,6 +1234,59 @@ class PackageImpactDialog:
                     pkg.package_name,
                     pkg.target_version,
                     pkg.cves[:5],  # Limit CVEs per package
+                    rate_limit_delay=0.7
+                )
+                results.append(result)
+
+            report = create_cve_validation_report(results)
+            self.dialog.after(0, lambda: self._display_validation_results(report))
+
+        threading.Thread(target=_validate, daemon=True).start()
+
+    def _validate_all_cves(self):
+        """Validate ALL packages' CVEs against NVD database."""
+        if not self.plan:
+            messagebox.showwarning("No Data", "Please load version data first.")
+            return
+
+        total_packages = len(self.plan.packages)
+        if total_packages > 50:
+            if not messagebox.askyesno(
+                "Large Validation",
+                f"You are about to validate {total_packages} packages.\n"
+                "This may take a significant amount of time due to API rate limits.\n\n"
+                "Continue?"
+            ):
+                return
+
+        self.cve_results_text.config(state=tk.NORMAL)
+        self.cve_results_text.delete(1.0, tk.END)
+        self.cve_results_text.insert(tk.END, f"Starting validation of ALL {total_packages} packages...\n\n", 'header')
+        self.cve_results_text.config(state=tk.DISABLED)
+
+        critical_only = self.validate_critical_var.get()
+
+        def _validate():
+            validator = CVEValidator()
+            results = []
+
+            packages_to_validate = self.plan.packages
+            if critical_only:
+                packages_to_validate = [
+                    p for p in packages_to_validate
+                    if p.severity_breakdown.get('Critical', 0) > 0
+                ]
+
+            for i, pkg in enumerate(packages_to_validate):
+                if not pkg.cves:
+                    continue
+
+                self.dialog.after(0, lambda p=pkg, idx=i: self._update_validation_progress(p.package_name, idx, len(packages_to_validate)))
+
+                result = validator.validate_package_versions(
+                    pkg.package_name,
+                    pkg.target_version,
+                    pkg.cves[:5],  # Limit CVEs per package to avoid excessive API calls
                     rate_limit_delay=0.7
                 )
                 results.append(result)
