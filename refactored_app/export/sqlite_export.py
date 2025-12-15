@@ -41,6 +41,8 @@ def export_to_sqlite(historical_df: pd.DataFrame,
             if df.empty:
                 return df
             df = df.copy()
+            # Remove duplicate columns (keep first occurrence)
+            df = df.loc[:, ~df.columns.duplicated()]
             for col in df.columns:
                 if pd.api.types.is_datetime64_any_dtype(df[col]):
                     df[col] = df[col].dt.strftime('%Y-%m-%d %H:%M:%S')

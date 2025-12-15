@@ -311,10 +311,21 @@ def load_opdir_mapping(opdir_file: str) -> pd.DataFrame:
         if 'opdir_number' in opdir_df.columns:
             parsed = opdir_df['opdir_number'].apply(parse_opdir_number)
             opdir_df['opdir_number_raw'] = parsed.apply(lambda x: x[0])
-            opdir_df['opdir_year'] = parsed.apply(lambda x: x[1])
+            # Only create opdir_year if it doesn't already exist
+            if 'opdir_year' not in opdir_df.columns:
+                opdir_df['opdir_year'] = parsed.apply(lambda x: x[1])
+            else:
+                # If opdir_year exists but is empty, fill from parsed OPDIR number
+                mask = opdir_df['opdir_year'].isna()
+                if mask.any():
+                    opdir_df.loc[mask, 'opdir_year'] = parsed[mask].apply(lambda x: x[1])
         else:
             opdir_df['opdir_number_raw'] = ''
-            opdir_df['opdir_year'] = None
+            if 'opdir_year' not in opdir_df.columns:
+                opdir_df['opdir_year'] = None
+
+        # Remove any duplicate columns (can happen from file + parsing)
+        opdir_df = opdir_df.loc[:, ~opdir_df.columns.duplicated()]
 
         # Parse IAVA/B column - enhance suffix-only with year from OPDIR NUMBER
         if 'iavab' in opdir_df.columns:
@@ -427,7 +438,15 @@ def create_opdir_lookup(opdir_df: pd.DataFrame) -> Dict[str, Any]:
 
             # Parse the IAVA/B reference
             opdir_year = row.get('opdir_year')
-            if pd.isna(opdir_year):
+            # Handle case where opdir_year might be a Series (duplicate columns)
+            if isinstance(opdir_year, pd.Series):
+                opdir_year = opdir_year.iloc[0] if len(opdir_year) > 0 else None
+            # Check for NA/NaN
+            try:
+                if pd.isna(opdir_year):
+                    opdir_year = None
+            except (ValueError, TypeError):
+                # pd.isna can fail on certain types
                 opdir_year = None
             parsed = parse_iavab_reference(iavab_raw, opdir_year)
             iavab_full = parsed['full']
