@@ -1647,7 +1647,7 @@ class NessusHistoryTrackerApp:
         x = np.arange(num_cats)
 
         # Group by category and environment
-        grouped = df.groupby([category_col, 'environment_type']).size().unstack(fill_value=0)
+        grouped = df.groupby([category_col, 'environment_type'], observed=False).size().unstack(fill_value=0)
 
         # Ensure all categories are present
         for cat in categories:
@@ -1769,13 +1769,13 @@ class NessusHistoryTrackerApp:
 
         # Group by category and environment, then aggregate
         if agg_func == 'mean':
-            grouped = df.groupby([category_col, 'environment_type'])[metric_col].mean().unstack(fill_value=0)
+            grouped = df.groupby([category_col, 'environment_type'], observed=False)[metric_col].mean().unstack(fill_value=0)
         elif agg_func == 'sum':
-            grouped = df.groupby([category_col, 'environment_type'])[metric_col].sum().unstack(fill_value=0)
+            grouped = df.groupby([category_col, 'environment_type'], observed=False)[metric_col].sum().unstack(fill_value=0)
         elif agg_func == 'median':
-            grouped = df.groupby([category_col, 'environment_type'])[metric_col].median().unstack(fill_value=0)
+            grouped = df.groupby([category_col, 'environment_type'], observed=False)[metric_col].median().unstack(fill_value=0)
         else:
-            grouped = df.groupby([category_col, 'environment_type'])[metric_col].count().unstack(fill_value=0)
+            grouped = df.groupby([category_col, 'environment_type'], observed=False)[metric_col].count().unstack(fill_value=0)
 
         # Ensure all categories are present
         for cat in categories:
