@@ -817,6 +817,9 @@ class PackageImpactDialog:
         self.summary_text.insert(tk.END, f"Total Unique CVEs: ", 'metric')
         self.summary_text.insert(tk.END, f"{self.plan.total_unique_cves:,}\n\n")
 
+        # Impact Scores Section
+        self._add_impact_scores_section()
+
         # Calculate 80% coverage
         cumulative = 0
         packages_for_80 = len(self.plan.packages)
@@ -900,6 +903,121 @@ class PackageImpactDialog:
         self.summary_text.insert(tk.END, f"Total: {len(self.plan.packages)} packages\n", 'metric')
 
         self.summary_text.config(state=tk.DISABLED)
+
+    def _add_impact_scores_section(self):
+        """Add section showing all three impact score types with recommendations."""
+        if not self.plan or not self.plan.packages:
+            return
+
+        self.summary_text.insert(tk.END, "IMPACT SCORE ANALYSIS\n", 'subheader')
+        self.summary_text.insert(tk.END, "-" * 40 + "\n")
+
+        # Check if we have CVSS/EPSS data
+        has_cvss = any(pkg.cvss_scores for pkg in self.plan.packages)
+        has_epss = any(pkg.epss_scores for pkg in self.plan.packages)
+
+        # 1. Severity-Weighted Impact (always available)
+        self.summary_text.insert(tk.END, "\n1. SEVERITY-WEIGHTED IMPACT\n", 'metric')
+        self.summary_text.insert(tk.END, "   Formula: (Critical×4 + High×3 + Medium×2 + Low×1) × hosts\n")
+        self.summary_text.insert(tk.END, "   Use when: Prioritizing based on vulnerability severity counts\n\n")
+
+        # Top 5 by severity-weighted impact
+        sorted_by_severity = sorted(self.plan.packages, key=lambda p: p.impact_score, reverse=True)
+        self.summary_text.insert(tk.END, "   Top 5 Packages by Severity Impact:\n")
+        for i, pkg in enumerate(sorted_by_severity[:5]):
+            self.summary_text.insert(tk.END, f"     {i+1}. {pkg.package_name}: ")
+            self.summary_text.insert(tk.END, f"{pkg.impact_score:,.0f}\n", 'warning' if i == 0 else None)
+
+        # Severity recommendation
+        if sorted_by_severity:
+            top_pkg = sorted_by_severity[0]
+            crit_count = top_pkg.severity_breakdown.get('Critical', 0)
+            high_count = top_pkg.severity_breakdown.get('High', 0)
+            self.summary_text.insert(tk.END, f"\n   Recommendation: Start with {top_pkg.package_name}\n", 'success')
+            self.summary_text.insert(tk.END, f"   ({crit_count} Critical, {high_count} High findings on {top_pkg.affected_hosts} hosts)\n")
+
+        # 2. CVSS-Weighted Impact
+        self.summary_text.insert(tk.END, "\n2. CVSS-WEIGHTED IMPACT\n", 'metric')
+        self.summary_text.insert(tk.END, "   Formula: sum(CVSS scores) × hosts\n")
+        self.summary_text.insert(tk.END, "   Use when: Prioritizing based on actual vulnerability severity ratings\n")
+
+        if has_cvss:
+            sorted_by_cvss = sorted(self.plan.packages, key=lambda p: p.cvss_impact_score, reverse=True)
+            self.summary_text.insert(tk.END, "\n   Top 5 Packages by CVSS Impact:\n")
+            for i, pkg in enumerate(sorted_by_cvss[:5]):
+                if pkg.cvss_impact_score > 0:
+                    self.summary_text.insert(tk.END, f"     {i+1}. {pkg.package_name}: ")
+                    self.summary_text.insert(tk.END, f"{pkg.cvss_impact_score:,.1f}", 'warning' if i == 0 else None)
+                    self.summary_text.insert(tk.END, f" (max CVSS: {pkg.max_cvss:.1f}, avg: {pkg.avg_cvss:.1f})\n")
+
+            # CVSS recommendation
+            top_cvss_pkgs = [p for p in sorted_by_cvss if p.cvss_impact_score > 0]
+            if top_cvss_pkgs:
+                top_pkg = top_cvss_pkgs[0]
+                self.summary_text.insert(tk.END, f"\n   Recommendation: Prioritize {top_pkg.package_name}\n", 'success')
+                self.summary_text.insert(tk.END, f"   (Max CVSS {top_pkg.max_cvss:.1f}, affecting {top_pkg.affected_hosts} hosts)\n")
+        else:
+            self.summary_text.insert(tk.END, "\n   No CVSS data available in findings.\n", 'warning')
+            self.summary_text.insert(tk.END, "   Load data with cvss_base_score column for CVSS analysis.\n")
+
+        # 3. EPSS-Weighted Impact (Exploit Likelihood)
+        self.summary_text.insert(tk.END, "\n3. EPSS-WEIGHTED IMPACT (Exploit Likelihood)\n", 'metric')
+        self.summary_text.insert(tk.END, "   Formula: sum(EPSS scores) × hosts × 100\n")
+        self.summary_text.insert(tk.END, "   Use when: Prioritizing based on actual exploitation likelihood\n")
+
+        if has_epss:
+            sorted_by_epss = sorted(self.plan.packages, key=lambda p: p.epss_impact_score, reverse=True)
+            self.summary_text.insert(tk.END, "\n   Top 5 Packages by EPSS Impact:\n")
+            for i, pkg in enumerate(sorted_by_epss[:5]):
+                if pkg.epss_impact_score > 0:
+                    self.summary_text.insert(tk.END, f"     {i+1}. {pkg.package_name}: ")
+                    self.summary_text.insert(tk.END, f"{pkg.epss_impact_score:,.1f}", 'warning' if i == 0 else None)
+                    self.summary_text.insert(tk.END, f" (max EPSS: {pkg.max_epss*100:.1f}%, avg: {pkg.avg_epss*100:.1f}%)\n")
+
+            # EPSS recommendation
+            top_epss_pkgs = [p for p in sorted_by_epss if p.epss_impact_score > 0]
+            if top_epss_pkgs:
+                top_pkg = top_epss_pkgs[0]
+                self.summary_text.insert(tk.END, f"\n   Recommendation: Address {top_pkg.package_name} urgently\n", 'success')
+                self.summary_text.insert(tk.END, f"   (Highest exploit probability: {top_pkg.max_epss*100:.1f}% on {top_pkg.affected_hosts} hosts)\n")
+        else:
+            self.summary_text.insert(tk.END, "\n   No EPSS data available in findings.\n", 'warning')
+            self.summary_text.insert(tk.END, "   Load data with epss_score column for exploit likelihood analysis.\n")
+
+        # Combined recommendation
+        self.summary_text.insert(tk.END, "\n" + "-" * 40 + "\n")
+        self.summary_text.insert(tk.END, "COMBINED RECOMMENDATION:\n", 'subheader')
+
+        # Get top package from each scoring method
+        top_severity = sorted(self.plan.packages, key=lambda p: p.impact_score, reverse=True)[0] if self.plan.packages else None
+        top_cvss = sorted([p for p in self.plan.packages if p.cvss_impact_score > 0], key=lambda p: p.cvss_impact_score, reverse=True)
+        top_cvss = top_cvss[0] if top_cvss else None
+        top_epss = sorted([p for p in self.plan.packages if p.epss_impact_score > 0], key=lambda p: p.epss_impact_score, reverse=True)
+        top_epss = top_epss[0] if top_epss else None
+
+        # Check if same package tops all lists
+        top_packages = set()
+        if top_severity:
+            top_packages.add(top_severity.package_name)
+        if top_cvss:
+            top_packages.add(top_cvss.package_name)
+        if top_epss:
+            top_packages.add(top_epss.package_name)
+
+        if len(top_packages) == 1 and top_severity:
+            self.summary_text.insert(tk.END, f"  {top_severity.package_name} ranks #1 across all scoring methods.\n", 'warning')
+            self.summary_text.insert(tk.END, f"  This is the highest-priority package to remediate.\n\n")
+        elif top_epss and top_epss != top_severity:
+            self.summary_text.insert(tk.END, f"  For immediate threats: Address {top_epss.package_name} first\n", 'warning')
+            self.summary_text.insert(tk.END, f"    (Highest exploitation probability)\n")
+            if top_severity:
+                self.summary_text.insert(tk.END, f"  For maximum reduction: Address {top_severity.package_name} first\n")
+                self.summary_text.insert(tk.END, f"    (Resolves most findings across hosts)\n\n")
+        elif top_severity:
+            self.summary_text.insert(tk.END, f"  Priority: {top_severity.package_name}\n", 'warning')
+            self.summary_text.insert(tk.END, f"  (Highest severity-weighted impact)\n\n")
+
+        self.summary_text.insert(tk.END, "\n")
 
     def _add_consolidation_recommendations(self):
         """Add consolidation-specific recommendations to the summary."""
@@ -1162,8 +1280,17 @@ class PackageImpactDialog:
 
         text.insert(tk.END, f"Target Version: {pkg.target_version}\n")
         text.insert(tk.END, f"Affected Hosts: {pkg.affected_hosts}\n")
-        text.insert(tk.END, f"Findings Resolved: {pkg.total_impact}\n")
-        text.insert(tk.END, f"Impact Score: {pkg.impact_score:,.0f}\n\n")
+        text.insert(tk.END, f"Findings Resolved: {pkg.total_impact}\n\n")
+
+        text.insert(tk.END, "IMPACT SCORES:\n")
+        text.insert(tk.END, f"  Severity-Weighted: {pkg.impact_score:,.0f}\n")
+        text.insert(tk.END, f"  CVSS-Weighted: {pkg.cvss_impact_score:,.1f}\n")
+        text.insert(tk.END, f"  EPSS-Weighted: {pkg.epss_impact_score:,.1f}\n")
+        if pkg.cvss_scores:
+            text.insert(tk.END, f"  Max CVSS: {pkg.max_cvss:.1f}, Avg CVSS: {pkg.avg_cvss:.1f}\n")
+        if pkg.epss_scores:
+            text.insert(tk.END, f"  Max EPSS: {pkg.max_epss*100:.1f}%, Avg EPSS: {pkg.avg_epss*100:.1f}%\n")
+        text.insert(tk.END, "\n")
 
         text.insert(tk.END, "CURRENT VERSIONS:\n")
         for v in pkg.current_versions[:20]:

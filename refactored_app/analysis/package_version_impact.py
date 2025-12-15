@@ -30,10 +30,16 @@ class PackageVersionInfo:
     cves: List[str]
     severity_breakdown: Dict[str, int]
     hosts_list: List[str]
+    cvss_scores: List[float] = field(default_factory=list)  # CVSS scores for each finding
+    epss_scores: List[float] = field(default_factory=list)  # EPSS scores for each finding
 
     @property
     def impact_score(self) -> float:
-        """Calculate weighted impact score."""
+        """Calculate severity-weighted impact score.
+
+        Formula: (Critical×4 + High×3 + Medium×2 + Low×1) × affected_hosts
+        This prioritizes packages with many high-severity findings across many hosts.
+        """
         severity_weights = {
             'Critical': 4,
             'High': 3,
@@ -46,6 +52,61 @@ class PackageVersionInfo:
             for sev, count in self.severity_breakdown.items()
         )
         return weighted_score * self.affected_hosts
+
+    @property
+    def cvss_impact_score(self) -> float:
+        """Calculate CVSS-weighted impact score.
+
+        Formula: sum(cvss_score for each finding) × affected_hosts
+        This prioritizes packages with high-CVSS vulnerabilities across many hosts.
+        CVSS scores range from 0-10, where 10 is most severe.
+        """
+        if not self.cvss_scores:
+            return 0.0
+        total_cvss = sum(self.cvss_scores)
+        return total_cvss * self.affected_hosts
+
+    @property
+    def epss_impact_score(self) -> float:
+        """Calculate EPSS-weighted impact score (exploit likelihood).
+
+        Formula: sum(epss_score for each finding) × affected_hosts × 100
+        This prioritizes packages with high exploit probability across many hosts.
+        EPSS scores range from 0-1 (0%-100% probability of exploitation).
+        Multiplied by 100 to make scores more readable.
+        """
+        if not self.epss_scores:
+            return 0.0
+        total_epss = sum(self.epss_scores)
+        return total_epss * self.affected_hosts * 100
+
+    @property
+    def avg_cvss(self) -> float:
+        """Get average CVSS score across all findings."""
+        if not self.cvss_scores:
+            return 0.0
+        return sum(self.cvss_scores) / len(self.cvss_scores)
+
+    @property
+    def avg_epss(self) -> float:
+        """Get average EPSS score across all findings."""
+        if not self.epss_scores:
+            return 0.0
+        return sum(self.epss_scores) / len(self.epss_scores)
+
+    @property
+    def max_cvss(self) -> float:
+        """Get maximum CVSS score (most severe vulnerability)."""
+        if not self.cvss_scores:
+            return 0.0
+        return max(self.cvss_scores)
+
+    @property
+    def max_epss(self) -> float:
+        """Get maximum EPSS score (highest exploit probability)."""
+        if not self.epss_scores:
+            return 0.0
+        return max(self.epss_scores)
 
 
 @dataclass
@@ -217,7 +278,14 @@ def analyze_package_version_impact(
         'Severity': 'severity',
         'severity_text': 'severity',
         'CVEs': 'cves',
-        'cves': 'cves'
+        'cves': 'cves',
+        'cvss_base_score': 'cvss_score',
+        'cvss_score': 'cvss_score',
+        'CVSS_Base_Score': 'cvss_score',
+        'cvss3_base_score': 'cvss_score',
+        'epss_score': 'epss_score',
+        'EPSS_Score': 'epss_score',
+        'epss': 'epss_score'
     }
 
     # Apply column mapping
@@ -282,6 +350,36 @@ def analyze_package_version_impact(
     if 'severity' not in df.columns:
         df['severity'] = 'Unknown'
 
+    # Add CVSS score from findings_df if available
+    if 'cvss_score' not in df.columns and findings_df is not None:
+        cvss_col = None
+        for col in ['cvss_base_score', 'cvss_score', 'CVSS_Base_Score', 'cvss3_base_score']:
+            if col in findings_df.columns:
+                cvss_col = col
+                break
+
+        if cvss_col and 'plugin_id' in findings_df.columns:
+            cvss_map = findings_df.groupby('plugin_id')[cvss_col].first().to_dict()
+            df['cvss_score'] = df['plugin_id'].map(cvss_map).fillna(0.0)
+
+    if 'cvss_score' not in df.columns:
+        df['cvss_score'] = 0.0
+
+    # Add EPSS score from findings_df if available
+    if 'epss_score' not in df.columns and findings_df is not None:
+        epss_col = None
+        for col in ['epss_score', 'EPSS_Score', 'epss']:
+            if col in findings_df.columns:
+                epss_col = col
+                break
+
+        if epss_col and 'plugin_id' in findings_df.columns:
+            epss_map = findings_df.groupby('plugin_id')[epss_col].first().to_dict()
+            df['epss_score'] = df['plugin_id'].map(epss_map).fillna(0.0)
+
+    if 'epss_score' not in df.columns:
+        df['epss_score'] = 0.0
+
     # Extract CVEs if available
     if 'cves' not in df.columns:
         df['cves'] = ''
@@ -326,6 +424,28 @@ def analyze_package_version_impact(
         # Severity breakdown
         severity_breakdown = group['severity'].value_counts().to_dict()
 
+        # Collect CVSS scores (filter out zeros and convert to float)
+        cvss_scores = []
+        if 'cvss_score' in group.columns:
+            for score in group['cvss_score'].dropna():
+                try:
+                    score_val = float(score)
+                    if score_val > 0:
+                        cvss_scores.append(score_val)
+                except (ValueError, TypeError):
+                    pass
+
+        # Collect EPSS scores (filter out zeros and convert to float)
+        epss_scores = []
+        if 'epss_score' in group.columns:
+            for score in group['epss_score'].dropna():
+                try:
+                    score_val = float(score)
+                    if score_val > 0:
+                        epss_scores.append(score_val)
+                except (ValueError, TypeError):
+                    pass
+
         # Calculate impact: number of unique (host, plugin) combinations
         affected_findings = len(group.drop_duplicates(subset=['hostname', 'plugin_id']))
         affected_hosts = len(hosts) if hosts else group['hostname'].nunique()
@@ -343,7 +463,9 @@ def analyze_package_version_impact(
             plugin_ids=plugin_ids,
             cves=all_cves,
             severity_breakdown=severity_breakdown,
-            hosts_list=hosts
+            hosts_list=hosts,
+            cvss_scores=cvss_scores,
+            epss_scores=epss_scores
         )
 
         if total_impact >= min_impact:
@@ -392,7 +514,11 @@ def create_remediation_summary_df(plan: RemediationPlan) -> pd.DataFrame:
             'Target_Version': pkg.target_version,
             'Affected_Hosts': pkg.affected_hosts,
             'Findings_Resolved': pkg.total_impact,
-            'Impact_Score': pkg.impact_score,
+            'Severity_Impact': pkg.impact_score,
+            'CVSS_Impact': pkg.cvss_impact_score,
+            'EPSS_Impact': pkg.epss_impact_score,
+            'Max_CVSS': pkg.max_cvss,
+            'Max_EPSS': round(pkg.max_epss * 100, 2),  # As percentage
             'Critical': pkg.severity_breakdown.get('Critical', 0),
             'High': pkg.severity_breakdown.get('High', 0),
             'Medium': pkg.severity_breakdown.get('Medium', 0),
@@ -405,7 +531,7 @@ def create_remediation_summary_df(plan: RemediationPlan) -> pd.DataFrame:
         })
 
     df = pd.DataFrame(data)
-    return df.sort_values('Impact_Score', ascending=False)
+    return df.sort_values('Severity_Impact', ascending=False)
 
 
 def get_package_details(
@@ -431,7 +557,13 @@ def get_package_details(
                 'affected_hosts': pkg.affected_hosts,
                 'hosts_list': pkg.hosts_list,
                 'findings_resolved': pkg.total_impact,
-                'impact_score': pkg.impact_score,
+                'severity_impact_score': pkg.impact_score,
+                'cvss_impact_score': pkg.cvss_impact_score,
+                'epss_impact_score': pkg.epss_impact_score,
+                'max_cvss': pkg.max_cvss,
+                'avg_cvss': pkg.avg_cvss,
+                'max_epss': pkg.max_epss,
+                'avg_epss': pkg.avg_epss,
                 'severity_breakdown': pkg.severity_breakdown,
                 'cves': pkg.cves,
                 'plugin_ids': pkg.plugin_ids
