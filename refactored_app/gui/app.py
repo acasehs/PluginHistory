@@ -1576,6 +1576,233 @@ class NessusHistoryTrackerApp:
         df['environment_type'] = df['hostname'].apply(self._get_environment_type)
         return df
 
+    def _draw_env_grouped_bars(self, ax, df: pd.DataFrame, category_col: str,
+                                category_order: list = None, show_labels: bool = True,
+                                title: str = '', ylabel: str = 'Count'):
+        """
+        Draw grouped bar chart with environment breakdown.
+
+        When show_env_breakdown is True, creates grouped bars showing each environment
+        separately within each category (e.g., 4 severities × 3 environments = 12 bars).
+
+        Args:
+            ax: Matplotlib axes
+            df: DataFrame with category column and environment_type column
+            category_col: Column name to group by (e.g., 'severity_text')
+            category_order: Order of categories (e.g., ['Critical', 'High', 'Medium', 'Low'])
+            show_labels: Whether to show data labels on bars
+            title: Chart title
+            ylabel: Y-axis label
+        """
+        from matplotlib.patches import Patch
+
+        # Ensure environment column exists
+        if 'environment_type' not in df.columns and 'hostname' in df.columns:
+            df = self._add_environment_column(df)
+
+        if df.empty or category_col not in df.columns:
+            ax.text(0.5, 0.5, 'No data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        env_types = self.settings_manager.settings.environment_types if hasattr(self, 'settings_manager') else ['Production', 'PSS', 'Shared']
+        env_colors = {'Production': '#28a745', 'PSS': '#007bff', 'Shared': '#ffc107', 'Unknown': '#6c757d'}
+
+        # Get unique categories and environments present in data
+        if category_order:
+            categories = [c for c in category_order if c in df[category_col].unique()]
+        else:
+            categories = df[category_col].unique().tolist()
+
+        if not categories:
+            ax.text(0.5, 0.5, 'No data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Get environments present in data
+        if 'environment_type' in df.columns:
+            present_envs = [e for e in env_types if e in df['environment_type'].unique()]
+        else:
+            present_envs = []
+
+        if not present_envs:
+            # Fall back to non-grouped display
+            counts = df[category_col].value_counts().reindex(categories, fill_value=0)
+            bars = ax.bar(range(len(counts)), counts.values, color='#17a2b8')
+            ax.set_xticks(range(len(counts)))
+            ax.set_xticklabels(counts.index, rotation=45, ha='right', fontsize=8)
+            if show_labels:
+                for bar, val in zip(bars, counts.values):
+                    if val > 0:
+                        ax.annotate(f'{int(val)}', xy=(bar.get_x() + bar.get_width()/2, val),
+                                   ha='center', va='bottom', fontsize=7, color='white')
+            ax.set_title(title, color='white', fontsize=10)
+            ax.set_ylabel(ylabel, color='white')
+            return
+
+        # Create grouped bar chart
+        num_envs = len(present_envs)
+        num_cats = len(categories)
+        bar_width = 0.8 / num_envs
+        x = np.arange(num_cats)
+
+        # Group by category and environment
+        grouped = df.groupby([category_col, 'environment_type']).size().unstack(fill_value=0)
+
+        # Ensure all categories are present
+        for cat in categories:
+            if cat not in grouped.index:
+                grouped.loc[cat] = 0
+        grouped = grouped.reindex(categories)
+
+        # Ensure all environments are present
+        for env in present_envs:
+            if env not in grouped.columns:
+                grouped[env] = 0
+
+        # Draw bars for each environment
+        for i, env in enumerate(present_envs):
+            offset = (i - num_envs/2 + 0.5) * bar_width
+            values = grouped[env].values if env in grouped.columns else [0] * num_cats
+            bars = ax.bar(x + offset, values, bar_width,
+                         label=env, color=env_colors.get(env, '#6c757d'), alpha=0.9)
+
+            if show_labels and num_cats <= 6:
+                for bar, val in zip(bars, values):
+                    if val > 0:
+                        ax.annotate(f'{int(val)}',
+                                   xy=(bar.get_x() + bar.get_width()/2, val),
+                                   ha='center', va='bottom', fontsize=6, color='white')
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(categories, rotation=45 if num_cats > 4 else 0, ha='right' if num_cats > 4 else 'center', fontsize=8)
+        ax.set_title(title, color='white', fontsize=10)
+        ax.set_ylabel(ylabel, color='white')
+        ax.legend(loc='upper right', fontsize=7, facecolor='#2d2d2d', labelcolor='white')
+
+        # Add total annotation
+        total = int(df.shape[0])
+        ax.text(0.98, 0.98, f'Total: {total:,}', transform=ax.transAxes,
+               fontsize=8, va='top', ha='right', color='white')
+
+    def _draw_env_grouped_metric_bars(self, ax, df: pd.DataFrame, category_col: str,
+                                       metric_col: str, agg_func: str = 'mean',
+                                       category_order: list = None, show_labels: bool = True,
+                                       title: str = '', ylabel: str = '', fmt: str = '{:.1f}'):
+        """
+        Draw grouped bar chart with environment breakdown for aggregated metrics.
+
+        Args:
+            ax: Matplotlib axes
+            df: DataFrame with category, metric, and environment_type columns
+            category_col: Column name to group by (e.g., 'severity_text')
+            metric_col: Column name to aggregate (e.g., 'days_open')
+            agg_func: Aggregation function ('mean', 'sum', 'count', 'median')
+            category_order: Order of categories
+            show_labels: Whether to show data labels on bars
+            title: Chart title
+            ylabel: Y-axis label
+            fmt: Format string for labels
+        """
+        # Ensure environment column exists
+        if 'environment_type' not in df.columns and 'hostname' in df.columns:
+            df = self._add_environment_column(df)
+
+        if df.empty or category_col not in df.columns or metric_col not in df.columns:
+            ax.text(0.5, 0.5, 'No data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Convert metric to numeric
+        df = df.copy()
+        df[metric_col] = pd.to_numeric(df[metric_col], errors='coerce')
+
+        env_types = self.settings_manager.settings.environment_types if hasattr(self, 'settings_manager') else ['Production', 'PSS', 'Shared']
+        env_colors = {'Production': '#28a745', 'PSS': '#007bff', 'Shared': '#ffc107', 'Unknown': '#6c757d'}
+
+        # Get unique categories
+        if category_order:
+            categories = [c for c in category_order if c in df[category_col].unique()]
+        else:
+            categories = df[category_col].unique().tolist()
+
+        if not categories:
+            ax.text(0.5, 0.5, 'No data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        # Get environments present in data
+        if 'environment_type' in df.columns:
+            present_envs = [e for e in env_types if e in df['environment_type'].unique()]
+        else:
+            present_envs = []
+
+        if not present_envs:
+            # Fall back to non-grouped display
+            if agg_func == 'mean':
+                values = df.groupby(category_col)[metric_col].mean()
+            elif agg_func == 'sum':
+                values = df.groupby(category_col)[metric_col].sum()
+            elif agg_func == 'median':
+                values = df.groupby(category_col)[metric_col].median()
+            else:
+                values = df.groupby(category_col)[metric_col].count()
+
+            values = values.reindex(categories, fill_value=0)
+            bars = ax.bar(range(len(values)), values.values, color='#17a2b8')
+            ax.set_xticks(range(len(values)))
+            ax.set_xticklabels(values.index, rotation=45, ha='right', fontsize=8)
+            if show_labels:
+                for bar, val in zip(bars, values.values):
+                    if val > 0:
+                        ax.annotate(fmt.format(val), xy=(bar.get_x() + bar.get_width()/2, val),
+                                   ha='center', va='bottom', fontsize=7, color='white')
+            ax.set_title(title, color='white', fontsize=10)
+            ax.set_ylabel(ylabel, color='white')
+            return
+
+        # Create grouped bar chart
+        num_envs = len(present_envs)
+        num_cats = len(categories)
+        bar_width = 0.8 / num_envs
+        x = np.arange(num_cats)
+
+        # Group by category and environment, then aggregate
+        if agg_func == 'mean':
+            grouped = df.groupby([category_col, 'environment_type'])[metric_col].mean().unstack(fill_value=0)
+        elif agg_func == 'sum':
+            grouped = df.groupby([category_col, 'environment_type'])[metric_col].sum().unstack(fill_value=0)
+        elif agg_func == 'median':
+            grouped = df.groupby([category_col, 'environment_type'])[metric_col].median().unstack(fill_value=0)
+        else:
+            grouped = df.groupby([category_col, 'environment_type'])[metric_col].count().unstack(fill_value=0)
+
+        # Ensure all categories are present
+        for cat in categories:
+            if cat not in grouped.index:
+                grouped.loc[cat] = 0
+        grouped = grouped.reindex(categories)
+
+        # Draw bars for each environment
+        for i, env in enumerate(present_envs):
+            offset = (i - num_envs/2 + 0.5) * bar_width
+            values = grouped[env].values if env in grouped.columns else [0] * num_cats
+            bars = ax.bar(x + offset, values, bar_width,
+                         label=env, color=env_colors.get(env, '#6c757d'), alpha=0.9)
+
+            if show_labels and num_cats <= 6:
+                for bar, val in zip(bars, values):
+                    if val > 0:
+                        ax.annotate(fmt.format(val),
+                                   xy=(bar.get_x() + bar.get_width()/2, val),
+                                   ha='center', va='bottom', fontsize=6, color='white')
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(categories, rotation=45 if num_cats > 4 else 0, ha='right' if num_cats > 4 else 'center', fontsize=8)
+        ax.set_title(title, color='white', fontsize=10)
+        ax.set_ylabel(ylabel, color='white')
+        ax.legend(loc='upper right', fontsize=7, facecolor='#2d2d2d', labelcolor='white')
+
     # File selection methods
     def _truncate_filename(self, name: str, max_len: int = 20) -> str:
         """Truncate filename to fit in label."""
@@ -4041,26 +4268,41 @@ class NessusHistoryTrackerApp:
             resolved = df[df['status'] == 'Resolved'].copy()
             if not resolved.empty:
                 resolved['days_open_numeric'] = pd.to_numeric(resolved['days_open'], errors='coerce')
-                mttr = resolved.groupby('severity_text')['days_open_numeric'].mean()
                 severity_order = ['Critical', 'High', 'Medium', 'Low']
-                mttr = mttr.reindex([s for s in severity_order if s in mttr.index])
-                severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff'}
-                colors = [severity_colors.get(s, '#6c757d') for s in mttr.index]
-                bars = self.risk_ax2.bar(range(len(mttr)), mttr.values, color=colors)
-                self.risk_ax2.set_xticks(range(len(mttr)))
-                self.risk_ax2.set_xticklabels(mttr.index, fontsize=8)
-                if show_labels:
-                    for bar, val in zip(bars, mttr.values):
-                        self.risk_ax2.annotate(f'{val:.0f}d', xy=(bar.get_x() + bar.get_width()/2, val),
-                                              xytext=(0, 3), textcoords='offset points',
-                                              ha='center', va='bottom', fontsize=7, color='white')
-                # Overall MTTR
-                overall_mttr = resolved['days_open_numeric'].mean()
-                self.risk_ax2.axhline(y=overall_mttr, color='white', linestyle='--', linewidth=1, alpha=0.5)
-                self.risk_ax2.text(0.02, 0.98, f'Overall: {overall_mttr:.0f}d', transform=self.risk_ax2.transAxes,
-                                  fontsize=7, va='top', color='white')
-        self.risk_ax2.set_title('Mean Time to Remediation', color=GUI_DARK_THEME['fg'], fontsize=10)
-        self.risk_ax2.set_ylabel('Days', color=GUI_DARK_THEME['fg'])
+
+                # Check if environment breakdown is enabled
+                if self.show_env_breakdown and 'hostname' in resolved.columns:
+                    # Add environment column and use grouped bars
+                    resolved = self._add_environment_column(resolved)
+                    self._draw_env_grouped_metric_bars(
+                        self.risk_ax2, resolved, 'severity_text', 'days_open_numeric',
+                        agg_func='mean', category_order=severity_order, show_labels=show_labels,
+                        title='MTTR by Severity & Environment', ylabel='Days', fmt='{:.0f}d'
+                    )
+                else:
+                    # Standard display
+                    mttr = resolved.groupby('severity_text')['days_open_numeric'].mean()
+                    mttr = mttr.reindex([s for s in severity_order if s in mttr.index])
+                    severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff'}
+                    colors = [severity_colors.get(s, '#6c757d') for s in mttr.index]
+                    bars = self.risk_ax2.bar(range(len(mttr)), mttr.values, color=colors)
+                    self.risk_ax2.set_xticks(range(len(mttr)))
+                    self.risk_ax2.set_xticklabels(mttr.index, fontsize=8)
+                    if show_labels:
+                        for bar, val in zip(bars, mttr.values):
+                            self.risk_ax2.annotate(f'{val:.0f}d', xy=(bar.get_x() + bar.get_width()/2, val),
+                                                  xytext=(0, 3), textcoords='offset points',
+                                                  ha='center', va='bottom', fontsize=7, color='white')
+                    # Overall MTTR
+                    overall_mttr = resolved['days_open_numeric'].mean()
+                    self.risk_ax2.axhline(y=overall_mttr, color='white', linestyle='--', linewidth=1, alpha=0.5)
+                    self.risk_ax2.text(0.02, 0.98, f'Overall: {overall_mttr:.0f}d', transform=self.risk_ax2.transAxes,
+                                      fontsize=7, va='top', color='white')
+                    self.risk_ax2.set_title('Mean Time to Remediation', color=GUI_DARK_THEME['fg'], fontsize=10)
+                    self.risk_ax2.set_ylabel('Days', color=GUI_DARK_THEME['fg'])
+        else:
+            self.risk_ax2.set_title('Mean Time to Remediation', color=GUI_DARK_THEME['fg'], fontsize=10)
+            self.risk_ax2.set_ylabel('Days', color=GUI_DARK_THEME['fg'])
 
         # Chart 3: Findings by age with urgency coloring
         if 'days_open' in df.columns:
@@ -4069,23 +4311,40 @@ class NessusHistoryTrackerApp:
                 active['days_open_numeric'] = pd.to_numeric(active['days_open'], errors='coerce')
                 buckets = [0, 30, 60, 90, 120, float('inf')]
                 labels = ['0-30', '31-60', '61-90', '91-120', '121+']
-                age_counts = pd.cut(active['days_open_numeric'], bins=buckets, labels=labels).value_counts().sort_index()
-                colors = ['#28a745', '#ffc107', '#fd7e14', '#dc3545', '#dc3545']
-                bars = self.risk_ax3.bar(range(len(age_counts)), age_counts.values, color=colors)
-                self.risk_ax3.set_xticks(range(len(age_counts)))
-                self.risk_ax3.set_xticklabels(labels, fontsize=8)
-                if show_labels:
-                    for bar, val in zip(bars, age_counts.values):
-                        if val > 0:
-                            self.risk_ax3.annotate(f'{int(val)}', xy=(bar.get_x() + bar.get_width()/2, val),
-                                                  xytext=(0, 3), textcoords='offset points',
-                                                  ha='center', va='bottom', fontsize=7, color='white')
-                # Average age
-                avg_age = active['days_open_numeric'].mean()
-                self.risk_ax3.text(0.98, 0.98, f'Avg: {avg_age:.0f}d', transform=self.risk_ax3.transAxes,
-                                  fontsize=8, va='top', ha='right', color='white')
-        self.risk_ax3.set_title('Active Findings by Age', color=GUI_DARK_THEME['fg'], fontsize=10)
-        self.risk_ax3.set_xlabel('Days Open', color=GUI_DARK_THEME['fg'])
+                active['age_bucket'] = pd.cut(active['days_open_numeric'], bins=buckets, labels=labels)
+
+                # Check if environment breakdown is enabled
+                if self.show_env_breakdown and 'hostname' in active.columns:
+                    # Add environment column and use grouped bars
+                    active = self._add_environment_column(active)
+                    self._draw_env_grouped_bars(
+                        self.risk_ax3, active, 'age_bucket',
+                        category_order=labels, show_labels=show_labels,
+                        title='Age by Environment', ylabel='Count'
+                    )
+                    self.risk_ax3.set_xlabel('Days Open', color=GUI_DARK_THEME['fg'])
+                else:
+                    # Standard display
+                    age_counts = active['age_bucket'].value_counts().sort_index()
+                    colors = ['#28a745', '#ffc107', '#fd7e14', '#dc3545', '#dc3545']
+                    bars = self.risk_ax3.bar(range(len(age_counts)), age_counts.values, color=colors)
+                    self.risk_ax3.set_xticks(range(len(age_counts)))
+                    self.risk_ax3.set_xticklabels(labels, fontsize=8)
+                    if show_labels:
+                        for bar, val in zip(bars, age_counts.values):
+                            if val > 0:
+                                self.risk_ax3.annotate(f'{int(val)}', xy=(bar.get_x() + bar.get_width()/2, val),
+                                                      xytext=(0, 3), textcoords='offset points',
+                                                      ha='center', va='bottom', fontsize=7, color='white')
+                    # Average age
+                    avg_age = active['days_open_numeric'].mean()
+                    self.risk_ax3.text(0.98, 0.98, f'Avg: {avg_age:.0f}d', transform=self.risk_ax3.transAxes,
+                                      fontsize=8, va='top', ha='right', color='white')
+                    self.risk_ax3.set_title('Active Findings by Age', color=GUI_DARK_THEME['fg'], fontsize=10)
+                    self.risk_ax3.set_xlabel('Days Open', color=GUI_DARK_THEME['fg'])
+        else:
+            self.risk_ax3.set_title('Active Findings by Age', color=GUI_DARK_THEME['fg'], fontsize=10)
+            self.risk_ax3.set_xlabel('Days Open', color=GUI_DARK_THEME['fg'])
 
         # Chart 4: Top risky hosts - Top 5 per environment (embedded view)
         if 'hostname' in df.columns and 'severity_value' in df.columns:
@@ -7230,25 +7489,40 @@ class NessusHistoryTrackerApp:
         # Chart 2: Plugin severity distribution with data labels
         sev_col = 'severity_text' if 'severity_text' in df.columns else 'severity' if 'severity' in df.columns else None
         if 'plugin_id' in df.columns and sev_col:
-            plugin_severity = df.groupby(['plugin_id', sev_col]).size().unstack(fill_value=0)
-            severity_totals = {}
             severity_order = ['Critical', 'High', 'Medium', 'Low', 'Info']
-            for sev in severity_order:
-                if sev in plugin_severity.columns:
-                    severity_totals[sev] = plugin_severity[sev].sum()
-            if severity_totals:
-                colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff', 'Info': '#6c757d'}
-                bar_colors = [colors.get(s, 'gray') for s in severity_totals.keys()]
-                bars = self.plugin_ax2.bar(range(len(severity_totals)), list(severity_totals.values()), color=bar_colors)
-                self.plugin_ax2.set_xticks(range(len(severity_totals)))
-                self.plugin_ax2.set_xticklabels(list(severity_totals.keys()), fontsize=8)
-                if show_labels:
-                    for bar, val in zip(bars, severity_totals.values()):
-                        self.plugin_ax2.annotate(f'{int(val)}', xy=(bar.get_x() + bar.get_width()/2, val),
-                                                xytext=(0, 3), textcoords='offset points',
-                                                ha='center', va='bottom', fontsize=7, color='white')
-        self.plugin_ax2.set_title('Findings by Severity', color=GUI_DARK_THEME['fg'], fontsize=10)
-        self.plugin_ax2.set_ylabel('Count', color=GUI_DARK_THEME['fg'])
+
+            # Check if environment breakdown is enabled
+            if self.show_env_breakdown and 'hostname' in df.columns:
+                # Add environment column and use grouped bars
+                df_with_env = self._add_environment_column(df)
+                self._draw_env_grouped_bars(
+                    self.plugin_ax2, df_with_env, sev_col,
+                    category_order=severity_order, show_labels=show_labels,
+                    title='Findings by Sev & Env', ylabel='Count'
+                )
+            else:
+                # Standard display
+                plugin_severity = df.groupby(['plugin_id', sev_col]).size().unstack(fill_value=0)
+                severity_totals = {}
+                for sev in severity_order:
+                    if sev in plugin_severity.columns:
+                        severity_totals[sev] = plugin_severity[sev].sum()
+                if severity_totals:
+                    colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff', 'Info': '#6c757d'}
+                    bar_colors = [colors.get(s, 'gray') for s in severity_totals.keys()]
+                    bars = self.plugin_ax2.bar(range(len(severity_totals)), list(severity_totals.values()), color=bar_colors)
+                    self.plugin_ax2.set_xticks(range(len(severity_totals)))
+                    self.plugin_ax2.set_xticklabels(list(severity_totals.keys()), fontsize=8)
+                    if show_labels:
+                        for bar, val in zip(bars, severity_totals.values()):
+                            self.plugin_ax2.annotate(f'{int(val)}', xy=(bar.get_x() + bar.get_width()/2, val),
+                                                    xytext=(0, 3), textcoords='offset points',
+                                                    ha='center', va='bottom', fontsize=7, color='white')
+                self.plugin_ax2.set_title('Findings by Severity', color=GUI_DARK_THEME['fg'], fontsize=10)
+                self.plugin_ax2.set_ylabel('Count', color=GUI_DARK_THEME['fg'])
+        else:
+            self.plugin_ax2.set_title('Findings by Severity', color=GUI_DARK_THEME['fg'], fontsize=10)
+            self.plugin_ax2.set_ylabel('Count', color=GUI_DARK_THEME['fg'])
 
         # Chart 3: Plugins affecting most hosts with data labels
         if 'plugin_id' in df.columns and 'hostname' in df.columns:
@@ -7442,22 +7716,37 @@ class NessusHistoryTrackerApp:
         if 'priority_score' in active_df.columns and sev_col:
             active_df_numeric = active_df.copy()
             active_df_numeric['priority_score'] = pd.to_numeric(active_df_numeric['priority_score'], errors='coerce')
-            sev_priority = active_df_numeric.groupby(sev_col)['priority_score'].mean()
             sev_order = ['Critical', 'High', 'Medium', 'Low', 'Info']
-            sev_priority = sev_priority.reindex([s for s in sev_order if s in sev_priority.index])
-            if len(sev_priority) > 0:
-                colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff', 'Info': '#6c757d'}
-                bar_colors = [colors.get(s, 'gray') for s in sev_priority.index]
-                bars = self.priority_ax4.bar(range(len(sev_priority)), sev_priority.values, color=bar_colors)
-                self.priority_ax4.set_xticks(range(len(sev_priority)))
-                self.priority_ax4.set_xticklabels(sev_priority.index, fontsize=8)
-                if show_labels:
-                    for bar, val in zip(bars, sev_priority.values):
-                        self.priority_ax4.annotate(f'{val:.1f}', xy=(bar.get_x() + bar.get_width()/2, val),
-                                                  xytext=(0, 3), textcoords='offset points',
-                                                  ha='center', va='bottom', fontsize=7, color='white')
-        self.priority_ax4.set_title('Avg Priority by Severity', color=GUI_DARK_THEME['fg'], fontsize=10)
-        self.priority_ax4.set_ylabel('Priority Score', color=GUI_DARK_THEME['fg'])
+
+            # Check if environment breakdown is enabled
+            if self.show_env_breakdown and 'hostname' in active_df_numeric.columns:
+                # Add environment column and use grouped bars
+                active_df_numeric = self._add_environment_column(active_df_numeric)
+                self._draw_env_grouped_metric_bars(
+                    self.priority_ax4, active_df_numeric, sev_col, 'priority_score',
+                    agg_func='mean', category_order=sev_order, show_labels=show_labels,
+                    title='Avg Priority by Sev & Env', ylabel='Priority Score', fmt='{:.1f}'
+                )
+            else:
+                # Standard display
+                sev_priority = active_df_numeric.groupby(sev_col)['priority_score'].mean()
+                sev_priority = sev_priority.reindex([s for s in sev_order if s in sev_priority.index])
+                if len(sev_priority) > 0:
+                    colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff', 'Info': '#6c757d'}
+                    bar_colors = [colors.get(s, 'gray') for s in sev_priority.index]
+                    bars = self.priority_ax4.bar(range(len(sev_priority)), sev_priority.values, color=bar_colors)
+                    self.priority_ax4.set_xticks(range(len(sev_priority)))
+                    self.priority_ax4.set_xticklabels(sev_priority.index, fontsize=8)
+                    if show_labels:
+                        for bar, val in zip(bars, sev_priority.values):
+                            self.priority_ax4.annotate(f'{val:.1f}', xy=(bar.get_x() + bar.get_width()/2, val),
+                                                      xytext=(0, 3), textcoords='offset points',
+                                                      ha='center', va='bottom', fontsize=7, color='white')
+                self.priority_ax4.set_title('Avg Priority by Severity', color=GUI_DARK_THEME['fg'], fontsize=10)
+                self.priority_ax4.set_ylabel('Priority Score', color=GUI_DARK_THEME['fg'])
+        else:
+            self.priority_ax4.set_title('Avg Priority by Severity', color=GUI_DARK_THEME['fg'], fontsize=10)
+            self.priority_ax4.set_ylabel('Priority Score', color=GUI_DARK_THEME['fg'])
 
         for ax in [self.priority_ax1, self.priority_ax2, self.priority_ax3, self.priority_ax4]:
             ax.tick_params(colors=GUI_DARK_THEME['fg'])
@@ -7547,25 +7836,40 @@ class NessusHistoryTrackerApp:
         # Chart 2: Overdue by severity
         overdue = active_df[active_df['sla_status'] == SLA_STATUS_OVERDUE]
         if not overdue.empty and 'severity_text' in overdue.columns:
-            overdue_by_sev = overdue['severity_text'].value_counts()
             sev_order = ['Critical', 'High', 'Medium', 'Low']
-            overdue_by_sev = overdue_by_sev.reindex([s for s in sev_order if s in overdue_by_sev.index])
-            if len(overdue_by_sev) > 0:
-                colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff'}
-                bar_colors = [colors.get(s, 'gray') for s in overdue_by_sev.index]
-                bars = self.sla_ax2.bar(range(len(overdue_by_sev)), overdue_by_sev.values, color=bar_colors)
-                self.sla_ax2.set_xticks(range(len(overdue_by_sev)))
-                self.sla_ax2.set_xticklabels(overdue_by_sev.index, fontsize=9)
 
-                # Add data labels
-                if show_labels:
-                    for bar, val in zip(bars, overdue_by_sev.values):
-                        self.sla_ax2.annotate(f'{int(val)}',
-                            xy=(bar.get_x() + bar.get_width()/2, val),
-                            xytext=(0, 3), textcoords='offset points',
-                            ha='center', va='bottom', fontsize=8, color='white', fontweight='bold')
-        self.sla_ax2.set_title(f'Overdue Findings ({len(overdue)} total)', color=GUI_DARK_THEME['fg'], fontsize=10)
-        self.sla_ax2.set_ylabel('Count', color=GUI_DARK_THEME['fg'])
+            # Check if environment breakdown is enabled
+            if self.show_env_breakdown and 'hostname' in overdue.columns:
+                # Add environment column and use grouped bars
+                overdue = self._add_environment_column(overdue)
+                self._draw_env_grouped_bars(
+                    self.sla_ax2, overdue, 'severity_text',
+                    category_order=sev_order, show_labels=show_labels,
+                    title=f'Overdue by Severity & Env ({len(overdue)} total)', ylabel='Count'
+                )
+            else:
+                # Standard display
+                overdue_by_sev = overdue['severity_text'].value_counts()
+                overdue_by_sev = overdue_by_sev.reindex([s for s in sev_order if s in overdue_by_sev.index])
+                if len(overdue_by_sev) > 0:
+                    colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff'}
+                    bar_colors = [colors.get(s, 'gray') for s in overdue_by_sev.index]
+                    bars = self.sla_ax2.bar(range(len(overdue_by_sev)), overdue_by_sev.values, color=bar_colors)
+                    self.sla_ax2.set_xticks(range(len(overdue_by_sev)))
+                    self.sla_ax2.set_xticklabels(overdue_by_sev.index, fontsize=9)
+
+                    # Add data labels
+                    if show_labels:
+                        for bar, val in zip(bars, overdue_by_sev.values):
+                            self.sla_ax2.annotate(f'{int(val)}',
+                                xy=(bar.get_x() + bar.get_width()/2, val),
+                                xytext=(0, 3), textcoords='offset points',
+                                ha='center', va='bottom', fontsize=8, color='white', fontweight='bold')
+                self.sla_ax2.set_title(f'Overdue Findings ({len(overdue)} total)', color=GUI_DARK_THEME['fg'], fontsize=10)
+                self.sla_ax2.set_ylabel('Count', color=GUI_DARK_THEME['fg'])
+        else:
+            self.sla_ax2.set_title('Overdue Findings (0 total)', color=GUI_DARK_THEME['fg'], fontsize=10)
+            self.sla_ax2.set_ylabel('Count', color=GUI_DARK_THEME['fg'])
 
         # Chart 3: Approaching deadline - show findings closest to SLA breach
         approaching = active_df[active_df['sla_status'] == SLA_STATUS_APPROACHING].copy()
