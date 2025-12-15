@@ -157,8 +157,39 @@ class PackageImpactDialog:
         tab = ttk.Frame(self.notebook, padding="10")
         self.notebook.add(tab, text="Data & Analysis")
 
-        # File loading section
-        load_frame = ttk.LabelFrame(tab, text="Load Version Data", padding="10")
+        # Option 1: Extract from Lifecycle Data (Primary option)
+        extract_frame = ttk.LabelFrame(tab, text="Extract from Active Findings", padding="10")
+        extract_frame.pack(fill=tk.X, pady=(0, 10))
+
+        ttk.Label(
+            extract_frame,
+            text="Extract package/version information directly from plugin output in loaded findings:",
+            wraplength=800
+        ).pack(anchor=tk.W)
+
+        extract_btn_frame = ttk.Frame(extract_frame)
+        extract_btn_frame.pack(fill=tk.X, pady=(10, 0))
+
+        ttk.Button(
+            extract_btn_frame,
+            text="Extract & Analyze from Lifecycle Data",
+            command=self._extract_from_lifecycle
+        ).pack(side=tk.LEFT)
+
+        self.extract_status_label = ttk.Label(extract_btn_frame, text="")
+        self.extract_status_label.pack(side=tk.LEFT, padx=10)
+
+        # Show finding count if available
+        if self.findings_df is not None and not self.findings_df.empty:
+            count = len(self.findings_df)
+            has_output = 'plugin_output' in self.findings_df.columns
+            status = f"✓ {count:,} findings loaded" + (" with plugin_output" if has_output else " (no plugin_output column)")
+            self.extract_status_label.config(text=status, foreground='#66ff66' if has_output else '#ffaa00')
+        else:
+            self.extract_status_label.config(text="⚠ No findings loaded - load data first", foreground='#ff6666')
+
+        # Option 2: Load from file (Alternative)
+        load_frame = ttk.LabelFrame(tab, text="Or Load from External File", padding="10")
         load_frame.pack(fill=tk.X, pady=(0, 10))
 
         ttk.Label(
@@ -186,8 +217,8 @@ class PackageImpactDialog:
         ).pack(side=tk.LEFT)
 
         # Progress
-        self.progress_frame = ttk.Frame(load_frame)
-        self.progress_frame.pack(fill=tk.X, pady=(10, 0))
+        self.progress_frame = ttk.Frame(tab)
+        self.progress_frame.pack(fill=tk.X, pady=(5, 0))
         self.progress_label = ttk.Label(self.progress_frame, text="")
         self.progress_label.pack(side=tk.LEFT)
         self.progress_bar = ttk.Progressbar(self.progress_frame, mode='indeterminate', length=200)
@@ -213,6 +244,206 @@ class PackageImpactDialog:
         self.summary_text.tag_configure('metric', foreground='#ffaa00')
         self.summary_text.tag_configure('warning', foreground='#ff6666')
         self.summary_text.tag_configure('success', foreground='#66ff66')
+
+    def _extract_from_lifecycle(self):
+        """Extract package/version data from lifecycle findings plugin_output."""
+        if self.findings_df is None or self.findings_df.empty:
+            messagebox.showwarning("No Data", "No findings data loaded. Please load findings first.")
+            return
+
+        if 'plugin_output' not in self.findings_df.columns:
+            messagebox.showwarning(
+                "Missing Data",
+                "The loaded findings don't have a 'plugin_output' column.\n\n"
+                "Package version extraction requires the plugin_output field."
+            )
+            return
+
+        self.processing = True
+        self.progress_label.config(text="Extracting package versions from plugin output...")
+        self.progress_bar.pack(side=tk.LEFT, padx=5)
+        self.progress_bar.start(10)
+
+        def _process():
+            try:
+                # Extract package/version info from plugin_output
+                version_data = self._parse_plugin_outputs(self.findings_df)
+
+                if version_data.empty:
+                    self.dialog.after(0, lambda: self._extraction_warning(
+                        "No package version information found in plugin outputs.\n\n"
+                        "This typically happens when:\n"
+                        "• Findings are not patch-related vulnerabilities\n"
+                        "• Plugin output doesn't contain version information\n"
+                        "• The plugin output format is not recognized"
+                    ))
+                    return
+
+                self.version_df = version_data
+
+                # Run analysis
+                self.plan = analyze_package_version_impact(
+                    self.version_df,
+                    self.findings_df
+                )
+
+                self.dialog.after(0, self._analysis_complete)
+
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                self.dialog.after(0, lambda: self._analysis_error(str(e)))
+
+        threading.Thread(target=_process, daemon=True).start()
+
+    def _parse_plugin_outputs(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Parse plugin_output field to extract package/version information.
+
+        Args:
+            df: DataFrame with plugin_output column
+
+        Returns:
+            DataFrame with extracted version data
+        """
+        import re
+
+        records = []
+
+        for _, row in df.iterrows():
+            output = str(row.get('plugin_output', ''))
+            if not output or output == 'nan':
+                continue
+
+            hostname = row.get('hostname', 'Unknown')
+            plugin_id = str(row.get('plugin_id', ''))
+            severity = row.get('severity_text', row.get('severity', 'Unknown'))
+
+            # Extract CVEs from the output or from cves column
+            cves_col = row.get('cves', row.get('CVEs', ''))
+            cves = []
+            if cves_col and str(cves_col) != 'nan':
+                cves = re.findall(r'CVE-\d{4}-\d+', str(cves_col))
+            cves.extend(re.findall(r'CVE-\d{4}-\d+', output))
+            cves = list(set(cves))
+
+            # Try multiple patterns to extract package/version info
+
+            # Pattern 1: "Package: xxx / Installed version: xxx / Fixed version: xxx"
+            pkg_match = re.search(r'[Pp]ackage\s*[:=]\s*([^\n\r]+)', output)
+            installed_match = re.search(r'[Ii]nstalled\s+[Vv]ersion\s*[:=]\s*([^\n\r]+)', output)
+            fixed_match = re.search(r'[Ff]ixed\s+[Vv]ersion\s*[:=]\s*([^\n\r]+)', output)
+
+            if pkg_match and (installed_match or fixed_match):
+                records.append({
+                    'package_name': pkg_match.group(1).strip(),
+                    'installed_version': installed_match.group(1).strip() if installed_match else '',
+                    'target_version': fixed_match.group(1).strip() if fixed_match else '',
+                    'hostname': hostname,
+                    'plugin_id': plugin_id,
+                    'severity': severity,
+                    'cves': ','.join(cves)
+                })
+                continue
+
+            # Pattern 2: "Remote package installed : xxx-version" (common Nessus format)
+            remote_pkg = re.findall(r'[Rr]emote\s+package\s+installed\s*:\s*([^\n\r]+)', output)
+            should_be = re.findall(r'[Ss]hould\s+be\s*:\s*([^\n\r]+)', output)
+
+            if remote_pkg:
+                for i, pkg_str in enumerate(remote_pkg):
+                    pkg_str = pkg_str.strip()
+                    # Try to split package-version
+                    # Pattern: name-version or name version
+                    match = re.match(r'^([a-zA-Z][a-zA-Z0-9._+-]*?)[-_](\d[^\s]*)$', pkg_str)
+                    if match:
+                        pkg_name = match.group(1)
+                        installed_ver = match.group(2)
+                    else:
+                        pkg_name = pkg_str
+                        installed_ver = ''
+
+                    target_ver = should_be[i].strip() if i < len(should_be) else ''
+
+                    records.append({
+                        'package_name': pkg_name,
+                        'installed_version': installed_ver,
+                        'target_version': target_ver,
+                        'hostname': hostname,
+                        'plugin_id': plugin_id,
+                        'severity': severity,
+                        'cves': ','.join(cves)
+                    })
+                continue
+
+            # Pattern 3: Path-based versions (e.g., "Path: /opt/java\nVersion: 1.8.0")
+            path_match = re.search(r'[Pp]ath\s*[:=]\s*([^\n\r]+)', output)
+            version_match = re.search(r'\b[Vv]ersion\s*[:=]\s*([0-9][^\n\r]*)', output)
+            fixed_ver_match = re.search(r'[Ff]ix(?:ed)?\s*[:=]\s*([0-9][^\n\r]*)', output)
+
+            if path_match and version_match:
+                path = path_match.group(1).strip()
+                # Extract app name from path
+                app_name = path.split('/')[-1] or path.split('\\')[-1] or 'Unknown'
+                records.append({
+                    'package_name': app_name,
+                    'installed_version': version_match.group(1).strip(),
+                    'target_version': fixed_ver_match.group(1).strip() if fixed_ver_match else '',
+                    'hostname': hostname,
+                    'plugin_id': plugin_id,
+                    'severity': severity,
+                    'cves': ','.join(cves)
+                })
+                continue
+
+            # Pattern 4: Simple version pattern "xxx is installed" / "version xxx"
+            simple_ver = re.search(r'[Vv]ersion\s+([0-9][0-9.]*[^\s]*)\s+(?:is\s+)?installed', output)
+            if simple_ver:
+                # Try to get product name from plugin_name if available
+                plugin_name = row.get('plugin_name', '')
+                # Extract likely package name from plugin name
+                pkg_from_name = re.sub(r'\s*[Vv]ulnerability.*|\s*[Dd]etection.*|\s*<\s*[\d.]+.*', '', str(plugin_name)).strip()
+
+                records.append({
+                    'package_name': pkg_from_name or 'Unknown',
+                    'installed_version': simple_ver.group(1).strip(),
+                    'target_version': '',
+                    'hostname': hostname,
+                    'plugin_id': plugin_id,
+                    'severity': severity,
+                    'cves': ','.join(cves)
+                })
+                continue
+
+            # Pattern 5: For patch-related plugins, try to extract from structured output
+            # "Installed package : kernel-3.10.0-1160.el7\n  Fixed package : kernel-3.10.0-1160.88.1.el7"
+            installed_pkg = re.search(r'[Ii]nstalled\s+package\s*:\s*([^\n\r]+)', output)
+            fixed_pkg = re.search(r'[Ff]ixed\s+package\s*:\s*([^\n\r]+)', output)
+
+            if installed_pkg:
+                pkg_str = installed_pkg.group(1).strip()
+                # Extract name and version
+                match = re.match(r'^([a-zA-Z][a-zA-Z0-9._+-]*?)[-_](\d[^\s]*)$', pkg_str)
+                if match:
+                    records.append({
+                        'package_name': match.group(1),
+                        'installed_version': match.group(2),
+                        'target_version': fixed_pkg.group(1).strip() if fixed_pkg else '',
+                        'hostname': hostname,
+                        'plugin_id': plugin_id,
+                        'severity': severity,
+                        'cves': ','.join(cves)
+                    })
+
+        return pd.DataFrame(records)
+
+    def _extraction_warning(self, message: str):
+        """Handle extraction warning."""
+        self.processing = False
+        self.progress_bar.stop()
+        self.progress_bar.pack_forget()
+        self.progress_label.config(text="")
+        messagebox.showwarning("Extraction Warning", message)
 
     def _build_viz_tab(self):
         """Build the visualizations tab."""
