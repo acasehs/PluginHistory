@@ -188,6 +188,226 @@ class HoverTooltip:
             self.ax.figure.canvas.draw_idle()
 
 
+class ChartInteractiveTooltip:
+    """
+    Enhanced interactive tooltip system for matplotlib charts.
+
+    Automatically detects chart elements (bars, lines, scatter points) and shows
+    tooltips with label + value information on hover.
+
+    Usage:
+        tooltip = ChartInteractiveTooltip(fig, ax)
+        # The tooltip system automatically connects to the figure canvas
+    """
+
+    def __init__(self, fig: Figure, ax: Axes, format_value: Callable = None):
+        """
+        Initialize interactive tooltip.
+
+        Args:
+            fig: Matplotlib figure
+            ax: Matplotlib axes
+            format_value: Optional function to format values (default: comma-separated)
+        """
+        self.fig = fig
+        self.ax = ax
+        self.format_value = format_value or (lambda v: f'{v:,.0f}' if isinstance(v, (int, float)) else str(v))
+        self.annotation = None
+        self.bar_data = []  # List of (bar, label, value) tuples
+        self.line_data = []  # List of (line, labels, values) tuples
+        self.scatter_data = []  # List of (collection, labels, values) tuples
+
+        # Extract data from chart elements
+        self._extract_chart_data()
+
+        # Connect hover event
+        self.cid = fig.canvas.mpl_connect('motion_notify_event', self._on_hover)
+
+    def _extract_chart_data(self):
+        """Extract data from chart elements for tooltip display."""
+        # Extract bar chart data
+        for container in self.ax.containers:
+            try:
+                for i, bar in enumerate(container):
+                    if hasattr(bar, 'get_height') and hasattr(bar, 'get_width'):
+                        # Get label from y-axis (horizontal) or x-axis (vertical)
+                        height = bar.get_height()
+                        width = bar.get_width()
+                        x = bar.get_x()
+                        y = bar.get_y()
+
+                        # Determine if horizontal or vertical bar
+                        if width > height:  # Horizontal bar
+                            value = width
+                            center_x = x + width / 2
+                            center_y = y + height / 2
+                            # Try to get label from y-axis
+                            yticks = self.ax.get_yticks()
+                            ylabels = [t.get_text() for t in self.ax.get_yticklabels()]
+                            label = ylabels[i] if i < len(ylabels) else f'Bar {i}'
+                        else:  # Vertical bar
+                            value = height
+                            center_x = x + width / 2
+                            center_y = y + height / 2
+                            # Try to get label from x-axis
+                            xticks = self.ax.get_xticks()
+                            xlabels = [t.get_text() for t in self.ax.get_xticklabels()]
+                            label = xlabels[i] if i < len(xlabels) else f'Bar {i}'
+
+                        self.bar_data.append({
+                            'bar': bar,
+                            'label': label,
+                            'value': value,
+                            'center': (center_x, center_y),
+                            'bounds': (x, y, x + width, y + height)
+                        })
+            except Exception:
+                pass
+
+        # Extract line chart data
+        for line in self.ax.get_lines():
+            try:
+                xdata = line.get_xdata()
+                ydata = line.get_ydata()
+                label = line.get_label()
+                if label.startswith('_'):  # Skip internal labels
+                    label = 'Series'
+
+                for i, (x, y) in enumerate(zip(xdata, ydata)):
+                    self.line_data.append({
+                        'x': x,
+                        'y': y,
+                        'label': label,
+                        'index': i
+                    })
+            except Exception:
+                pass
+
+        # Extract scatter plot data
+        for collection in self.ax.collections:
+            try:
+                offsets = collection.get_offsets()
+                if len(offsets) > 0:
+                    for i, (x, y) in enumerate(offsets):
+                        self.scatter_data.append({
+                            'x': x,
+                            'y': y,
+                            'index': i
+                        })
+            except Exception:
+                pass
+
+    def _on_hover(self, event):
+        """Handle mouse motion events."""
+        if event.inaxes != self.ax:
+            self._hide_tooltip()
+            return
+
+        # Check bars first (most common)
+        for bar_info in self.bar_data:
+            bounds = bar_info['bounds']
+            if bounds[0] <= event.xdata <= bounds[2] and bounds[1] <= event.ydata <= bounds[3]:
+                label = bar_info['label']
+                value = self.format_value(bar_info['value'])
+                tooltip_text = f"{label}\nValue: {value}"
+                self._show_tooltip(event.xdata, event.ydata, tooltip_text)
+                return
+
+        # Check line points
+        if self.line_data:
+            threshold = self._calculate_threshold()
+            for point in self.line_data:
+                dist = np.sqrt((event.xdata - point['x'])**2 + (event.ydata - point['y'])**2)
+                if dist < threshold:
+                    value = self.format_value(point['y'])
+                    tooltip_text = f"{point['label']}\nValue: {value}"
+                    self._show_tooltip(point['x'], point['y'], tooltip_text)
+                    return
+
+        # Check scatter points
+        if self.scatter_data:
+            threshold = self._calculate_threshold()
+            for point in self.scatter_data:
+                dist = np.sqrt((event.xdata - point['x'])**2 + (event.ydata - point['y'])**2)
+                if dist < threshold:
+                    tooltip_text = f"Point {point['index']}\nX: {point['x']:.2f}\nY: {point['y']:.2f}"
+                    self._show_tooltip(point['x'], point['y'], tooltip_text)
+                    return
+
+        self._hide_tooltip()
+
+    def _calculate_threshold(self) -> float:
+        """Calculate a reasonable threshold based on axis ranges."""
+        xlim = self.ax.get_xlim()
+        ylim = self.ax.get_ylim()
+        x_range = xlim[1] - xlim[0]
+        y_range = ylim[1] - ylim[0]
+        return min(x_range, y_range) * 0.03  # 3% of smaller range
+
+    def _show_tooltip(self, x: float, y: float, text: str):
+        """Show tooltip at position."""
+        if self.annotation is None:
+            self.annotation = self.ax.annotate(
+                text,
+                xy=(x, y),
+                xytext=(15, 15),
+                textcoords='offset points',
+                bbox=dict(boxstyle='round,pad=0.4', fc='#ffffcc', ec='#666666', alpha=0.95),
+                fontsize=9,
+                color='black',
+                zorder=1000
+            )
+        else:
+            self.annotation.set_text(text)
+            self.annotation.xy = (x, y)
+            self.annotation.set_visible(True)
+
+        try:
+            self.fig.canvas.draw_idle()
+        except Exception:
+            pass
+
+    def _hide_tooltip(self):
+        """Hide the tooltip."""
+        if self.annotation is not None:
+            self.annotation.set_visible(False)
+            try:
+                self.fig.canvas.draw_idle()
+            except Exception:
+                pass
+
+    def disconnect(self):
+        """Disconnect the hover event handler."""
+        if hasattr(self, 'cid') and self.cid:
+            try:
+                self.fig.canvas.mpl_disconnect(self.cid)
+            except Exception:
+                pass
+
+
+def add_interactive_tooltips(fig: Figure, ax: Axes, format_value: Callable = None) -> ChartInteractiveTooltip:
+    """
+    Add interactive hover tooltips to a chart.
+
+    This is the easiest way to add tooltips to any chart. Call this after
+    drawing your chart.
+
+    Args:
+        fig: Matplotlib figure
+        ax: Matplotlib axes
+        format_value: Optional function to format values
+
+    Returns:
+        ChartInteractiveTooltip instance (keep reference to prevent garbage collection)
+
+    Usage:
+        fig, ax = plt.subplots()
+        ax.bar(['A', 'B', 'C'], [10, 20, 30])
+        tooltip = add_interactive_tooltips(fig, ax)
+    """
+    return ChartInteractiveTooltip(fig, ax, format_value)
+
+
 def format_large_number(value: float) -> str:
     """
     Format large numbers with K/M suffixes.
@@ -407,6 +627,11 @@ class ChartPopoutModal:
 
     def _draw_chart(self):
         """Draw/redraw the chart."""
+        # Disconnect any existing tooltip handler
+        if hasattr(self, '_tooltip_handler') and self._tooltip_handler:
+            self._tooltip_handler.disconnect()
+            self._tooltip_handler = None
+
         self.ax.clear()
         self.ax.set_facecolor(self.ENTRY_BG)
 
@@ -429,6 +654,12 @@ class ChartPopoutModal:
 
         # Apply dark theme styling with larger fonts
         self._style_enlarged_chart()
+
+        # Add interactive tooltips for hover information
+        try:
+            self._tooltip_handler = ChartInteractiveTooltip(self.fig, self.ax)
+        except Exception:
+            self._tooltip_handler = None
 
         self.fig.tight_layout()
         self.canvas.draw()

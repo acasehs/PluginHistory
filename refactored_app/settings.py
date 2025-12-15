@@ -103,6 +103,16 @@ class UserSettings:
     default_include_info: bool = False  # Info hidden by default
     default_severity: str = 'All'
     default_status: str = 'All'
+    default_severity_critical: bool = True
+    default_severity_high: bool = True
+    default_severity_medium: bool = True
+    default_severity_low: bool = True
+    default_severity_info: bool = False
+    default_cvss_min: float = 0.0
+    default_cvss_max: float = 10.0
+    default_env_type: str = 'All Combined'
+    default_opdir_status: str = 'All'
+    auto_apply_filters: bool = True
 
     # Chart settings
     show_data_labels: bool = False

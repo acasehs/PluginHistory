@@ -60,6 +60,7 @@ from .chart_utils import (
     ChartPopoutModal
 )
 from .menu_bar import create_menu_bar
+from .package_impact_dialog import show_package_impact_dialog
 
 
 class NessusHistoryTrackerApp:
@@ -502,6 +503,12 @@ class NessusHistoryTrackerApp:
         row3.pack(fill=tk.X, pady=2)
         ttk.Button(row3, text="Save JSON", command=self._export_json).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
         ttk.Button(row3, text="Settings", command=self._show_settings_dialog).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+
+        # Row 4: Package Impact Analysis
+        row4 = ttk.Frame(action_frame)
+        row4.pack(fill=tk.X, pady=2)
+        ttk.Button(row4, text="Package Impact", command=self._show_package_impact).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+        ttk.Button(row4, text="Filter Defaults", command=self._show_filter_defaults).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
 
         # AI Predictions section
         ai_frame = ttk.LabelFrame(parent, text="AI Predictions", padding=5)
@@ -9267,6 +9274,149 @@ class NessusHistoryTrackerApp:
             self._set_status(message if message else "Ready", "")
             if hasattr(self, 'status_label'):
                 self.status_label.config(fg='#888888')  # Gray for idle
+
+    # =========================================================================
+    # Package Version Impact Analysis
+    # =========================================================================
+
+    def _show_package_impact(self):
+        """Show the Package Version Impact analysis dialog."""
+        if self.lifecycle_df is None or self.lifecycle_df.empty:
+            messagebox.showwarning("No Data", "Please load vulnerability data first.")
+            return
+
+        self._log("Opening Package Version Impact dialog...")
+        show_package_impact_dialog(self.window, self.lifecycle_df)
+
+    # =========================================================================
+    # Filter Defaults Configuration
+    # =========================================================================
+
+    def _show_filter_defaults(self):
+        """Show dialog to configure default filter settings."""
+        dialog = tk.Toplevel(self.window)
+        dialog.title("Default Filter Settings")
+        dialog.geometry("450x550")
+        dialog.configure(bg=GUI_DARK_THEME['bg'])
+        dialog.transient(self.window)
+        dialog.grab_set()
+
+        # Main frame with scrollable content
+        main_frame = ttk.Frame(dialog, padding=10)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(main_frame, text="Configure default filter values for new sessions:",
+                 font=('TkDefaultFont', 10, 'bold')).pack(anchor=tk.W, pady=(0, 10))
+
+        # Severity defaults
+        sev_frame = ttk.LabelFrame(main_frame, text="Default Severity Filters", padding=10)
+        sev_frame.pack(fill=tk.X, pady=5)
+
+        sev_vars = {}
+        current_severities = {
+            'Critical': self.severity_toggles['Critical'].get(),
+            'High': self.severity_toggles['High'].get(),
+            'Medium': self.severity_toggles['Medium'].get(),
+            'Low': self.severity_toggles['Low'].get(),
+            'Info': self.severity_toggles['Info'].get(),
+        }
+        for sev in ['Critical', 'High', 'Medium', 'Low', 'Info']:
+            var = tk.BooleanVar(value=current_severities.get(sev, True))
+            sev_vars[sev] = var
+            ttk.Checkbutton(sev_frame, text=sev, variable=var).pack(anchor=tk.W)
+
+        # Status default
+        status_frame = ttk.LabelFrame(main_frame, text="Default Status Filter", padding=10)
+        status_frame.pack(fill=tk.X, pady=5)
+
+        status_var = tk.StringVar(value=self.filter_status.get())
+        for status in ['All', 'Active', 'Resolved']:
+            ttk.Radiobutton(status_frame, text=status, variable=status_var, value=status).pack(anchor=tk.W)
+
+        # CVSS Range defaults
+        cvss_frame = ttk.LabelFrame(main_frame, text="Default CVSS Range", padding=10)
+        cvss_frame.pack(fill=tk.X, pady=5)
+
+        cvss_row = ttk.Frame(cvss_frame)
+        cvss_row.pack(fill=tk.X)
+        ttk.Label(cvss_row, text="Min:").pack(side=tk.LEFT)
+        cvss_min_var = tk.StringVar(value=self.filter_cvss_min.get())
+        ttk.Entry(cvss_row, textvariable=cvss_min_var, width=8).pack(side=tk.LEFT, padx=5)
+        ttk.Label(cvss_row, text="Max:").pack(side=tk.LEFT, padx=(10, 0))
+        cvss_max_var = tk.StringVar(value=self.filter_cvss_max.get())
+        ttk.Entry(cvss_row, textvariable=cvss_max_var, width=8).pack(side=tk.LEFT, padx=5)
+
+        # Environment default
+        env_frame = ttk.LabelFrame(main_frame, text="Default Environment Filter", padding=10)
+        env_frame.pack(fill=tk.X, pady=5)
+
+        env_var = tk.StringVar(value=self.filter_env_type.get())
+        env_options = ['All Combined', 'Production', 'PSS', 'Shared', 'Unknown']
+        ttk.OptionMenu(env_frame, env_var, env_var.get(), *env_options).pack(anchor=tk.W)
+
+        # OPDIR Status default
+        opdir_frame = ttk.LabelFrame(main_frame, text="Default OPDIR Status Filter", padding=10)
+        opdir_frame.pack(fill=tk.X, pady=5)
+
+        opdir_var = tk.StringVar(value=self.filter_opdir_status.get())
+        opdir_options = ['All', 'On Track', 'Due Soon', 'Overdue', 'Unknown']
+        ttk.OptionMenu(opdir_frame, opdir_var, opdir_var.get(), *opdir_options).pack(anchor=tk.W)
+
+        # Auto-apply on startup
+        auto_frame = ttk.LabelFrame(main_frame, text="Behavior", padding=10)
+        auto_frame.pack(fill=tk.X, pady=5)
+
+        auto_apply_var = tk.BooleanVar(value=getattr(self.settings_manager.settings, 'auto_apply_filters', True))
+        ttk.Checkbutton(auto_frame, text="Auto-apply filters on data load", variable=auto_apply_var).pack(anchor=tk.W)
+
+        # Buttons
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.pack(fill=tk.X, pady=(15, 0))
+
+        def save_defaults():
+            """Save the default filter settings."""
+            try:
+                # Update severity defaults
+                for sev, var in sev_vars.items():
+                    self.severity_toggles[sev].set(var.get())
+
+                # Update other defaults
+                self.filter_status.set(status_var.get())
+                self.filter_cvss_min.set(cvss_min_var.get())
+                self.filter_cvss_max.set(cvss_max_var.get())
+                self.filter_env_type.set(env_var.get())
+                self.filter_opdir_status.set(opdir_var.get())
+
+                # Save to settings file
+                settings = self.settings_manager.settings
+                settings.default_severity_critical = sev_vars['Critical'].get()
+                settings.default_severity_high = sev_vars['High'].get()
+                settings.default_severity_medium = sev_vars['Medium'].get()
+                settings.default_severity_low = sev_vars['Low'].get()
+                settings.default_severity_info = sev_vars['Info'].get()
+                settings.default_status = status_var.get()
+                settings.default_cvss_min = float(cvss_min_var.get())
+                settings.default_cvss_max = float(cvss_max_var.get())
+                settings.default_env_type = env_var.get()
+                settings.default_opdir_status = opdir_var.get()
+                settings.auto_apply_filters = auto_apply_var.get()
+
+                self.settings_manager.save()
+                self._log("Default filter settings saved")
+                messagebox.showinfo("Saved", "Default filter settings saved successfully.")
+                dialog.destroy()
+
+            except ValueError as e:
+                messagebox.showerror("Invalid Input", f"Please enter valid values: {e}")
+
+        def apply_now():
+            """Apply the current settings immediately."""
+            save_defaults()
+            self._apply_filters()
+
+        ttk.Button(btn_frame, text="Save", command=save_defaults, width=10).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(btn_frame, text="Apply Now", command=apply_now, width=10).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=dialog.destroy, width=10).pack(side=tk.RIGHT)
 
     # =========================================================================
     # AI Predictions Integration
