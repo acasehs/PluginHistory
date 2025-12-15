@@ -78,6 +78,40 @@ CHART_DESCRIPTIONS = {
         'filters': ['Date Range', 'Environment']
     },
 
+    # ==================== 8 Week Rolling Tab ====================
+    'rolling_severity_totals': {
+        'title': 'Total Findings by Severity (Weekly)',
+        'description': 'Stacked bar chart showing total vulnerability count per week, broken down by severity level (Critical, High, Medium, Low). Each bar represents one week of the rolling 8-week window.',
+        'cyber_context': 'Week-over-week trend analysis is essential for measuring remediation velocity and identifying emerging risks. Sudden increases may indicate new vulnerabilities or scan coverage changes.',
+        'inputs': 'scan_date, severity_text, finding counts aggregated weekly',
+        'interpretation': 'Decreasing total bar heights indicate risk reduction. Watch for Critical/High segments growing relative to others. Missing weeks appear as zero-height bars.',
+        'filters': ['Environment', 'Severity']
+    },
+    'rolling_unique_plugins': {
+        'title': 'Unique Plugins by Severity (Weekly)',
+        'description': 'Stacked bar chart showing count of unique vulnerability types (plugin IDs) detected each week, grouped by severity. Measures vulnerability diversity rather than instance count.',
+        'cyber_context': 'Unique plugin count reveals attack surface breadth. Decreasing unique plugins suggests successful patch management. New plugins appearing indicate emerging threats or expanded scan coverage.',
+        'inputs': 'scan_date, plugin_id, severity_text',
+        'interpretation': 'Lower unique counts = fewer distinct vulnerability types to address. Spikes may indicate new scan plugins or emerging CVEs. Compare to total findings to understand instance-to-type ratio.',
+        'filters': ['Environment', 'Severity']
+    },
+    'rolling_env_findings': {
+        'title': 'Findings by Environment (Weekly)',
+        'description': 'Grouped bar chart showing unique findings (hostname + plugin_id combinations) per environment type for each week. Enables comparison of security posture across Production, PSS, Shared, and other environments.',
+        'cyber_context': 'Environment comparison highlights where security resources should focus. Production environments typically require faster remediation. Imbalances may indicate deployment or patching inconsistencies.',
+        'inputs': 'scan_date, environment_type, hostname, plugin_id',
+        'interpretation': 'Production findings should trend downward faster than others. Large gaps between environments may indicate inconsistent patch management. Missing bars indicate no scan data for that environment/week.',
+        'filters': ['Severity', 'Environment']
+    },
+    'rolling_env_totals': {
+        'title': 'Environment Totals by Severity (Weekly)',
+        'description': 'Grouped stacked bar chart showing total findings per environment, with severity breakdown. Each environment has its own bar group per week, stacked by severity.',
+        'cyber_context': 'Combines environment segmentation with severity analysis. Critical findings in Production require immediate attention. Helps prioritize cross-environment remediation campaigns.',
+        'inputs': 'scan_date, environment_type, severity_text',
+        'interpretation': 'Focus on Critical/High segments in Production first. Consistent severity distribution across environments suggests systemic issues. Varying distributions may indicate environment-specific risks.',
+        'filters': ['Environment']
+    },
+
     # ==================== SLA Tab ====================
     'sla_compliance': {
         'title': 'SLA Compliance Overview',

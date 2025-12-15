@@ -238,6 +238,7 @@ class NessusHistoryTrackerApp:
         self._build_lifecycle_tab()
         self._build_host_tab()
         self._build_timeline_tab()
+        self._build_rolling_tab()
         self._build_risk_tab()
         self._build_opdir_tab()
         self._build_efficiency_tab()
@@ -850,6 +851,49 @@ class NessusHistoryTrackerApp:
             self._bind_chart_popouts_timeline()
         else:
             ttk.Label(timeline_frame, text="Install matplotlib for visualizations").pack(pady=50)
+
+    def _build_rolling_tab(self):
+        """Build 8-week rolling progress visualization tab."""
+        rolling_frame = ttk.Frame(self.notebook)
+        self.notebook.add(rolling_frame, text="8 Week Rolling")
+        self.rolling_frame = rolling_frame
+
+        if HAS_MATPLOTLIB:
+            # Create 2x2 grid of charts
+            self.rolling_fig = Figure(figsize=(10, 8), dpi=100, facecolor=GUI_DARK_THEME['bg'])
+
+            # Total findings by severity per week
+            self.rolling_ax1 = self.rolling_fig.add_subplot(221)
+            self.rolling_ax1.set_title('Total Findings by Severity (Weekly)', color=GUI_DARK_THEME['fg'])
+
+            # Unique plugins by severity per week
+            self.rolling_ax2 = self.rolling_fig.add_subplot(222)
+            self.rolling_ax2.set_title('Unique Plugins by Severity (Weekly)', color=GUI_DARK_THEME['fg'])
+
+            # Unique findings per environment by severity per week
+            self.rolling_ax3 = self.rolling_fig.add_subplot(223)
+            self.rolling_ax3.set_title('Findings by Environment (Weekly)', color=GUI_DARK_THEME['fg'])
+
+            # Total findings per environment by severity per week
+            self.rolling_ax4 = self.rolling_fig.add_subplot(224)
+            self.rolling_ax4.set_title('Environment Totals by Severity (Weekly)', color=GUI_DARK_THEME['fg'])
+
+            for ax in [self.rolling_ax1, self.rolling_ax2, self.rolling_ax3, self.rolling_ax4]:
+                ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
+                ax.tick_params(colors=GUI_DARK_THEME['fg'])
+                for spine in ax.spines.values():
+                    spine.set_color(GUI_DARK_THEME['fg'])
+
+            self.rolling_canvas = FigureCanvasTkAgg(self.rolling_fig, master=rolling_frame)
+            self.rolling_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+            # Bind double-click for pop-out
+            hint = ttk.Label(rolling_frame, text="Double-click chart to pop-out",
+                            font=('Arial', 8), foreground='gray')
+            hint.pack(anchor=tk.SE, padx=5)
+            self._bind_chart_popouts_rolling()
+        else:
+            ttk.Label(rolling_frame, text="Install matplotlib for visualizations").pack(pady=50)
 
     def _build_risk_tab(self):
         """Build risk analysis visualization tab."""
@@ -4240,6 +4284,249 @@ class NessusHistoryTrackerApp:
         self.timeline_fig.tight_layout()
         self.timeline_canvas.draw()
 
+    def _update_rolling_charts(self):
+        """Update 8-week rolling progress visualizations."""
+        if not HAS_MATPLOTLIB or not hasattr(self, 'rolling_ax1'):
+            return
+
+        hist_df = self._get_chart_data('historical')
+        show_labels = self.settings_manager.settings.show_data_labels
+
+        for ax in [self.rolling_ax1, self.rolling_ax2, self.rolling_ax3, self.rolling_ax4]:
+            ax.clear()
+            ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
+
+        if hist_df.empty or 'scan_date' not in hist_df.columns:
+            for ax in [self.rolling_ax1, self.rolling_ax2, self.rolling_ax3, self.rolling_ax4]:
+                ax.text(0.5, 0.5, 'No historical data', ha='center', va='center',
+                       color='white', fontsize=10)
+            self.rolling_canvas.draw()
+            return
+
+        hist_df = hist_df.copy()
+        hist_df['scan_date'] = pd.to_datetime(hist_df['scan_date'])
+
+        # Get the last 8 weeks of data
+        max_date = hist_df['scan_date'].max()
+        min_date = max_date - pd.Timedelta(weeks=8)
+        rolling_df = hist_df[hist_df['scan_date'] >= min_date].copy()
+
+        if rolling_df.empty:
+            for ax in [self.rolling_ax1, self.rolling_ax2, self.rolling_ax3, self.rolling_ax4]:
+                ax.text(0.5, 0.5, 'No data in last 8 weeks', ha='center', va='center',
+                       color='white', fontsize=10)
+            self.rolling_canvas.draw()
+            return
+
+        # Create week labels
+        rolling_df['week'] = rolling_df['scan_date'].dt.to_period('W').apply(lambda x: x.start_time)
+
+        # Generate all 8 weeks (handle missing weeks)
+        all_weeks = pd.date_range(start=min_date, end=max_date, freq='W-MON')
+        week_labels = [w.strftime('%m/%d') for w in all_weeks[-8:]]
+
+        severity_colors = {
+            'Critical': '#dc3545',
+            'High': '#fd7e14',
+            'Medium': '#ffc107',
+            'Low': '#28a745'
+        }
+        severities = ['Critical', 'High', 'Medium', 'Low']
+
+        # Chart 1: Total findings by severity per week (stacked bar)
+        self._draw_rolling_severity_totals(self.rolling_ax1, rolling_df, all_weeks[-8:],
+                                           week_labels, severities, severity_colors, show_labels)
+        self.rolling_ax1.set_title('Total Findings by Severity (Weekly)', color=GUI_DARK_THEME['fg'], fontsize=10)
+
+        # Chart 2: Unique plugins by severity per week (stacked bar)
+        self._draw_rolling_unique_plugins(self.rolling_ax2, rolling_df, all_weeks[-8:],
+                                          week_labels, severities, severity_colors, show_labels)
+        self.rolling_ax2.set_title('Unique Plugins by Severity (Weekly)', color=GUI_DARK_THEME['fg'], fontsize=10)
+
+        # Chart 3: Unique findings per environment by severity per week
+        self._draw_rolling_env_findings(self.rolling_ax3, rolling_df, all_weeks[-8:],
+                                        week_labels, show_labels)
+        self.rolling_ax3.set_title('Findings by Environment (Weekly)', color=GUI_DARK_THEME['fg'], fontsize=10)
+
+        # Chart 4: Total findings per environment by severity per week
+        self._draw_rolling_env_totals(self.rolling_ax4, rolling_df, all_weeks[-8:],
+                                      week_labels, severities, severity_colors, show_labels)
+        self.rolling_ax4.set_title('Environment Totals by Severity (Weekly)', color=GUI_DARK_THEME['fg'], fontsize=10)
+
+        # Style all axes
+        for ax in [self.rolling_ax1, self.rolling_ax2, self.rolling_ax3, self.rolling_ax4]:
+            ax.tick_params(colors=GUI_DARK_THEME['fg'], labelsize=7)
+            for spine in ax.spines.values():
+                spine.set_color(GUI_DARK_THEME['fg'])
+
+        self.rolling_fig.tight_layout()
+        self.rolling_canvas.draw()
+
+    def _draw_rolling_severity_totals(self, ax, df, weeks, week_labels, severities, colors, show_labels):
+        """Draw total findings by severity per week as stacked bars."""
+        x = np.arange(len(weeks))
+        width = 0.7
+        bottom = np.zeros(len(weeks))
+
+        for sev in severities:
+            counts = []
+            for week in weeks:
+                week_start = week
+                week_end = week + pd.Timedelta(days=7)
+                week_data = df[(df['scan_date'] >= week_start) & (df['scan_date'] < week_end)]
+                if 'severity_text' in week_data.columns:
+                    count = len(week_data[week_data['severity_text'] == sev])
+                else:
+                    count = 0
+                counts.append(count)
+
+            bars = ax.bar(x, counts, width, bottom=bottom, label=sev, color=colors[sev])
+            if show_labels:
+                for i, (xi, val) in enumerate(zip(x, counts)):
+                    if val > 0:
+                        ax.annotate(f'{val}', xy=(xi, bottom[i] + val/2),
+                                   ha='center', va='center', fontsize=6, color='white')
+            bottom += np.array(counts)
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(week_labels, rotation=45, ha='right', fontsize=7)
+        ax.set_ylabel('Count', fontsize=8, color=GUI_DARK_THEME['fg'])
+        ax.legend(fontsize=6, loc='upper left')
+
+    def _draw_rolling_unique_plugins(self, ax, df, weeks, week_labels, severities, colors, show_labels):
+        """Draw unique plugins by severity per week as stacked bars."""
+        x = np.arange(len(weeks))
+        width = 0.7
+        bottom = np.zeros(len(weeks))
+
+        for sev in severities:
+            counts = []
+            for week in weeks:
+                week_start = week
+                week_end = week + pd.Timedelta(days=7)
+                week_data = df[(df['scan_date'] >= week_start) & (df['scan_date'] < week_end)]
+                if 'severity_text' in week_data.columns and 'plugin_id' in week_data.columns:
+                    unique_plugins = week_data[week_data['severity_text'] == sev]['plugin_id'].nunique()
+                else:
+                    unique_plugins = 0
+                counts.append(unique_plugins)
+
+            bars = ax.bar(x, counts, width, bottom=bottom, label=sev, color=colors[sev])
+            if show_labels:
+                for i, (xi, val) in enumerate(zip(x, counts)):
+                    if val > 0:
+                        ax.annotate(f'{val}', xy=(xi, bottom[i] + val/2),
+                                   ha='center', va='center', fontsize=6, color='white')
+            bottom += np.array(counts)
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(week_labels, rotation=45, ha='right', fontsize=7)
+        ax.set_ylabel('Unique Plugins', fontsize=8, color=GUI_DARK_THEME['fg'])
+        ax.legend(fontsize=6, loc='upper left')
+
+    def _draw_rolling_env_findings(self, ax, df, weeks, week_labels, show_labels):
+        """Draw unique findings per environment by week as grouped bars."""
+        # Get environment types
+        if 'environment_type' not in df.columns:
+            ax.text(0.5, 0.5, 'No environment data', ha='center', va='center',
+                   color='white', fontsize=10)
+            return
+
+        environments = df['environment_type'].dropna().unique().tolist()
+        if not environments:
+            environments = ['Unknown']
+
+        env_colors = {
+            'Production': '#28a745',
+            'PSS': '#17a2b8',
+            'Shared': '#ffc107',
+            'Development': '#6f42c1',
+            'Test': '#fd7e14'
+        }
+        # Default colors for unknown environments
+        default_colors = ['#6c757d', '#adb5bd', '#dee2e6', '#e9ecef']
+
+        x = np.arange(len(weeks))
+        width = 0.8 / max(len(environments), 1)
+
+        for i, env in enumerate(environments[:4]):  # Limit to 4 environments for readability
+            counts = []
+            for week in weeks:
+                week_start = week
+                week_end = week + pd.Timedelta(days=7)
+                week_data = df[(df['scan_date'] >= week_start) & (df['scan_date'] < week_end)]
+                env_data = week_data[week_data['environment_type'] == env]
+                # Count unique findings (hostname + plugin_id combo)
+                if 'hostname' in env_data.columns and 'plugin_id' in env_data.columns:
+                    unique_count = env_data.groupby(['hostname', 'plugin_id']).ngroups
+                else:
+                    unique_count = len(env_data)
+                counts.append(unique_count)
+
+            color = env_colors.get(env, default_colors[i % len(default_colors)])
+            offset = (i - len(environments[:4])/2 + 0.5) * width
+            bars = ax.bar(x + offset, counts, width, label=env, color=color)
+
+            if show_labels:
+                for xi, val in zip(x + offset, counts):
+                    if val > 0:
+                        ax.annotate(f'{val}', xy=(xi, val), xytext=(0, 2),
+                                   textcoords='offset points', ha='center', va='bottom',
+                                   fontsize=5, color='white')
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(week_labels, rotation=45, ha='right', fontsize=7)
+        ax.set_ylabel('Unique Findings', fontsize=8, color=GUI_DARK_THEME['fg'])
+        ax.legend(fontsize=6, loc='upper left')
+
+    def _draw_rolling_env_totals(self, ax, df, weeks, week_labels, severities, colors, show_labels):
+        """Draw total findings per environment by severity per week."""
+        # Get environment types
+        if 'environment_type' not in df.columns:
+            ax.text(0.5, 0.5, 'No environment data', ha='center', va='center',
+                   color='white', fontsize=10)
+            return
+
+        environments = df['environment_type'].dropna().unique().tolist()[:3]  # Top 3 environments
+        if not environments:
+            ax.text(0.5, 0.5, 'No environment data', ha='center', va='center',
+                   color='white', fontsize=10)
+            return
+
+        x = np.arange(len(weeks))
+        width = 0.25
+        offsets = [-width, 0, width][:len(environments)]
+
+        for idx, env in enumerate(environments):
+            bottom = np.zeros(len(weeks))
+            for sev in severities:
+                counts = []
+                for week in weeks:
+                    week_start = week
+                    week_end = week + pd.Timedelta(days=7)
+                    week_data = df[(df['scan_date'] >= week_start) & (df['scan_date'] < week_end)]
+                    env_data = week_data[week_data['environment_type'] == env]
+                    if 'severity_text' in env_data.columns:
+                        count = len(env_data[env_data['severity_text'] == sev])
+                    else:
+                        count = 0
+                    counts.append(count)
+
+                # Only show label for first severity (to avoid clutter)
+                label = env if sev == 'Critical' else None
+                ax.bar(x + offsets[idx], counts, width, bottom=bottom, color=colors[sev],
+                      alpha=0.3 + 0.2*idx, label=label)
+                bottom += np.array(counts)
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(week_labels, rotation=45, ha='right', fontsize=7)
+        ax.set_ylabel('Total Findings', fontsize=8, color=GUI_DARK_THEME['fg'])
+        # Create custom legend for environments
+        from matplotlib.patches import Patch
+        env_handles = [Patch(facecolor='gray', alpha=0.3 + 0.2*i, label=env)
+                      for i, env in enumerate(environments)]
+        ax.legend(handles=env_handles, fontsize=6, loc='upper left')
+
     def _update_risk_charts(self):
         """Update risk analysis visualizations."""
         if not HAS_MATPLOTLIB or not hasattr(self, 'risk_ax1'):
@@ -4891,6 +5178,187 @@ class NessusHistoryTrackerApp:
             ChartPopoutModal(self.window, title, redraw_func)
 
         self.timeline_canvas.get_tk_widget().bind('<Double-Button-1>', on_double_click)
+
+    def _bind_chart_popouts_rolling(self):
+        """Bind double-click pop-out for 8 Week Rolling tab charts."""
+        if not hasattr(self, 'rolling_canvas'):
+            return
+
+        def get_click_quadrant(event):
+            widget = event.widget
+            w, h = widget.winfo_width(), widget.winfo_height()
+            x, y = event.x, event.y
+            col = 0 if x < w / 2 else 1
+            row = 0 if y < h / 2 else 1
+            return row * 2 + col
+
+        def on_double_click(event):
+            quadrant = get_click_quadrant(event)
+            chart_info = [
+                ('Total Findings by Severity (8 Week Rolling)', self._draw_rolling_severity_totals_popout),
+                ('Unique Plugins by Severity (8 Week Rolling)', self._draw_rolling_unique_plugins_popout),
+                ('Findings by Environment (8 Week Rolling)', self._draw_rolling_env_findings_popout),
+                ('Environment Totals by Severity (8 Week Rolling)', self._draw_rolling_env_totals_popout),
+            ]
+            title, redraw_func = chart_info[quadrant]
+            ChartPopoutModal(self.window, title, redraw_func)
+
+        self.rolling_canvas.get_tk_widget().bind('<Double-Button-1>', on_double_click)
+
+    def _draw_rolling_severity_totals_popout(self, fig, ax, enlarged=False, show_labels=True, filter_settings=None):
+        """Draw total findings by severity per week for pop-out."""
+        hist_df = self._get_chart_data('historical')
+
+        if hist_df.empty or 'scan_date' not in hist_df.columns:
+            ax.text(0.5, 0.5, 'No historical data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        hist_df = hist_df.copy()
+        hist_df['scan_date'] = pd.to_datetime(hist_df['scan_date'])
+
+        max_date = hist_df['scan_date'].max()
+        min_date = max_date - pd.Timedelta(weeks=8)
+        rolling_df = hist_df[hist_df['scan_date'] >= min_date].copy()
+
+        if rolling_df.empty:
+            ax.text(0.5, 0.5, 'No data in last 8 weeks', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        all_weeks = pd.date_range(start=min_date, end=max_date, freq='W-MON')
+        week_labels = [w.strftime('%m/%d') for w in all_weeks[-8:]]
+
+        severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#28a745'}
+        severities = ['Critical', 'High', 'Medium', 'Low']
+
+        self._draw_rolling_severity_totals(ax, rolling_df, all_weeks[-8:], week_labels,
+                                           severities, severity_colors, show_labels)
+        ax.set_title('Total Findings by Severity (8 Week Rolling)', color='white', fontsize=12)
+
+        if enlarged:
+            # Add week-over-week change summary
+            total_by_week = []
+            for week in all_weeks[-8:]:
+                week_end = week + pd.Timedelta(days=7)
+                week_data = rolling_df[(rolling_df['scan_date'] >= week) & (rolling_df['scan_date'] < week_end)]
+                total_by_week.append(len(week_data))
+
+            if len(total_by_week) >= 2 and total_by_week[-2] > 0:
+                change = ((total_by_week[-1] - total_by_week[-2]) / total_by_week[-2]) * 100
+                color = '#28a745' if change < 0 else '#dc3545'
+                ax.text(0.98, 0.98, f'WoW Change: {change:+.1f}%',
+                       transform=ax.transAxes, fontsize=10, va='top', ha='right', color=color)
+
+    def _draw_rolling_unique_plugins_popout(self, fig, ax, enlarged=False, show_labels=True, filter_settings=None):
+        """Draw unique plugins by severity per week for pop-out."""
+        hist_df = self._get_chart_data('historical')
+
+        if hist_df.empty or 'scan_date' not in hist_df.columns:
+            ax.text(0.5, 0.5, 'No historical data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        hist_df = hist_df.copy()
+        hist_df['scan_date'] = pd.to_datetime(hist_df['scan_date'])
+
+        max_date = hist_df['scan_date'].max()
+        min_date = max_date - pd.Timedelta(weeks=8)
+        rolling_df = hist_df[hist_df['scan_date'] >= min_date].copy()
+
+        if rolling_df.empty:
+            ax.text(0.5, 0.5, 'No data in last 8 weeks', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        all_weeks = pd.date_range(start=min_date, end=max_date, freq='W-MON')
+        week_labels = [w.strftime('%m/%d') for w in all_weeks[-8:]]
+
+        severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#28a745'}
+        severities = ['Critical', 'High', 'Medium', 'Low']
+
+        self._draw_rolling_unique_plugins(ax, rolling_df, all_weeks[-8:], week_labels,
+                                          severities, severity_colors, show_labels)
+        ax.set_title('Unique Plugins by Severity (8 Week Rolling)', color='white', fontsize=12)
+
+        if enlarged:
+            # Show total unique plugins across all weeks
+            total_unique = rolling_df['plugin_id'].nunique() if 'plugin_id' in rolling_df.columns else 0
+            ax.text(0.98, 0.98, f'Total Unique Plugins: {total_unique}',
+                   transform=ax.transAxes, fontsize=10, va='top', ha='right', color='#17a2b8')
+
+    def _draw_rolling_env_findings_popout(self, fig, ax, enlarged=False, show_labels=True, filter_settings=None):
+        """Draw unique findings per environment by week for pop-out."""
+        hist_df = self._get_chart_data('historical')
+
+        if hist_df.empty or 'scan_date' not in hist_df.columns:
+            ax.text(0.5, 0.5, 'No historical data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        hist_df = hist_df.copy()
+        hist_df['scan_date'] = pd.to_datetime(hist_df['scan_date'])
+
+        max_date = hist_df['scan_date'].max()
+        min_date = max_date - pd.Timedelta(weeks=8)
+        rolling_df = hist_df[hist_df['scan_date'] >= min_date].copy()
+
+        if rolling_df.empty:
+            ax.text(0.5, 0.5, 'No data in last 8 weeks', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        all_weeks = pd.date_range(start=min_date, end=max_date, freq='W-MON')
+        week_labels = [w.strftime('%m/%d') for w in all_weeks[-8:]]
+
+        self._draw_rolling_env_findings(ax, rolling_df, all_weeks[-8:], week_labels, show_labels)
+        ax.set_title('Findings by Environment (8 Week Rolling)', color='white', fontsize=12)
+
+        if enlarged and 'environment_type' in rolling_df.columns:
+            env_counts = rolling_df['environment_type'].value_counts()
+            summary = ' | '.join([f'{env}: {count}' for env, count in env_counts.head(3).items()])
+            ax.text(0.98, 0.98, summary, transform=ax.transAxes, fontsize=9,
+                   va='top', ha='right', color='#17a2b8')
+
+    def _draw_rolling_env_totals_popout(self, fig, ax, enlarged=False, show_labels=True, filter_settings=None):
+        """Draw total findings per environment by severity per week for pop-out."""
+        hist_df = self._get_chart_data('historical')
+
+        if hist_df.empty or 'scan_date' not in hist_df.columns:
+            ax.text(0.5, 0.5, 'No historical data available', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        hist_df = hist_df.copy()
+        hist_df['scan_date'] = pd.to_datetime(hist_df['scan_date'])
+
+        max_date = hist_df['scan_date'].max()
+        min_date = max_date - pd.Timedelta(weeks=8)
+        rolling_df = hist_df[hist_df['scan_date'] >= min_date].copy()
+
+        if rolling_df.empty:
+            ax.text(0.5, 0.5, 'No data in last 8 weeks', ha='center', va='center',
+                   color='white', fontsize=12)
+            return
+
+        all_weeks = pd.date_range(start=min_date, end=max_date, freq='W-MON')
+        week_labels = [w.strftime('%m/%d') for w in all_weeks[-8:]]
+
+        severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#28a745'}
+        severities = ['Critical', 'High', 'Medium', 'Low']
+
+        self._draw_rolling_env_totals(ax, rolling_df, all_weeks[-8:], week_labels,
+                                      severities, severity_colors, show_labels)
+        ax.set_title('Environment Totals by Severity (8 Week Rolling)', color='white', fontsize=12)
+
+        if enlarged and 'environment_type' in rolling_df.columns:
+            # Show severity breakdown for each environment
+            envs = rolling_df['environment_type'].dropna().unique()[:3]
+            if 'severity_text' in rolling_df.columns:
+                crit_total = len(rolling_df[rolling_df['severity_text'] == 'Critical'])
+                high_total = len(rolling_df[rolling_df['severity_text'] == 'High'])
+                ax.text(0.98, 0.98, f'Total Critical: {crit_total} | High: {high_total}',
+                       transform=ax.transAxes, fontsize=9, va='top', ha='right', color='#dc3545')
 
     def _draw_total_findings_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw total findings over time chart for pop-out."""
@@ -8922,6 +9390,7 @@ class NessusHistoryTrackerApp:
         """Update all visualization tabs."""
         self._update_trends_chart()
         self._update_timeline_charts()
+        self._update_rolling_charts()
         self._update_risk_charts()
         self._update_opdir_charts()
         self._update_efficiency_charts()
