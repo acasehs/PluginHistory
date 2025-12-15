@@ -183,7 +183,11 @@ class PackageImpactDialog:
         if self.findings_df is not None and not self.findings_df.empty:
             count = len(self.findings_df)
             has_output = 'plugin_output' in self.findings_df.columns
-            status = f"✓ {count:,} findings loaded" + (" with plugin_output" if has_output else " (no plugin_output column)")
+            # Count active findings
+            active_count = count
+            if 'status' in self.findings_df.columns:
+                active_count = len(self.findings_df[self.findings_df['status'] == 'Active'])
+            status = f"✓ {active_count:,} active findings" + (" with plugin_output" if has_output else " (no plugin_output column)")
             self.extract_status_label.config(text=status, foreground='#66ff66' if has_output else '#ffaa00')
         else:
             self.extract_status_label.config(text="⚠ No findings loaded - load data first", foreground='#ff6666')
@@ -266,8 +270,20 @@ class PackageImpactDialog:
 
         def _process():
             try:
+                # Filter to only active findings
+                df_to_process = self.findings_df.copy()
+                if 'status' in df_to_process.columns:
+                    df_to_process = df_to_process[df_to_process['status'] == 'Active']
+
+                if df_to_process.empty:
+                    self.dialog.after(0, lambda: self._extraction_warning(
+                        "No active findings found.\n\n"
+                        "The analysis only includes active findings (not fixed/closed)."
+                    ))
+                    return
+
                 # Extract package/version info from plugin_output
-                version_data = self._parse_plugin_outputs(self.findings_df)
+                version_data = self._parse_plugin_outputs(df_to_process)
 
                 if version_data.empty:
                     self.dialog.after(0, lambda: self._extraction_warning(
@@ -435,7 +451,16 @@ class PackageImpactDialog:
                         'cves': ','.join(cves)
                     })
 
-        return pd.DataFrame(records)
+        result_df = pd.DataFrame(records)
+
+        # Remove duplicates based on package_name, hostname, and plugin_id
+        if not result_df.empty:
+            result_df = result_df.drop_duplicates(
+                subset=['package_name', 'hostname', 'plugin_id'],
+                keep='first'
+            )
+
+        return result_df
 
     def _extraction_warning(self, message: str):
         """Handle extraction warning."""
@@ -815,8 +840,8 @@ class PackageImpactDialog:
         self.summary_text.insert(tk.END, "\n")
 
         # Top packages
-        self.summary_text.insert(tk.END, "TOP 5 PRIORITY PACKAGES\n", 'subheader')
-        for i, pkg in enumerate(self.plan.packages[:5]):
+        self.summary_text.insert(tk.END, "TOP 20 PRIORITY PACKAGES\n", 'subheader')
+        for i, pkg in enumerate(self.plan.packages[:20]):
             self.summary_text.insert(tk.END, f"  {i+1}. {pkg.package_name}\n")
             self.summary_text.insert(tk.END, f"     Target: {pkg.target_version}\n")
             self.summary_text.insert(tk.END, f"     Impact: {pkg.total_impact} findings on {pkg.affected_hosts} hosts\n")
@@ -832,12 +857,153 @@ class PackageImpactDialog:
 
         self.summary_text.insert(tk.END, "\n")
 
-        # Recommendations
+        # Recommendations (general)
         self.summary_text.insert(tk.END, "RECOMMENDATIONS\n", 'subheader')
         for rec in effort.get('recommendations', []):
             self.summary_text.insert(tk.END, f"  {rec}\n\n")
 
+        # Consolidation Recommendations (separate section)
+        self.summary_text.insert(tk.END, "CONSOLIDATION RECOMMENDATIONS\n", 'subheader')
+        self._add_consolidation_recommendations()
+        self.summary_text.insert(tk.END, "\n")
+
+        # OPDIR Remediation Status
+        self._add_opdir_summary()
+
+        # Detailed Package List (all packages)
+        self.summary_text.insert(tk.END, "=" * 50 + "\n")
+        self.summary_text.insert(tk.END, "DETAILED PACKAGE LIST\n", 'header')
+        self.summary_text.insert(tk.END, "=" * 50 + "\n\n")
+        self.summary_text.insert(tk.END, f"{'#':<4} {'Package':<40} {'Target Version':<20} {'Hosts':<8} {'Findings':<10} {'Critical':<10} {'High':<8}\n", 'subheader')
+        self.summary_text.insert(tk.END, "-" * 100 + "\n")
+
+        for i, pkg in enumerate(self.plan.packages):
+            crit_count = pkg.severity_breakdown.get('Critical', 0)
+            high_count = pkg.severity_breakdown.get('High', 0)
+            line = f"{i+1:<4} {pkg.package_name[:38]:<40} {str(pkg.target_version)[:18]:<20} {pkg.affected_hosts:<8} {pkg.total_impact:<10} {crit_count:<10} {high_count:<8}\n"
+            # Highlight rows with critical findings
+            if crit_count > 0:
+                self.summary_text.insert(tk.END, line, 'warning')
+            else:
+                self.summary_text.insert(tk.END, line)
+
+        self.summary_text.insert(tk.END, "\n")
+        self.summary_text.insert(tk.END, f"Total: {len(self.plan.packages)} packages\n", 'metric')
+
         self.summary_text.config(state=tk.DISABLED)
+
+    def _add_consolidation_recommendations(self):
+        """Add consolidation-specific recommendations to the summary."""
+        if not self.plan or not self.plan.packages:
+            self.summary_text.insert(tk.END, "  No packages analyzed yet.\n")
+            return
+
+        # Find packages with multiple current versions (consolidation opportunities)
+        multi_version_packages = [
+            pkg for pkg in self.plan.packages
+            if len(pkg.current_versions) > 1
+        ]
+
+        if multi_version_packages:
+            self.summary_text.insert(tk.END,
+                f"  • {len(multi_version_packages)} packages have multiple versions deployed\n")
+
+            # Show top consolidation opportunities
+            sorted_by_versions = sorted(multi_version_packages,
+                                        key=lambda p: len(p.current_versions), reverse=True)
+
+            self.summary_text.insert(tk.END, "  • Top consolidation opportunities:\n")
+            for pkg in sorted_by_versions[:5]:
+                versions_count = len(pkg.current_versions)
+                self.summary_text.insert(tk.END,
+                    f"    - {pkg.package_name}: {versions_count} versions → consolidate to {pkg.target_version}\n")
+        else:
+            self.summary_text.insert(tk.END, "  • No multi-version packages found for consolidation\n")
+
+        # Calculate efficiency gains
+        total_packages = len(self.plan.packages)
+        if total_packages > 0:
+            # Find packages that resolve multiple CVEs
+            high_impact_pkgs = [p for p in self.plan.packages if len(p.cves) >= 3]
+            if high_impact_pkgs:
+                self.summary_text.insert(tk.END,
+                    f"  • {len(high_impact_pkgs)} packages resolve 3+ CVEs each - prioritize these for efficiency\n")
+
+            # Find packages affecting many hosts
+            wide_impact_pkgs = [p for p in self.plan.packages if p.affected_hosts >= 5]
+            if wide_impact_pkgs:
+                self.summary_text.insert(tk.END,
+                    f"  • {len(wide_impact_pkgs)} packages affect 5+ hosts - consider batch deployment\n")
+
+    def _add_opdir_summary(self):
+        """Add OPDIR remediation status to the summary."""
+        if self.findings_df is None or self.findings_df.empty:
+            return
+
+        # Check if OPDIR columns exist
+        if 'opdir_status' not in self.findings_df.columns:
+            return
+
+        self.summary_text.insert(tk.END, "OPDIR REMEDIATION STATUS\n", 'subheader')
+
+        # Filter to active findings only
+        df = self.findings_df.copy()
+        if 'status' in df.columns:
+            df = df[df['status'] == 'Active']
+
+        # Get OPDIR status breakdown
+        opdir_counts = df['opdir_status'].value_counts()
+
+        if opdir_counts.empty or (len(opdir_counts) == 1 and opdir_counts.index[0] in ['', 'nan', None]):
+            self.summary_text.insert(tk.END, "  No OPDIR data available for active findings.\n\n")
+            return
+
+        # Display OPDIR breakdown
+        has_opdir = False
+        for status, count in opdir_counts.items():
+            if status and str(status) != 'nan' and str(status).strip():
+                has_opdir = True
+                tag = 'warning' if status in ['Overdue', 'Open'] else None
+                self.summary_text.insert(tk.END, f"  {status}: {count:,} findings\n", tag)
+
+        if not has_opdir:
+            self.summary_text.insert(tk.END, "  No OPDIR data available for active findings.\n")
+            return
+
+        # Show overdue/open OPDIRs that need attention
+        urgent_statuses = ['Overdue', 'Open']
+        urgent_findings = df[df['opdir_status'].isin(urgent_statuses)]
+
+        if not urgent_findings.empty:
+            self.summary_text.insert(tk.END, "\n  Findings Requiring OPDIR Action:\n", 'warning')
+
+            # Group by OPDIR number if available
+            if 'opdir_number' in urgent_findings.columns:
+                opdir_groups = urgent_findings.groupby('opdir_number').agg({
+                    'plugin_id': 'count',
+                    'opdir_status': 'first'
+                }).reset_index()
+                opdir_groups.columns = ['opdir_number', 'finding_count', 'status']
+
+                # Show up to 10 OPDIRs needing attention
+                for _, row in opdir_groups.head(10).iterrows():
+                    opdir_num = row['opdir_number']
+                    if opdir_num and str(opdir_num) != 'nan':
+                        self.summary_text.insert(tk.END,
+                            f"    - {opdir_num} ({row['status']}): {row['finding_count']} findings\n", 'warning')
+
+                if len(opdir_groups) > 10:
+                    self.summary_text.insert(tk.END,
+                        f"    ... and {len(opdir_groups) - 10} more OPDIRs\n")
+            else:
+                # Just show count by status
+                for status in urgent_statuses:
+                    status_count = len(urgent_findings[urgent_findings['opdir_status'] == status])
+                    if status_count > 0:
+                        self.summary_text.insert(tk.END,
+                            f"    - {status}: {status_count:,} findings\n", 'warning')
+
+        self.summary_text.insert(tk.END, "\n")
 
     def _update_chart(self):
         """Update the chart display."""
