@@ -5202,7 +5202,7 @@ class NessusHistoryTrackerApp:
             ax.text(0.02, 0.98, f'Overdue: {pct:.1f}%', transform=ax.transAxes,
                    fontsize=10, va='top', color='#dc3545' if pct > 20 else '#28a745')
 
-    def _draw_opdir_age_popout(self, fig, ax, enlarged=False, show_labels=True):
+    def _draw_opdir_age_popout(self, fig, ax, enlarged=False, show_labels=True, filter_settings=None):
         """Draw finding age for OPDIR mapped items for pop-out."""
         df = self._get_chart_data('lifecycle')
 
@@ -5242,9 +5242,10 @@ class NessusHistoryTrackerApp:
         ax.set_xlabel('Days Open')
 
         if enlarged:
-            days_numeric = pd.to_numeric(days, errors='coerce')
+            days_series = pd.Series(days)
+            days_numeric = pd.to_numeric(days_series, errors='coerce')
             avg_age = days_numeric.mean()
-            median_age = np.median(days_numeric.dropna())
+            median_age = days_numeric.dropna().median()
             ax.text(0.98, 0.98, f'Avg: {avg_age:.0f}d | Median: {median_age:.0f}d',
                    transform=ax.transAxes, fontsize=10, va='top', ha='right', color='#17a2b8')
 
