@@ -290,7 +290,7 @@ def create_pdf(md_file: str):
         <div class="cover-page">
             <h1>{title}</h1>
             <p class="subtitle">Plugin History Analysis Tool</p>
-            <p class="version">Version 2.0 - December 2024</p>
+            <p class="version">Version 2.0 - December 2025</p>
         </div>
         {html_body}
     </body>
@@ -364,7 +364,7 @@ def create_combined_pdf():
         <div class="cover-page">
             <h1>Plugin History Analysis Tool</h1>
             <p class="subtitle">Complete Documentation</p>
-            <p class="version">Version 2.0 - December 2024</p>
+            <p class="version">Version 2.0 - December 2025</p>
             <hr style="margin: 40px 0;">
             <p style="font-size: 12pt; color: #7f8c8d;">
                 Includes:<br>

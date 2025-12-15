@@ -919,5 +919,5 @@ export_remediation_plan(plan, 'remediation_plan.xlsx', format='xlsx')
 ---
 
 *Document Version: 1.0*
-*Last Updated: December 2024*
+*Last Updated: December 2025*
 *Author: Plugin History Analysis Team*
