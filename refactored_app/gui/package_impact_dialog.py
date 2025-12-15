@@ -875,7 +875,7 @@ class PackageImpactDialog:
         self.summary_text.insert(tk.END, "=" * 50 + "\n")
         self.summary_text.insert(tk.END, "DETAILED PACKAGE LIST\n", 'header')
         self.summary_text.insert(tk.END, "=" * 50 + "\n\n")
-        self.summary_text.insert(tk.END, f"{'#':<4} {'Package':<40} {'Target Version':<20} {'Hosts':<8} {'Findings':<10} {'Critical':<10} {'High':<8}\n", 'subheader')
+        self.summary_text.insert(tk.END, f"{'#':<4} {'Package':<40} {'Target Version':<20} {'Hosts':<8} {'Findings':<10} {'Critical':<10} {'High':<8}\n")
         self.summary_text.insert(tk.END, "-" * 100 + "\n")
 
         for i, pkg in enumerate(self.plan.packages):
