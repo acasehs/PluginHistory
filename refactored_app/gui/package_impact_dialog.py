@@ -835,7 +835,8 @@ class PackageImpactDialog:
         for sev in ['Critical', 'High', 'Medium', 'Low', 'Info']:
             count = severity_totals[sev]
             tag = 'warning' if sev in ['Critical', 'High'] else None
-            self.summary_text.insert(tk.END, f"  {sev}: {count:,}\n", tag)
+            self.summary_text.insert(tk.END, f"  {sev}:\n", tag)
+            self.summary_text.insert(tk.END, f"    {count:,}\n", tag)
 
         self.summary_text.insert(tk.END, "\n")
 
