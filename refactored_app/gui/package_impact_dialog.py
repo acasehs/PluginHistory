@@ -105,7 +105,7 @@ class PackageImpactDialog:
         # Create dialog
         self.dialog = tk.Toplevel(parent)
         self.dialog.title("Package Version Impact Analysis")
-        self.dialog.geometry("1400x900")
+        self.dialog.geometry("1400x1170")  # 30% taller to fit all content
         self.dialog.transient(parent)
 
         # Dark theme colors

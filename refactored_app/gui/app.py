@@ -489,26 +489,34 @@ class NessusHistoryTrackerApp:
         # Row 1: Process + Refresh
         row1 = ttk.Frame(action_frame)
         row1.pack(fill=tk.X, pady=2)
-        ttk.Button(row1, text="Process", command=self._process_archives).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
-        ttk.Button(row1, text="Refresh", command=self._refresh_analysis).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+        row1.columnconfigure(0, weight=1)
+        row1.columnconfigure(1, weight=1)
+        ttk.Button(row1, text="Process", command=self._process_archives).grid(row=0, column=0, sticky='ew', padx=1)
+        ttk.Button(row1, text="Refresh", command=self._refresh_analysis).grid(row=0, column=1, sticky='ew', padx=1)
 
         # Row 2: Export Excel + Save SQLite
         row2 = ttk.Frame(action_frame)
         row2.pack(fill=tk.X, pady=2)
-        ttk.Button(row2, text="Export Excel", command=self._export_excel).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
-        ttk.Button(row2, text="Save SQLite", command=self._export_sqlite).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+        row2.columnconfigure(0, weight=1)
+        row2.columnconfigure(1, weight=1)
+        ttk.Button(row2, text="Export Excel", command=self._export_excel).grid(row=0, column=0, sticky='ew', padx=1)
+        ttk.Button(row2, text="Save SQLite", command=self._export_sqlite).grid(row=0, column=1, sticky='ew', padx=1)
 
         # Row 3: Save JSON + Settings
         row3 = ttk.Frame(action_frame)
         row3.pack(fill=tk.X, pady=2)
-        ttk.Button(row3, text="Save JSON", command=self._export_json).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
-        ttk.Button(row3, text="Settings", command=self._show_settings_dialog).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+        row3.columnconfigure(0, weight=1)
+        row3.columnconfigure(1, weight=1)
+        ttk.Button(row3, text="Save JSON", command=self._export_json).grid(row=0, column=0, sticky='ew', padx=1)
+        ttk.Button(row3, text="Settings", command=self._show_settings_dialog).grid(row=0, column=1, sticky='ew', padx=1)
 
-        # Row 4: Package Impact Analysis
+        # Row 4: Package Impact + Filter Defaults
         row4 = ttk.Frame(action_frame)
         row4.pack(fill=tk.X, pady=2)
-        ttk.Button(row4, text="Package Impact", command=self._show_package_impact).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
-        ttk.Button(row4, text="Filter Defaults", command=self._show_filter_defaults).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+        row4.columnconfigure(0, weight=1)
+        row4.columnconfigure(1, weight=1)
+        ttk.Button(row4, text="Pkg Impact", command=self._show_package_impact).grid(row=0, column=0, sticky='ew', padx=1)
+        ttk.Button(row4, text="Filter Defaults", command=self._show_filter_defaults).grid(row=0, column=1, sticky='ew', padx=1)
 
         # AI Predictions section
         ai_frame = ttk.LabelFrame(parent, text="AI Predictions", padding=5)
@@ -9675,7 +9683,36 @@ class NessusHistoryTrackerApp:
             return
 
         self._log("Opening Package Version Impact dialog...")
-        show_package_impact_dialog(self.window, self.lifecycle_df)
+
+        # Merge plugin_output from historical_df if available
+        # plugin_output is stored as 'output' in historical_df
+        findings_df = self.lifecycle_df.copy()
+
+        if hasattr(self, 'historical_df') and not self.historical_df.empty:
+            if 'output' in self.historical_df.columns:
+                # Get the most recent output for each hostname/plugin_id combination
+                hist_df = self.historical_df.copy()
+                if 'scan_date' in hist_df.columns:
+                    hist_df = hist_df.sort_values('scan_date', ascending=False)
+
+                # Get unique hostname/plugin_id with their most recent output
+                output_df = hist_df.groupby(['hostname', 'plugin_id']).first().reset_index()[['hostname', 'plugin_id', 'output']]
+                output_df = output_df.rename(columns={'output': 'plugin_output'})
+
+                # Merge with lifecycle data
+                findings_df['hostname'] = findings_df['hostname'].astype(str)
+                findings_df['plugin_id'] = findings_df['plugin_id'].astype(str)
+                output_df['hostname'] = output_df['hostname'].astype(str)
+                output_df['plugin_id'] = output_df['plugin_id'].astype(str)
+
+                findings_df = findings_df.merge(
+                    output_df,
+                    on=['hostname', 'plugin_id'],
+                    how='left'
+                )
+                self._log(f"Merged plugin_output for {findings_df['plugin_output'].notna().sum()} findings")
+
+        show_package_impact_dialog(self.window, findings_df)
 
     # =========================================================================
     # Filter Defaults Configuration
