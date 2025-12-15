@@ -139,6 +139,7 @@ class UserSettings:
     environment_types: List[str] = field(default_factory=lambda: ['Production', 'PSS', 'Shared', 'Unknown'])
     environment_mappings: Dict[str, str] = field(default_factory=dict)  # hostname -> environment
     environment_patterns: Dict[str, str] = field(default_factory=dict)  # regex pattern -> environment
+    excluded_environments: List[str] = field(default_factory=list)  # environments to exclude from all calculations
 
     # Hostname auto-detection settings
     hostname_length: int = 9  # Expected hostname length for auto-detection
@@ -177,6 +178,14 @@ class UserSettings:
             'Low': self.color_low,
             'Info': self.color_info
         }
+
+    def is_environment_excluded(self, env_name: str) -> bool:
+        """Check if an environment is excluded from calculations."""
+        return env_name in self.excluded_environments
+
+    def get_active_environments(self) -> List[str]:
+        """Get list of environments that are NOT excluded."""
+        return [e for e in self.environment_types if e not in self.excluded_environments]
 
 
 class SettingsManager:

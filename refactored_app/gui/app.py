@@ -2547,6 +2547,19 @@ class NessusHistoryTrackerApp:
         filtered = self.lifecycle_df.copy()
         filter_descriptions = []
 
+        # Filter: Excluded Environments (applied FIRST to remove from all calculations)
+        excluded_envs = self.settings_manager.settings.excluded_environments if hasattr(self.settings_manager.settings, 'excluded_environments') else []
+        if excluded_envs and 'hostname' in filtered.columns:
+            def is_not_excluded(hostname):
+                env_type = self._get_environment_type(hostname)
+                return env_type not in excluded_envs
+            before_count = len(filtered)
+            filtered = filtered[filtered['hostname'].apply(is_not_excluded)]
+            excluded_count = before_count - len(filtered)
+            if excluded_count > 0:
+                filter_descriptions.append(f"Excluded: {excluded_count} findings")
+                self._log(f"Excluded {excluded_count} findings from {len(excluded_envs)} environment(s): {', '.join(excluded_envs)}")
+
         # Filter: Include Info
         if not self.filter_include_info.get():
             if 'severity_text' in filtered.columns:
@@ -9032,7 +9045,7 @@ class NessusHistoryTrackerApp:
                  foreground='gray').pack(anchor=tk.W, pady=(0, 10))
 
         # Text widget for environment types
-        env_types_text = tk.Text(types_frame, height=10, width=40,
+        env_types_text = tk.Text(types_frame, height=8, width=40,
                                 bg=GUI_DARK_THEME['entry_bg'], fg=GUI_DARK_THEME['fg'],
                                 insertbackground=GUI_DARK_THEME['fg'])
         env_types_text.pack(fill=tk.BOTH, expand=True, pady=5)
@@ -9040,6 +9053,73 @@ class NessusHistoryTrackerApp:
         # Pre-populate with current environment types
         current_types = settings.environment_types
         env_types_text.insert('1.0', '\n'.join(current_types))
+
+        # === Excluded Environments Section ===
+        ttk.Separator(types_frame, orient='horizontal').pack(fill=tk.X, pady=10)
+
+        excl_label_frame = ttk.Frame(types_frame)
+        excl_label_frame.pack(fill=tk.X)
+        ttk.Label(excl_label_frame, text="Exclude from Calculations:",
+                 font=('Arial', 9, 'bold')).pack(side=tk.LEFT)
+        ttk.Label(excl_label_frame, text="(findings in excluded environments won't count in metrics)",
+                 foreground='gray', font=('Arial', 8)).pack(side=tk.LEFT, padx=5)
+
+        # Store exclusion state
+        excluded_env_vars = {}
+
+        # Scrollable frame for exclusion checkboxes
+        excl_canvas = tk.Canvas(types_frame, height=100, bg=GUI_DARK_THEME['entry_bg'], highlightthickness=0)
+        excl_scrollbar = ttk.Scrollbar(types_frame, orient="vertical", command=excl_canvas.yview)
+        excl_list_frame = ttk.Frame(excl_canvas)
+
+        excl_canvas.configure(yscrollcommand=excl_scrollbar.set)
+        excl_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        excl_canvas.pack(fill=tk.BOTH, expand=True, pady=5)
+        excl_canvas_window = excl_canvas.create_window((0, 0), window=excl_list_frame, anchor="nw")
+
+        def rebuild_exclusion_list():
+            """Rebuild the exclusion checkboxes based on current env types text."""
+            # Clear existing
+            for widget in excl_list_frame.winfo_children():
+                widget.destroy()
+
+            # Get current types from text box
+            types_content = env_types_text.get('1.0', tk.END).strip()
+            new_types = [t.strip() for t in types_content.split('\n') if t.strip()]
+
+            # Preserve existing exclusion state
+            current_excluded = settings.excluded_environments if hasattr(settings, 'excluded_environments') else []
+
+            for env_type in new_types:
+                row = ttk.Frame(excl_list_frame)
+                row.pack(fill=tk.X, pady=2)
+
+                # Check if currently excluded
+                is_excluded = env_type in current_excluded or env_type in [k for k, v in excluded_env_vars.items() if v.get()]
+
+                var = tk.BooleanVar(value=is_excluded)
+                excluded_env_vars[env_type] = var
+
+                cb = ttk.Checkbutton(row, text=env_type, variable=var)
+                cb.pack(side=tk.LEFT, padx=5)
+
+                if is_excluded:
+                    ttk.Label(row, text="(excluded)", foreground='#ffc107', font=('Arial', 8)).pack(side=tk.LEFT)
+
+            # Update canvas scroll region
+            excl_list_frame.update_idletasks()
+            excl_canvas.configure(scrollregion=excl_canvas.bbox("all"))
+
+        # Initial build
+        rebuild_exclusion_list()
+
+        # Button to refresh exclusion list when types change
+        ttk.Button(types_frame, text="↻ Refresh Exclusion List",
+                  command=rebuild_exclusion_list).pack(anchor=tk.W, pady=5)
+
+        ttk.Label(types_frame, text="Tip: Check an environment to exclude it from all metrics and calculations.\n"
+                                   "Useful for third-party managed assets you don't want counted against your team.",
+                 foreground='gray', font=('Arial', 8), wraplength=400).pack(anchor=tk.W, pady=5)
 
         # === Hostname Mappings Tab ===
         mappings_frame = ttk.Frame(notebook, padding=10)
@@ -9327,6 +9407,9 @@ class NessusHistoryTrackerApp:
             if not new_types:
                 new_types = ['Production', 'PSS', 'Shared', 'Unknown']
 
+            # Get excluded environments from checkboxes
+            new_excluded = [env for env, var in excluded_env_vars.items() if var.get() and env in new_types]
+
             # Get hostname mappings from the interactive state
             new_mappings = dict(mapping_state['mappings'])
 
@@ -9353,6 +9436,7 @@ class NessusHistoryTrackerApp:
             settings.environment_types = new_types
             settings.environment_mappings = new_mappings
             settings.environment_patterns = new_patterns
+            settings.excluded_environments = new_excluded
 
             # Save settings
             self.settings_manager.save()
@@ -9361,8 +9445,9 @@ class NessusHistoryTrackerApp:
             env_types = ["All Combined", "All Separate"] + new_types
             self.env_combo['values'] = env_types
 
-            self._log(f"Saved environment config: {len(new_types)} types, {len(new_mappings)} mappings, {len(new_patterns)} patterns")
-            messagebox.showinfo("Saved", "Environment configuration saved successfully.")
+            excluded_msg = f", {len(new_excluded)} excluded" if new_excluded else ""
+            self._log(f"Saved environment config: {len(new_types)} types, {len(new_mappings)} mappings, {len(new_patterns)} patterns{excluded_msg}")
+            messagebox.showinfo("Saved", f"Environment configuration saved successfully.\n\nExcluded environments: {', '.join(new_excluded) if new_excluded else 'None'}")
             dialog.destroy()
 
         ttk.Button(btn_frame, text="Save", command=save_config, width=10).pack(side=tk.RIGHT, padx=5)
