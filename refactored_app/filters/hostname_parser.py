@@ -18,7 +18,12 @@ from ..models.hostname_structure import (
     extract_location,
     extract_tier,
     extract_environment,
-    group_hostnames_by_attribute
+    group_hostnames_by_attribute,
+    # Hostname normalization for STIG matching
+    normalize_hostname_for_matching,
+    get_hostname_variants,
+    find_best_hostname_match,
+    build_hostname_match_index
 )
 
 __all__ = [
@@ -35,5 +40,10 @@ __all__ = [
     'extract_location',
     'extract_tier',
     'extract_environment',
-    'group_hostnames_by_attribute'
+    'group_hostnames_by_attribute',
+    # Hostname normalization for STIG matching
+    'normalize_hostname_for_matching',
+    'get_hostname_variants',
+    'find_best_hostname_match',
+    'build_hostname_match_index'
 ]

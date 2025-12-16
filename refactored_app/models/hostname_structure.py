@@ -476,3 +476,193 @@ def group_hostnames_by_attribute(hostnames: list, attribute: str) -> dict:
         groups[key].append(hostname)
 
     return groups
+
+
+# Hostname normalization patterns for STIG matching
+HOSTNAME_STRIP_SUFFIXES = [
+    '-ilom', '-mgmt', '-ilo', '-oob', '-bmc',  # Management interfaces
+    '-db', '-database', '-ora', '-sql',          # Database instances
+    '-app', '-web', '-api',                      # Application roles
+    '-prd', '-prod', '-dev', '-test', '-qa', '-uat',  # Environment suffixes
+    '-pri', '-sec', '-dr',                       # Redundancy designators
+    '-a', '-b', '-c', '-1', '-2', '-3',          # Instance suffixes
+]
+
+# Common database instance patterns (hostname_DBNAME, hostname-DBSID)
+DB_INSTANCE_PATTERNS = [
+    r'[_-][A-Z]{2,8}\d{0,2}$',  # Like _PRODDB, -TESTDB1
+    r'[_-][A-Z]+\d+[A-Z]*$',    # Like _DB01, -ORA12C
+]
+
+
+def normalize_hostname_for_matching(hostname: str) -> str:
+    """
+    Normalize a hostname to its base form for matching across data sources.
+
+    This removes common suffixes like -ilom, -mgmt, database instance names,
+    etc. to enable matching between STIG checklists and Tenable findings.
+
+    Args:
+        hostname: The hostname to normalize
+
+    Returns:
+        Normalized hostname suitable for matching
+    """
+    if not hostname:
+        return ''
+
+    normalized = hostname.lower().strip()
+
+    # Remove common suffixes
+    for suffix in HOSTNAME_STRIP_SUFFIXES:
+        if normalized.endswith(suffix):
+            normalized = normalized[:-len(suffix)]
+            break  # Only strip one suffix
+
+    # Check for database instance patterns
+    for pattern in DB_INSTANCE_PATTERNS:
+        match = re.search(pattern, normalized, re.IGNORECASE)
+        if match:
+            normalized = normalized[:match.start()]
+            break
+
+    return normalized
+
+
+def get_hostname_variants(hostname: str) -> list:
+    """
+    Generate possible hostname variants for fuzzy matching.
+
+    Returns the hostname in multiple forms to improve matching
+    between STIG checklists and scan data.
+
+    Args:
+        hostname: The base hostname
+
+    Returns:
+        List of possible hostname variants (all lowercase)
+    """
+    if not hostname:
+        return []
+
+    base = hostname.lower().strip()
+    normalized = normalize_hostname_for_matching(base)
+
+    variants = {base, normalized}
+
+    # Add without common suffixes
+    for suffix in HOSTNAME_STRIP_SUFFIXES:
+        if base.endswith(suffix):
+            variants.add(base[:-len(suffix)])
+
+    # Add with .domain stripped
+    if '.' in base:
+        variants.add(base.split('.')[0])
+
+    return list(variants)
+
+
+def find_best_hostname_match(target_hostname: str, candidate_hostnames: list) -> str:
+    """
+    Find the best matching hostname from candidates, preferring simpler names.
+
+    Prioritizes:
+    1. Exact match
+    2. Normalized match
+    3. Match without management suffixes (-ilom, -mgmt)
+
+    Args:
+        target_hostname: The hostname to match
+        candidate_hostnames: List of possible matches
+
+    Returns:
+        Best matching hostname or empty string if no match
+    """
+    if not target_hostname or not candidate_hostnames:
+        return ''
+
+    target_lower = target_hostname.lower().strip()
+    target_normalized = normalize_hostname_for_matching(target_lower)
+    target_variants = set(get_hostname_variants(target_lower))
+
+    # Build candidate lookup with normalized forms
+    candidates_by_normalized = {}
+    simple_candidates = []  # Candidates without mgmt suffixes
+
+    for candidate in candidate_hostnames:
+        cand_lower = candidate.lower().strip()
+        cand_normalized = normalize_hostname_for_matching(cand_lower)
+
+        # Check if this is a "simple" hostname (no management suffix)
+        is_simple = not any(cand_lower.endswith(s) for s in ['-ilom', '-mgmt', '-ilo', '-oob', '-bmc'])
+        if is_simple:
+            simple_candidates.append((candidate, cand_lower, cand_normalized))
+
+        if cand_normalized not in candidates_by_normalized:
+            candidates_by_normalized[cand_normalized] = []
+        candidates_by_normalized[cand_normalized].append((candidate, is_simple))
+
+    # Priority 1: Exact match
+    for candidate in candidate_hostnames:
+        if candidate.lower().strip() == target_lower:
+            return candidate
+
+    # Priority 2: Simple hostname exact match on normalized
+    if target_normalized in candidates_by_normalized:
+        matches = candidates_by_normalized[target_normalized]
+        # Prefer simple (non-mgmt) hostnames
+        simple_matches = [m[0] for m in matches if m[1]]
+        if simple_matches:
+            return simple_matches[0]
+        # Fall back to any match
+        return matches[0][0]
+
+    # Priority 3: Check all target variants against normalized candidates
+    for variant in target_variants:
+        if variant in candidates_by_normalized:
+            matches = candidates_by_normalized[variant]
+            simple_matches = [m[0] for m in matches if m[1]]
+            if simple_matches:
+                return simple_matches[0]
+            return matches[0][0]
+
+    return ''
+
+
+def build_hostname_match_index(hostnames: list) -> dict:
+    """
+    Build an index for fast hostname matching.
+
+    Creates a mapping from normalized hostnames to their original forms,
+    useful for batch matching operations.
+
+    Args:
+        hostnames: List of hostnames to index
+
+    Returns:
+        Dictionary mapping normalized forms to list of (original, is_simple) tuples
+    """
+    index = {}
+
+    for hostname in hostnames:
+        if not hostname:
+            continue
+
+        host_lower = hostname.lower().strip()
+        normalized = normalize_hostname_for_matching(host_lower)
+
+        is_simple = not any(host_lower.endswith(s) for s in ['-ilom', '-mgmt', '-ilo', '-oob', '-bmc'])
+
+        if normalized not in index:
+            index[normalized] = []
+        index[normalized].append((hostname, is_simple))
+
+        # Also index by variants
+        for variant in get_hostname_variants(host_lower):
+            if variant != normalized:
+                if variant not in index:
+                    index[variant] = []
+                index[variant].append((hostname, is_simple))
+
+    return index
+

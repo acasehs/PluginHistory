@@ -42,7 +42,10 @@ from ..analysis.advanced_metrics import (
     calculate_risk_reduction_trend
 )
 from ..filters.filter_engine import FilterEngine, apply_filters
-from ..filters.hostname_parser import parse_hostname, HostType
+from ..filters.hostname_parser import (
+    parse_hostname, HostType, normalize_hostname_for_matching,
+    build_hostname_match_index, find_best_hostname_match
+)
 from ..filters.custom_lists import FilterListManager, FilterList
 from ..export.sqlite_export import (
     export_to_sqlite, save_informational_findings_by_year,
@@ -791,8 +794,8 @@ class NessusHistoryTrackerApp:
         tree_frame = ttk.Frame(host_frame)
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        # Define columns
-        columns = ('hostname', 'ip_address', 'status', 'first_seen', 'last_seen', 'scan_count', 'presence_pct', 'host_type')
+        # Define columns (includes STIG count)
+        columns = ('hostname', 'ip_address', 'status', 'first_seen', 'last_seen', 'scan_count', 'presence_pct', 'stig_count', 'host_type')
         self.host_tree = ttk.Treeview(tree_frame, columns=columns, show='headings', height=20)
 
         # Configure columns
@@ -804,6 +807,7 @@ class NessusHistoryTrackerApp:
             'last_seen': ('Last Seen', 90),
             'scan_count': ('Scans', 60),
             'presence_pct': ('Presence %', 80),
+            'stig_count': ('STIGs', 50),
             'host_type': ('Type', 70)
         }
 
@@ -822,6 +826,14 @@ class NessusHistoryTrackerApp:
         hsb.grid(row=1, column=0, sticky='ew')
         tree_frame.grid_rowconfigure(0, weight=1)
         tree_frame.grid_columnconfigure(0, weight=1)
+
+        # Bind double-click for host detail popup
+        self.host_tree.bind('<Double-1>', self._on_host_double_click)
+
+        # Hint label
+        hint = ttk.Label(host_frame, text="Double-click a host to see findings and STIG details",
+                        font=('Arial', 8), foreground='gray')
+        hint.pack(anchor=tk.SE, padx=5)
 
     def _build_timeline_tab(self):
         """Build timeline analysis visualization tab."""
@@ -4329,6 +4341,9 @@ class NessusHistoryTrackerApp:
             self.host_count_label.config(text="Showing 0 hosts")
             return
 
+        # Build STIG match index for fast hostname matching
+        stig_host_counts = self._calculate_stig_host_counts()
+
         # Apply Active/Missing filter based on toggles
         show_active = self.host_show_active.get()
         show_missing = self.host_show_missing.get()
@@ -4392,6 +4407,9 @@ class NessusHistoryTrackerApp:
             else:
                 status = row.get('status', 'Active')
 
+            # Get STIG checklist count for this host
+            stig_count = self._get_stig_count_for_host(hostname, stig_host_counts)
+
             values = (
                 hostname,
                 row.get('ip_address', ''),
@@ -4400,6 +4418,7 @@ class NessusHistoryTrackerApp:
                 str(row.get('last_seen', ''))[:10],
                 row.get('scan_count', row.get('scans_present', '')),
                 f"{row.get('presence_percentage', 0):.1f}%" if 'presence_percentage' in row else '',
+                stig_count if stig_count > 0 else '',
                 host_type
             )
             self.host_tree.insert('', tk.END, values=values)
@@ -4417,9 +4436,369 @@ class NessusHistoryTrackerApp:
         label_text = f"Showing {shown} of {total} hosts{status_filter}" if shown < total else f"Showing {total} hosts{status_filter}"
         self.host_count_label.config(text=label_text)
 
+    def _calculate_stig_host_counts(self) -> Dict[str, int]:
+        """Calculate STIG checklist counts per normalized hostname."""
+        if self.stig_df.empty or 'hostname' not in self.stig_df.columns:
+            return {}
+
+        # Build index mapping normalized hostname -> checklist count
+        stig_df = self.stig_df
+        counts = {}
+
+        # Group by hostname and count unique STIG names
+        if 'stig_name' in stig_df.columns:
+            for hostname in stig_df['hostname'].unique():
+                host_stigs = stig_df[stig_df['hostname'] == hostname]['stig_name'].nunique()
+                normalized = normalize_hostname_for_matching(hostname)
+                if normalized not in counts:
+                    counts[normalized] = 0
+                counts[normalized] = max(counts[normalized], host_stigs)
+
+        return counts
+
+    def _get_stig_count_for_host(self, hostname: str, stig_counts: Dict[str, int]) -> int:
+        """Get STIG checklist count for a host using normalized matching."""
+        if not hostname or not stig_counts:
+            return 0
+
+        normalized = normalize_hostname_for_matching(hostname)
+        if normalized in stig_counts:
+            return stig_counts[normalized]
+
+        # Try exact match fallback
+        return stig_counts.get(hostname.lower(), 0)
+
     def _host_status_changed(self):
         """Handle host status toggle change."""
         self._update_host_tree()
+
+    def _on_host_double_click(self, event):
+        """Handle double-click on host to show detailed view."""
+        selection = self.host_tree.selection()
+        if not selection:
+            return
+
+        item = selection[0]
+        values = self.host_tree.item(item, 'values')
+        if not values:
+            return
+
+        hostname = values[0]  # First column is hostname
+        self._show_host_detail_popup(hostname)
+
+    def _show_host_detail_popup(self, hostname: str):
+        """Show popup window with host findings and STIG details."""
+        if not hostname:
+            return
+
+        popup = tk.Toplevel(self.window)
+        popup.title(f"Host Details: {hostname}")
+        popup.geometry("900x700")
+        popup.configure(bg=GUI_DARK_THEME['bg'])
+
+        # Make it modal
+        popup.transient(self.window)
+        popup.grab_set()
+
+        # Create notebook for tabs
+        notebook = ttk.Notebook(popup)
+        notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Tab 1: Tenable Findings
+        findings_frame = ttk.Frame(notebook)
+        notebook.add(findings_frame, text="Tenable Findings")
+        self._build_host_findings_tab(findings_frame, hostname)
+
+        # Tab 2: STIG Checklists
+        stig_frame = ttk.Frame(notebook)
+        notebook.add(stig_frame, text="STIG Checklists")
+        self._build_host_stig_tab(stig_frame, hostname)
+
+        # Close button
+        close_btn = ttk.Button(popup, text="Close", command=popup.destroy)
+        close_btn.pack(pady=10)
+
+        # Center the popup
+        popup.update_idletasks()
+        x = self.window.winfo_x() + (self.window.winfo_width() - popup.winfo_width()) // 2
+        y = self.window.winfo_y() + (self.window.winfo_height() - popup.winfo_height()) // 2
+        popup.geometry(f"+{x}+{y}")
+
+    def _build_host_findings_tab(self, parent, hostname: str):
+        """Build the Tenable findings tab for a host."""
+        # Get findings for this host
+        if self.lifecycle_df.empty:
+            ttk.Label(parent, text="No findings data loaded").pack(pady=20)
+            return
+
+        host_findings = self.lifecycle_df[
+            self.lifecycle_df['hostname'].str.lower() == hostname.lower()
+        ]
+
+        if host_findings.empty:
+            # Try normalized matching
+            normalized = normalize_hostname_for_matching(hostname)
+            host_findings = self.lifecycle_df[
+                self.lifecycle_df['hostname'].apply(
+                    lambda x: normalize_hostname_for_matching(x) == normalized
+                )
+            ]
+
+        if host_findings.empty:
+            ttk.Label(parent, text="No findings found for this host").pack(pady=20)
+            return
+
+        # Active findings
+        active_findings = host_findings[host_findings['status'] == 'Active']
+
+        # Top summary frame
+        summary_frame = ttk.Frame(parent)
+        summary_frame.pack(fill=tk.X, padx=10, pady=10)
+
+        total_active = len(active_findings)
+        total_resolved = len(host_findings[host_findings['status'] == 'Resolved'])
+
+        ttk.Label(summary_frame, text=f"Active Findings: {total_active}",
+                 font=('Arial', 11, 'bold')).pack(side=tk.LEFT, padx=10)
+        ttk.Label(summary_frame, text=f"Resolved: {total_resolved}",
+                 foreground='#28a745').pack(side=tk.LEFT, padx=10)
+
+        # Chart showing severity breakdown
+        if HAS_MATPLOTLIB and not active_findings.empty:
+            chart_frame = ttk.Frame(parent)
+            chart_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+            fig = Figure(figsize=(8, 4), dpi=100, facecolor=GUI_DARK_THEME['bg'])
+
+            # Severity pie chart
+            ax1 = fig.add_subplot(121)
+            ax1.set_facecolor(GUI_DARK_THEME['entry_bg'])
+
+            if 'severity_text' in active_findings.columns:
+                sev_counts = active_findings['severity_text'].value_counts()
+                sev_colors = {
+                    'Critical': '#dc3545',
+                    'High': '#fd7e14',
+                    'Medium': '#ffc107',
+                    'Low': '#28a745',
+                    'Info': '#17a2b8'
+                }
+                colors = [sev_colors.get(s, '#6c757d') for s in sev_counts.index]
+                labels = [f'{s}\n({c})' for s, c in sev_counts.items()]
+
+                ax1.pie(sev_counts.values, labels=labels, colors=colors,
+                       autopct='%1.0f%%', textprops={'color': 'white', 'fontsize': 9})
+                ax1.set_title('Active by Severity', color=GUI_DARK_THEME['fg'])
+
+            # Age distribution bar chart
+            ax2 = fig.add_subplot(122)
+            ax2.set_facecolor(GUI_DARK_THEME['entry_bg'])
+            ax2.tick_params(colors=GUI_DARK_THEME['fg'])
+
+            if 'days_open' in active_findings.columns:
+                # Bin by age ranges
+                bins = [0, 30, 60, 90, 180, 365, float('inf')]
+                labels = ['<30d', '30-60d', '60-90d', '90-180d', '180-365d', '>365d']
+                active_findings = active_findings.copy()
+                active_findings['age_bin'] = pd.cut(active_findings['days_open'], bins=bins, labels=labels)
+                age_counts = active_findings['age_bin'].value_counts().reindex(labels).fillna(0)
+
+                bars = ax2.bar(range(len(age_counts)), age_counts.values, color='#dc3545')
+                ax2.set_xticks(range(len(labels)))
+                ax2.set_xticklabels(labels, fontsize=8, color=GUI_DARK_THEME['fg'])
+                ax2.set_ylabel('Count', fontsize=9, color=GUI_DARK_THEME['fg'])
+                ax2.set_title('Age Distribution', color=GUI_DARK_THEME['fg'])
+
+                for bar, count in zip(bars, age_counts.values):
+                    if count > 0:
+                        ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5,
+                                str(int(count)), ha='center', fontsize=8, color='white')
+
+            fig.tight_layout()
+            canvas = FigureCanvasTkAgg(fig, master=chart_frame)
+            canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            canvas.draw()
+
+        # Findings list
+        list_frame = ttk.LabelFrame(parent, text="Active Findings", padding=5)
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        columns = ('plugin_id', 'plugin_name', 'severity', 'days_open', 'first_seen')
+        tree = ttk.Treeview(list_frame, columns=columns, show='headings', height=10)
+
+        tree.heading('plugin_id', text='Plugin ID')
+        tree.heading('plugin_name', text='Plugin Name')
+        tree.heading('severity', text='Severity')
+        tree.heading('days_open', text='Age (days)')
+        tree.heading('first_seen', text='First Seen')
+
+        tree.column('plugin_id', width=80)
+        tree.column('plugin_name', width=350)
+        tree.column('severity', width=80)
+        tree.column('days_open', width=80)
+        tree.column('first_seen', width=100)
+
+        vsb = ttk.Scrollbar(list_frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=vsb.set)
+
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Sort by severity then days_open
+        sev_order = {'Critical': 0, 'High': 1, 'Medium': 2, 'Low': 3, 'Info': 4}
+        sorted_findings = active_findings.copy()
+        sorted_findings['_sev_order'] = sorted_findings['severity_text'].map(sev_order).fillna(5)
+        sorted_findings = sorted_findings.sort_values(['_sev_order', 'days_open'], ascending=[True, False])
+
+        for _, row in sorted_findings.head(100).iterrows():
+            tree.insert('', tk.END, values=(
+                row.get('plugin_id', ''),
+                row.get('plugin_name', '')[:60],
+                row.get('severity_text', ''),
+                row.get('days_open', ''),
+                str(row.get('first_seen', ''))[:10]
+            ))
+
+    def _build_host_stig_tab(self, parent, hostname: str):
+        """Build the STIG checklists tab for a host."""
+        if self.stig_df.empty:
+            ttk.Label(parent, text="No STIG data loaded\n\nLoad .cklb files from Data Sources",
+                     justify=tk.CENTER).pack(pady=50)
+            return
+
+        # Find matching STIG data using normalized hostname
+        normalized = normalize_hostname_for_matching(hostname)
+
+        host_stigs = self.stig_df[
+            self.stig_df['hostname'].apply(
+                lambda x: normalize_hostname_for_matching(x) == normalized
+            )
+        ]
+
+        # Try exact match if no results
+        if host_stigs.empty:
+            host_stigs = self.stig_df[
+                self.stig_df['hostname'].str.lower() == hostname.lower()
+            ]
+
+        if host_stigs.empty:
+            ttk.Label(parent, text=f"No STIG checklists found matching: {hostname}\n\n"
+                     f"Normalized search: {normalized}",
+                     justify=tk.CENTER).pack(pady=50)
+            return
+
+        # Summary frame
+        summary_frame = ttk.Frame(parent)
+        summary_frame.pack(fill=tk.X, padx=10, pady=10)
+
+        unique_checklists = host_stigs['stig_name'].nunique() if 'stig_name' in host_stigs.columns else 0
+        open_findings = len(host_stigs[host_stigs['status'] == 'Open']) if 'status' in host_stigs.columns else 0
+        total_rules = len(host_stigs)
+
+        ttk.Label(summary_frame, text=f"STIG Checklists: {unique_checklists}",
+                 font=('Arial', 11, 'bold')).pack(side=tk.LEFT, padx=10)
+        ttk.Label(summary_frame, text=f"Open: {open_findings}",
+                 foreground='#dc3545').pack(side=tk.LEFT, padx=10)
+        ttk.Label(summary_frame, text=f"Total Rules: {total_rules}").pack(side=tk.LEFT, padx=10)
+
+        # Chart showing STIG breakdown
+        if HAS_MATPLOTLIB:
+            chart_frame = ttk.Frame(parent)
+            chart_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+            fig = Figure(figsize=(8, 4), dpi=100, facecolor=GUI_DARK_THEME['bg'])
+
+            # CAT severity breakdown (open findings)
+            ax1 = fig.add_subplot(121)
+            ax1.set_facecolor(GUI_DARK_THEME['entry_bg'])
+
+            open_stigs = host_stigs[host_stigs['status'] == 'Open'] if 'status' in host_stigs.columns else host_stigs
+            if not open_stigs.empty and 'cat_severity' in open_stigs.columns:
+                cat_counts = open_stigs['cat_severity'].value_counts()
+                cat_colors = {'CAT I': '#dc3545', 'CAT II': '#fd7e14', 'CAT III': '#ffc107', 'Unknown': '#6c757d'}
+                cat_order = ['CAT I', 'CAT II', 'CAT III', 'Unknown']
+                cat_counts = cat_counts.reindex([c for c in cat_order if c in cat_counts.index])
+
+                if not cat_counts.empty:
+                    colors = [cat_colors.get(c, '#6c757d') for c in cat_counts.index]
+                    labels = [f'{c}\n({n})' for c, n in cat_counts.items()]
+                    ax1.pie(cat_counts.values, labels=labels, colors=colors,
+                           autopct='%1.0f%%', textprops={'color': 'white', 'fontsize': 9})
+                    ax1.set_title('Open by CAT Severity', color=GUI_DARK_THEME['fg'])
+
+            # Open findings by STIG checklist
+            ax2 = fig.add_subplot(122)
+            ax2.set_facecolor(GUI_DARK_THEME['entry_bg'])
+            ax2.tick_params(colors=GUI_DARK_THEME['fg'])
+
+            if not open_stigs.empty and 'stig_display_name' in open_stigs.columns:
+                stig_counts = open_stigs['stig_display_name'].value_counts().head(8)
+
+                def truncate(name, max_len=25):
+                    return name[:max_len] + '...' if len(str(name)) > max_len else str(name)
+
+                y_labels = [truncate(n) for n in stig_counts.index]
+                bars = ax2.barh(range(len(stig_counts)), stig_counts.values, color='#dc3545')
+                ax2.set_yticks(range(len(stig_counts)))
+                ax2.set_yticklabels(y_labels, fontsize=7, color=GUI_DARK_THEME['fg'])
+                ax2.set_xlabel('Open Findings', fontsize=9, color=GUI_DARK_THEME['fg'])
+                ax2.set_title('Open by STIG', color=GUI_DARK_THEME['fg'])
+
+                for bar, count in zip(bars, stig_counts.values):
+                    ax2.text(bar.get_width() + 0.2, bar.get_y() + bar.get_height()/2,
+                            str(count), va='center', fontsize=8, color='white')
+
+            fig.tight_layout()
+            canvas = FigureCanvasTkAgg(fig, master=chart_frame)
+            canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            canvas.draw()
+
+        # Checklist breakdown list
+        list_frame = ttk.LabelFrame(parent, text="STIG Checklists", padding=5)
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        columns = ('stig_name', 'version', 'open', 'naf', 'na', 'nr')
+        tree = ttk.Treeview(list_frame, columns=columns, show='headings', height=8)
+
+        tree.heading('stig_name', text='STIG Checklist')
+        tree.heading('version', text='Version')
+        tree.heading('open', text='Open')
+        tree.heading('naf', text='Not Finding')
+        tree.heading('na', text='N/A')
+        tree.heading('nr', text='Not Rev')
+
+        tree.column('stig_name', width=300)
+        tree.column('version', width=70)
+        tree.column('open', width=60)
+        tree.column('naf', width=80)
+        tree.column('na', width=50)
+        tree.column('nr', width=60)
+
+        vsb = ttk.Scrollbar(list_frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=vsb.set)
+
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Group by STIG name and count statuses
+        if 'stig_display_name' in host_stigs.columns and 'status' in host_stigs.columns:
+            for stig_name in host_stigs['stig_display_name'].unique():
+                stig_rules = host_stigs[host_stigs['stig_display_name'] == stig_name]
+
+                status_counts = stig_rules['status'].value_counts()
+                version = stig_rules['stig_version'].iloc[0] if 'stig_version' in stig_rules.columns else ''
+                release = stig_rules['release_number'].iloc[0] if 'release_number' in stig_rules.columns else ''
+
+                version_str = f"V{version}R{release}" if version and release else str(version)
+
+                tree.insert('', tk.END, values=(
+                    stig_name[:50],
+                    version_str,
+                    status_counts.get('Open', 0),
+                    status_counts.get('Not a Finding', 0),
+                    status_counts.get('Not Applicable', 0),
+                    status_counts.get('Not Reviewed', 0)
+                ))
 
     def _sort_lifecycle_tree(self, col):
         """Sort lifecycle treeview by column."""
