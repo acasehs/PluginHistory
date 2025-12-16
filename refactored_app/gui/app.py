@@ -232,14 +232,61 @@ class NessusHistoryTrackerApp:
         main_frame = ttk.Frame(self.window)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        # Left panel - File selection and filters
+        # Left panel - File selection and filters (scrollable)
         left_panel = ttk.Frame(main_frame, width=350)
         left_panel.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
         left_panel.pack_propagate(False)
 
-        self._build_file_selection(left_panel)
-        self._build_filter_panel(left_panel)
-        self._build_action_buttons(left_panel)
+        # Create scrollable canvas for left panel content
+        self.left_canvas = tk.Canvas(left_panel, bg=GUI_DARK_THEME['bg'],
+                                     highlightthickness=0, width=330)
+        self.left_scrollbar = ttk.Scrollbar(left_panel, orient="vertical",
+                                            command=self.left_canvas.yview)
+        self.left_scrollable_frame = ttk.Frame(self.left_canvas)
+
+        # Configure scroll region when frame size changes
+        self.left_scrollable_frame.bind(
+            "<Configure>",
+            lambda e: self.left_canvas.configure(scrollregion=self.left_canvas.bbox("all"))
+        )
+
+        # Create window in canvas
+        self.left_canvas_window = self.left_canvas.create_window(
+            (0, 0), window=self.left_scrollable_frame, anchor="nw", width=330
+        )
+
+        self.left_canvas.configure(yscrollcommand=self.left_scrollbar.set)
+
+        # Pack scrollbar and canvas
+        self.left_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.left_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Bind mousewheel scrolling
+        def _on_mousewheel(event):
+            self.left_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        def _on_mousewheel_linux(event):
+            if event.num == 4:
+                self.left_canvas.yview_scroll(-1, "units")
+            elif event.num == 5:
+                self.left_canvas.yview_scroll(1, "units")
+
+        # Store scroll handlers for binding to children
+        self._left_panel_mousewheel = _on_mousewheel
+        self._left_panel_mousewheel_linux = _on_mousewheel_linux
+
+        # Bind to canvas
+        self.left_canvas.bind("<MouseWheel>", _on_mousewheel)
+        self.left_canvas.bind("<Button-4>", _on_mousewheel_linux)
+        self.left_canvas.bind("<Button-5>", _on_mousewheel_linux)
+
+        # Build content in scrollable frame
+        self._build_file_selection(self.left_scrollable_frame)
+        self._build_filter_panel(self.left_scrollable_frame)
+        self._build_action_buttons(self.left_scrollable_frame)
+
+        # Bind mousewheel to all children for smooth scrolling
+        self._bind_mousewheel_to_children(self.left_scrollable_frame)
 
         # Right panel - Notebook with tabs
         right_panel = ttk.Frame(main_frame)
@@ -590,6 +637,17 @@ class NessusHistoryTrackerApp:
         scrollbar = ttk.Scrollbar(logging_frame, command=self.status_text.yview)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.status_text.config(yscrollcommand=scrollbar.set)
+
+    def _bind_mousewheel_to_children(self, widget):
+        """Recursively bind mousewheel events to all children of a widget."""
+        # Bind to the widget itself
+        widget.bind("<MouseWheel>", self._left_panel_mousewheel)
+        widget.bind("<Button-4>", self._left_panel_mousewheel_linux)
+        widget.bind("<Button-5>", self._left_panel_mousewheel_linux)
+
+        # Recursively bind to all children
+        for child in widget.winfo_children():
+            self._bind_mousewheel_to_children(child)
 
     def _build_dashboard_tab(self):
         """Build dashboard tab with summary statistics."""
