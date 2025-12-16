@@ -1661,6 +1661,10 @@ class NessusHistoryTrackerApp:
         ttk.Button(controls_frame, text="Export to Excel",
                   command=self._export_resolution_report).pack(side=tk.LEFT, padx=5)
 
+        # PDF Export button
+        ttk.Button(controls_frame, text="Export to PDF",
+                  command=self._export_resolution_pdf).pack(side=tk.LEFT, padx=5)
+
         # Environment filter
         ttk.Label(controls_frame, text="Environment:").pack(side=tk.LEFT, padx=(20, 5))
         self.report_env_filter = ttk.Combobox(controls_frame, width=15, state='readonly',
@@ -2637,15 +2641,20 @@ class NessusHistoryTrackerApp:
             self.report_status_label.config(text=f"Error: {e}", foreground='#dc3545')
 
     def _calculate_weekly_resolution_data(self, start_date, end_date) -> Dict[str, Any]:
-        """Calculate weekly resolution statistics."""
+        """Calculate weekly resolution statistics with environment breakdown."""
         result = {
             'start_date': start_date,
             'end_date': end_date,
-            'weekly_data': [],
-            'fully_closed': [],
-            'repops': [],
+            'weekly_data': [],           # Totals
+            'weekly_by_env': {},         # By environment
+            'fully_closed': [],          # All fully closed (no limit)
+            'fully_closed_by_date': {},  # Grouped by last_seen date
+            'repops': [],                # All reappearances (no limit)
             'ongoing_summary': {},
-            'by_environment': {}
+            'ongoing_by_env': {},
+            'new_findings': [],          # All new findings in period
+            'closed_findings': [],       # All closed findings in period
+            'environments': []           # List of environments found
         }
 
         # Use lifecycle data for finding tracking
@@ -2658,14 +2667,39 @@ class NessusHistoryTrackerApp:
         df['first_seen'] = pd.to_datetime(df['first_seen'])
         df['last_seen'] = pd.to_datetime(df['last_seen'])
 
-        # Get all scan dates in range
+        # Get environment column if exists
+        env_col = None
+        for col in ['environment', 'env', 'Environment']:
+            if col in df.columns:
+                env_col = col
+                break
+        if env_col is None:
+            df['environment'] = 'Unknown'
+            env_col = 'environment'
+
+        # Fill missing environments
+        df[env_col] = df[env_col].fillna('Unknown').replace('', 'Unknown')
+        environments = sorted(df[env_col].unique())
+        result['environments'] = environments
+
+        # Get all scan dates - include one scan BEFORE start_date for previous row
         if not self.historical_df.empty and 'scan_date' in self.historical_df.columns:
             hist_df = self.historical_df.copy()
             hist_df['scan_date'] = pd.to_datetime(hist_df['scan_date'])
-            scan_dates = sorted(hist_df[(hist_df['scan_date'] >= start_date) &
-                                       (hist_df['scan_date'] <= end_date)]['scan_date'].unique())
+            all_scan_dates = sorted(hist_df['scan_date'].unique())
+
+            # Find scan date just before start_date for "previous" baseline
+            prev_scan = None
+            for sd in all_scan_dates:
+                if sd < start_date:
+                    prev_scan = sd
+                else:
+                    break
+
+            # Get scan dates in range
+            scan_dates = [d for d in all_scan_dates if start_date <= d <= end_date]
         else:
-            # Fall back to weekly intervals
+            prev_scan = None
             scan_dates = pd.date_range(start=start_date, end=end_date, freq='W').tolist()
             if end_date not in scan_dates:
                 scan_dates.append(end_date)
@@ -2676,7 +2710,7 @@ class NessusHistoryTrackerApp:
         while current_week_start <= end_date:
             week_end = min(current_week_start + timedelta(days=6), end_date)
             week_scans = [d for d in scan_dates if current_week_start <= d <= week_end]
-            if week_scans:
+            if week_scans or current_week_start == start_date:  # Always include first week
                 weeks.append({
                     'start': current_week_start,
                     'end': week_end,
@@ -2684,9 +2718,35 @@ class NessusHistoryTrackerApp:
                 })
             current_week_start = week_end + timedelta(days=1)
 
-        # Calculate weekly statistics
-        previous_active = set()
-        for week in weeks:
+        # Helper to format severity
+        def fmt_sev(sev):
+            if not sev:
+                return 'Unk'
+            sev = str(sev)
+            sev_map = {'Critical': 'Crit', 'High': 'High', 'Medium': 'Med', 'Low': 'Low', 'Info': 'Info'}
+            return sev_map.get(sev, sev[:4])
+
+        # Calculate baseline from previous scan if available
+        if prev_scan:
+            baseline_findings = df[
+                (df['first_seen'] <= prev_scan) &
+                ((df['last_seen'] >= prev_scan) | (df['status'] == 'Active'))
+            ]
+            previous_active = set(baseline_findings['hostname'] + '|' + baseline_findings['plugin_id'].astype(str))
+            previous_active_by_env = {}
+            for env in environments:
+                env_findings = baseline_findings[baseline_findings[env_col] == env]
+                previous_active_by_env[env] = set(env_findings['hostname'] + '|' + env_findings['plugin_id'].astype(str))
+        else:
+            previous_active = set()
+            previous_active_by_env = {env: set() for env in environments}
+
+        # Initialize weekly by env
+        for env in environments:
+            result['weekly_by_env'][env] = []
+
+        # Calculate weekly statistics (totals and by environment)
+        for week_idx, week in enumerate(weeks):
             week_start = week['start']
             week_end = week['end']
 
@@ -2706,174 +2766,400 @@ class NessusHistoryTrackerApp:
             ]
             new_count = len(new_findings)
 
-            # Closed findings (last seen before this week, was active last week)
-            if previous_active:
-                closed_this_week = previous_active - current_active
-                closed_count = len(closed_this_week)
-            else:
-                closed_count = 0
+            # Closed findings
+            closed_this_week = previous_active - current_active if previous_active else set()
+            closed_count = len(closed_this_week)
 
-            # Unchanged (was active, still active)
+            # Unchanged
             unchanged = previous_active & current_active if previous_active else set()
             unchanged_count = len(unchanged)
 
-            # Get severity breakdown for new findings
-            new_by_severity = {}
+            # Severity breakdowns for new
+            new_by_severity = {'Crit': 0, 'High': 0, 'Med': 0, 'Low': 0}
             if not new_findings.empty and 'severity_text' in new_findings.columns:
-                new_by_severity = new_findings['severity_text'].value_counts().to_dict()
+                for sev, count in new_findings['severity_text'].value_counts().items():
+                    key = fmt_sev(sev)
+                    if key in new_by_severity:
+                        new_by_severity[key] = count
+
+            # Severity breakdowns for closed
+            closed_by_severity = {'Crit': 0, 'High': 0, 'Med': 0, 'Low': 0}
+            if closed_this_week:
+                for key in closed_this_week:
+                    parts = key.split('|')
+                    if len(parts) == 2:
+                        closed_row = df[(df['hostname'] + '|' + df['plugin_id'].astype(str)) == key]
+                        if not closed_row.empty and 'severity_text' in closed_row.columns:
+                            sev = fmt_sev(closed_row.iloc[0]['severity_text'])
+                            if sev in closed_by_severity:
+                                closed_by_severity[sev] += 1
 
             week_data = {
                 'week_start': week_start.strftime('%Y-%m-%d'),
                 'week_end': week_end.strftime('%Y-%m-%d'),
+                'week_label': f"{week_start.strftime('%m/%d')}-{week_end.strftime('%m/%d')}",
                 'total_active': len(current_active),
                 'new': new_count,
+                'new_crit': new_by_severity['Crit'],
+                'new_high': new_by_severity['High'],
+                'new_med': new_by_severity['Med'],
+                'new_low': new_by_severity['Low'],
                 'closed': closed_count,
+                'closed_crit': closed_by_severity['Crit'],
+                'closed_high': closed_by_severity['High'],
+                'closed_med': closed_by_severity['Med'],
+                'closed_low': closed_by_severity['Low'],
                 'unchanged': unchanged_count,
-                'new_by_severity': new_by_severity,
                 'previous_total': len(previous_active)
             }
             result['weekly_data'].append(week_data)
 
+            # Calculate by environment
+            for env in environments:
+                env_active = active_this_week[active_this_week[env_col] == env]
+                env_current = set(env_active['hostname'] + '|' + env_active['plugin_id'].astype(str))
+                env_new = new_findings[new_findings[env_col] == env]
+                env_prev = previous_active_by_env.get(env, set())
+
+                env_closed = env_prev - env_current if env_prev else set()
+                env_unchanged = env_prev & env_current if env_prev else set()
+
+                # Severity for new
+                env_new_sev = {'Crit': 0, 'High': 0, 'Med': 0, 'Low': 0}
+                if not env_new.empty and 'severity_text' in env_new.columns:
+                    for sev, count in env_new['severity_text'].value_counts().items():
+                        key = fmt_sev(sev)
+                        if key in env_new_sev:
+                            env_new_sev[key] = count
+
+                result['weekly_by_env'][env].append({
+                    'week_label': week_data['week_label'],
+                    'total_active': len(env_current),
+                    'new': len(env_new),
+                    'new_crit': env_new_sev['Crit'],
+                    'new_high': env_new_sev['High'],
+                    'new_med': env_new_sev['Med'],
+                    'new_low': env_new_sev['Low'],
+                    'closed': len(env_closed),
+                    'unchanged': len(env_unchanged),
+                    'previous_total': len(env_prev)
+                })
+
+                previous_active_by_env[env] = env_current
+
             previous_active = current_active
 
-        # Find fully closed plugins (plugins with 0 remaining findings)
+        # Find fully closed plugins (plugins with 0 remaining findings) - NO LIMIT
         plugin_status = df.groupby('plugin_id').agg({
             'status': lambda x: (x == 'Active').sum(),
             'plugin_name': 'first',
             'severity_text': 'first',
-            'hostname': 'nunique'
+            'hostname': 'nunique',
+            env_col: 'first'
         }).reset_index()
-        plugin_status.columns = ['plugin_id', 'active_count', 'plugin_name', 'severity', 'total_hosts']
+        plugin_status.columns = ['plugin_id', 'active_count', 'plugin_name', 'severity', 'total_hosts', 'environment']
 
         fully_closed = plugin_status[plugin_status['active_count'] == 0]
         for _, row in fully_closed.iterrows():
-            # Get resolution info
             plugin_findings = df[df['plugin_id'] == row['plugin_id']]
             last_seen_date = plugin_findings['last_seen'].max()
-            if start_date <= last_seen_date <= end_date:
-                result['fully_closed'].append({
+            if pd.notna(last_seen_date) and start_date <= last_seen_date <= end_date:
+                last_seen_str = last_seen_date.strftime('%Y-%m-%d')
+                entry = {
                     'plugin_id': row['plugin_id'],
                     'plugin_name': row['plugin_name'],
-                    'severity': row['severity'],
+                    'severity': fmt_sev(row['severity']),
                     'hosts_resolved': row['total_hosts'],
-                    'last_seen': last_seen_date.strftime('%Y-%m-%d')
+                    'last_seen': last_seen_str,
+                    'environment': row['environment']
+                }
+                result['fully_closed'].append(entry)
+
+                # Group by date
+                if last_seen_str not in result['fully_closed_by_date']:
+                    result['fully_closed_by_date'][last_seen_str] = []
+                result['fully_closed_by_date'][last_seen_str].append(entry)
+
+        # Sort fully_closed_by_date keys
+        result['fully_closed_by_date'] = dict(sorted(result['fully_closed_by_date'].items()))
+
+        # Find reappearances - NO LIMIT
+        if 'reappearances' in df.columns:
+            repops = df[df['reappearances'] > 0]
+            for _, row in repops.iterrows():
+                result['repops'].append({
+                    'hostname': row['hostname'],
+                    'plugin_id': row['plugin_id'],
+                    'plugin_name': row['plugin_name'],
+                    'severity': fmt_sev(row.get('severity_text', 'Unknown')),
+                    'reappearances': row['reappearances'],
+                    'first_seen': row['first_seen'].strftime('%Y-%m-%d'),
+                    'last_seen': row['last_seen'].strftime('%Y-%m-%d'),
+                    'environment': row.get(env_col, 'Unknown')
                 })
 
-        # Find reappearances (findings with reappearance count > 0)
-        repops = df[(df['reappearances'] > 0) &
-                   (df['first_seen'] >= start_date) &
-                   (df['last_seen'] <= end_date)]
-        for _, row in repops.iterrows():
-            result['repops'].append({
+        # All new findings in period - NO LIMIT
+        new_in_period = df[(df['first_seen'] >= start_date) & (df['first_seen'] <= end_date)]
+        for _, row in new_in_period.iterrows():
+            result['new_findings'].append({
                 'hostname': row['hostname'],
                 'plugin_id': row['plugin_id'],
                 'plugin_name': row['plugin_name'],
-                'severity': row.get('severity_text', 'Unknown'),
-                'reappearances': row['reappearances'],
+                'severity': fmt_sev(row.get('severity_text', 'Unknown')),
                 'first_seen': row['first_seen'].strftime('%Y-%m-%d'),
-                'last_seen': row['last_seen'].strftime('%Y-%m-%d')
+                'environment': row.get(env_col, 'Unknown')
             })
 
-        # Ongoing summary
-        final_active = df[df['status'] == 'Active']
-        final_resolved = df[df['status'] == 'Resolved']
+        # All closed findings in period - NO LIMIT
+        closed_in_period = df[(df['status'] == 'Resolved') &
+                             (df['last_seen'] >= start_date) &
+                             (df['last_seen'] <= end_date)]
+        for _, row in closed_in_period.iterrows():
+            result['closed_findings'].append({
+                'hostname': row['hostname'],
+                'plugin_id': row['plugin_id'],
+                'plugin_name': row['plugin_name'],
+                'severity': fmt_sev(row.get('severity_text', 'Unknown')),
+                'first_seen': row['first_seen'].strftime('%Y-%m-%d'),
+                'last_seen': row['last_seen'].strftime('%Y-%m-%d'),
+                'environment': row.get(env_col, 'Unknown')
+            })
 
+        # Ongoing summary - totals
+        final_active = df[df['status'] == 'Active']
         result['ongoing_summary'] = {
             'total_active': len(final_active),
-            'total_resolved_period': len(df[(df['status'] == 'Resolved') &
-                                           (df['last_seen'] >= start_date) &
-                                           (df['last_seen'] <= end_date)]),
-            'critical_active': len(final_active[final_active['severity_text'] == 'Critical']) if 'severity_text' in final_active.columns else 0,
+            'total_resolved_period': len(closed_in_period),
+            'crit_active': len(final_active[final_active['severity_text'] == 'Critical']) if 'severity_text' in final_active.columns else 0,
             'high_active': len(final_active[final_active['severity_text'] == 'High']) if 'severity_text' in final_active.columns else 0,
+            'med_active': len(final_active[final_active['severity_text'] == 'Medium']) if 'severity_text' in final_active.columns else 0,
+            'low_active': len(final_active[final_active['severity_text'] == 'Low']) if 'severity_text' in final_active.columns else 0,
         }
+
+        # Ongoing summary - by environment
+        for env in environments:
+            env_active = final_active[final_active[env_col] == env]
+            env_resolved = closed_in_period[closed_in_period[env_col] == env]
+            result['ongoing_by_env'][env] = {
+                'total_active': len(env_active),
+                'total_resolved_period': len(env_resolved),
+                'crit_active': len(env_active[env_active['severity_text'] == 'Critical']) if 'severity_text' in env_active.columns else 0,
+                'high_active': len(env_active[env_active['severity_text'] == 'High']) if 'severity_text' in env_active.columns else 0,
+                'med_active': len(env_active[env_active['severity_text'] == 'Medium']) if 'severity_text' in env_active.columns else 0,
+                'low_active': len(env_active[env_active['severity_text'] == 'Low']) if 'severity_text' in env_active.columns else 0,
+            }
 
         return result
 
     def _render_resolution_report(self, data: Dict[str, Any], split_by_env: bool = False):
-        """Render the resolution report to the text widget."""
+        """Render the resolution report to the text widget with environment breakdown."""
         self.report_text.config(state=tk.NORMAL)
         self.report_text.delete(1.0, tk.END)
 
         # Header
         self.report_text.insert(tk.END, "Weekly Resolution Report\n", 'header')
-        self.report_text.insert(tk.END, "=" * 70 + "\n", 'divider')
+        self.report_text.insert(tk.END, "=" * 90 + "\n", 'divider')
         self.report_text.insert(tk.END, f"Period: {data['start_date'].strftime('%Y-%m-%d')} to {data['end_date'].strftime('%Y-%m-%d')}\n\n")
 
-        # Ongoing Summary
+        environments = data.get('environments', [])
+
+        # === ONGOING SUMMARY - TOTALS ===
         summary = data.get('ongoing_summary', {})
-        self.report_text.insert(tk.END, "ONGOING SUMMARY\n", 'subheader')
-        self.report_text.insert(tk.END, "-" * 40 + "\n", 'divider')
+        self.report_text.insert(tk.END, "ONGOING SUMMARY - TOTALS\n", 'subheader')
+        self.report_text.insert(tk.END, "-" * 50 + "\n", 'divider')
         self.report_text.insert(tk.END, f"  Total Active Findings:      {summary.get('total_active', 0)}\n")
         self.report_text.insert(tk.END, f"  Resolved This Period:       {summary.get('total_resolved_period', 0)}\n", 'success')
-        self.report_text.insert(tk.END, f"  Critical Active:            {summary.get('critical_active', 0)}\n", 'critical')
+        self.report_text.insert(tk.END, f"  Crit Active:                {summary.get('crit_active', 0)}\n", 'critical')
         self.report_text.insert(tk.END, f"  High Active:                {summary.get('high_active', 0)}\n", 'warning')
+        self.report_text.insert(tk.END, f"  Med Active:                 {summary.get('med_active', 0)}\n")
+        self.report_text.insert(tk.END, f"  Low Active:                 {summary.get('low_active', 0)}\n")
         self.report_text.insert(tk.END, "\n")
 
-        # Weekly Breakdown
-        self.report_text.insert(tk.END, "WEEKLY BREAKDOWN\n", 'subheader')
-        self.report_text.insert(tk.END, "-" * 70 + "\n", 'divider')
+        # === ONGOING SUMMARY - BY ENVIRONMENT ===
+        ongoing_by_env = data.get('ongoing_by_env', {})
+        if ongoing_by_env:
+            self.report_text.insert(tk.END, "ONGOING SUMMARY - BY ENVIRONMENT\n", 'subheader')
+            self.report_text.insert(tk.END, "-" * 50 + "\n", 'divider')
+            for env in environments:
+                env_summary = ongoing_by_env.get(env, {})
+                self.report_text.insert(tk.END, f"  {env}:\n", 'section')
+                self.report_text.insert(tk.END, f"    Active: {env_summary.get('total_active', 0)}  ")
+                self.report_text.insert(tk.END, f"Resolved: {env_summary.get('total_resolved_period', 0)}  ")
+                self.report_text.insert(tk.END, f"Crit: {env_summary.get('crit_active', 0)}  ")
+                self.report_text.insert(tk.END, f"High: {env_summary.get('high_active', 0)}  ")
+                self.report_text.insert(tk.END, f"Med: {env_summary.get('med_active', 0)}  ")
+                self.report_text.insert(tk.END, f"Low: {env_summary.get('low_active', 0)}\n")
+            self.report_text.insert(tk.END, "\n")
 
-        # Header row
-        header = f"{'Week':<23} {'Prev':>8} {'New':>8} {'Closed':>8} {'Unchanged':>10} {'Active':>8}\n"
+        # === WEEKLY BREAKDOWN - TOTALS TABLE ===
+        self.report_text.insert(tk.END, "WEEKLY BREAKDOWN - TOTALS\n", 'subheader')
+        self.report_text.insert(tk.END, "-" * 90 + "\n", 'divider')
+
+        # Header row with severity breakdown
+        header = f"{'Week':<15} {'Prev':>6} {'New':>6} {'Crit':>5} {'High':>5} {'Med':>5} {'Low':>5} {'Closed':>7} {'Active':>7}\n"
         self.report_text.insert(tk.END, header, 'section')
-        self.report_text.insert(tk.END, "-" * 70 + "\n", 'divider')
+        self.report_text.insert(tk.END, "-" * 90 + "\n", 'divider')
 
         for week in data.get('weekly_data', []):
-            week_label = f"{week['week_start']} - {week['week_end'][:5]}"
-            row = f"{week_label:<23} {week['previous_total']:>8} {week['new']:>8} {week['closed']:>8} {week['unchanged']:>10} {week['total_active']:>8}\n"
+            row = f"{week['week_label']:<15} {week['previous_total']:>6} {week['new']:>6} "
+            row += f"{week.get('new_crit', 0):>5} {week.get('new_high', 0):>5} "
+            row += f"{week.get('new_med', 0):>5} {week.get('new_low', 0):>5} "
+            row += f"{week['closed']:>7} {week['total_active']:>7}\n"
             self.report_text.insert(tk.END, row)
-
-            # Show new findings by severity if any
-            if week.get('new_by_severity'):
-                sev_parts = [f"{sev}: {count}" for sev, count in week['new_by_severity'].items()]
-                self.report_text.insert(tk.END, f"    New by severity: {', '.join(sev_parts)}\n", 'divider')
 
         self.report_text.insert(tk.END, "\n")
 
-        # Fully Closed Plugins
-        fully_closed = data.get('fully_closed', [])
-        self.report_text.insert(tk.END, f"FULLY CLOSED PLUGINS ({len(fully_closed)})\n", 'subheader')
-        self.report_text.insert(tk.END, "-" * 70 + "\n", 'divider')
+        # === WEEKLY BREAKDOWN - BY ENVIRONMENT TABLE ===
+        weekly_by_env = data.get('weekly_by_env', {})
+        if weekly_by_env:
+            self.report_text.insert(tk.END, "WEEKLY BREAKDOWN - BY ENVIRONMENT\n", 'subheader')
+            self.report_text.insert(tk.END, "-" * 90 + "\n", 'divider')
 
-        if fully_closed:
-            for item in fully_closed[:20]:  # Limit to 20
-                self.report_text.insert(tk.END,
-                    f"  [{item['severity'][:4]:>4}] {item['plugin_name'][:50]:<50}\n")
-                self.report_text.insert(tk.END,
-                    f"         Plugin {item['plugin_id']} | {item['hosts_resolved']} hosts | Last: {item['last_seen']}\n", 'divider')
-            if len(fully_closed) > 20:
-                self.report_text.insert(tk.END, f"  ... and {len(fully_closed) - 20} more\n", 'divider')
+            for env in environments:
+                env_weeks = weekly_by_env.get(env, [])
+                if env_weeks:
+                    self.report_text.insert(tk.END, f"\n  {env}:\n", 'section')
+                    header = f"  {'Week':<13} {'Prev':>6} {'New':>6} {'Crit':>5} {'High':>5} {'Med':>5} {'Low':>5} {'Closed':>7} {'Active':>7}\n"
+                    self.report_text.insert(tk.END, header, 'divider')
+                    for week in env_weeks:
+                        row = f"  {week['week_label']:<13} {week['previous_total']:>6} {week['new']:>6} "
+                        row += f"{week.get('new_crit', 0):>5} {week.get('new_high', 0):>5} "
+                        row += f"{week.get('new_med', 0):>5} {week.get('new_low', 0):>5} "
+                        row += f"{week['closed']:>7} {week['total_active']:>7}\n"
+                        self.report_text.insert(tk.END, row)
+
+            self.report_text.insert(tk.END, "\n")
+
+        # === FULLY CLOSED - GROUPED BY DATE ===
+        fully_closed_by_date = data.get('fully_closed_by_date', {})
+        total_fully_closed = len(data.get('fully_closed', []))
+        self.report_text.insert(tk.END, f"FULLY CLOSED PLUGINS ({total_fully_closed}) - BY LAST SEEN DATE\n", 'subheader')
+        self.report_text.insert(tk.END, "-" * 90 + "\n", 'divider')
+
+        if fully_closed_by_date:
+            for date_str in sorted(fully_closed_by_date.keys()):
+                items = fully_closed_by_date[date_str]
+                self.report_text.insert(tk.END, f"\n  {date_str} ({len(items)} plugins):\n", 'section')
+                for item in items:  # NO LIMIT - show all
+                    sev = item['severity'][:4] if len(item['severity']) > 4 else item['severity']
+                    self.report_text.insert(tk.END,
+                        f"    [{sev:>4}]  {item['plugin_name'][:55]}\n")
+                    self.report_text.insert(tk.END,
+                        f"           Plugin {item['plugin_id']} | {item['hosts_resolved']} hosts | Env: {item.get('environment', 'Unknown')}\n", 'divider')
         else:
             self.report_text.insert(tk.END, "  No plugins fully closed in this period\n", 'divider')
 
         self.report_text.insert(tk.END, "\n")
 
-        # Reappearances
+        # === NEW FINDINGS IN PERIOD ===
+        new_findings = data.get('new_findings', [])
+        self.report_text.insert(tk.END, f"NEW FINDINGS IN PERIOD ({len(new_findings)})\n", 'subheader')
+        self.report_text.insert(tk.END, "-" * 90 + "\n", 'divider')
+
+        if new_findings:
+            # Group by environment
+            new_by_env = {}
+            for item in new_findings:
+                env = item.get('environment', 'Unknown')
+                if env not in new_by_env:
+                    new_by_env[env] = []
+                new_by_env[env].append(item)
+
+            for env in sorted(new_by_env.keys()):
+                items = new_by_env[env]
+                self.report_text.insert(tk.END, f"\n  {env} ({len(items)} new):\n", 'section')
+                for item in items:  # NO LIMIT - show all
+                    sev = item['severity'][:4] if len(item['severity']) > 4 else item['severity']
+                    self.report_text.insert(tk.END,
+                        f"    [{sev:>4}]  {item['plugin_name'][:50]}\n")
+                    self.report_text.insert(tk.END,
+                        f"           {item['hostname']} | First seen: {item['first_seen']}\n", 'divider')
+        else:
+            self.report_text.insert(tk.END, "  No new findings in this period\n", 'divider')
+
+        self.report_text.insert(tk.END, "\n")
+
+        # === CLOSED FINDINGS IN PERIOD ===
+        closed_findings = data.get('closed_findings', [])
+        self.report_text.insert(tk.END, f"CLOSED FINDINGS IN PERIOD ({len(closed_findings)})\n", 'subheader')
+        self.report_text.insert(tk.END, "-" * 90 + "\n", 'divider')
+
+        if closed_findings:
+            # Group by environment
+            closed_by_env = {}
+            for item in closed_findings:
+                env = item.get('environment', 'Unknown')
+                if env not in closed_by_env:
+                    closed_by_env[env] = []
+                closed_by_env[env].append(item)
+
+            for env in sorted(closed_by_env.keys()):
+                items = closed_by_env[env]
+                self.report_text.insert(tk.END, f"\n  {env} ({len(items)} closed):\n", 'section')
+                for item in items:  # NO LIMIT - show all
+                    sev = item['severity'][:4] if len(item['severity']) > 4 else item['severity']
+                    self.report_text.insert(tk.END,
+                        f"    [{sev:>4}]  {item['plugin_name'][:50]}\n", 'success')
+                    self.report_text.insert(tk.END,
+                        f"           {item['hostname']} | Last seen: {item['last_seen']}\n", 'divider')
+        else:
+            self.report_text.insert(tk.END, "  No closed findings in this period\n", 'divider')
+
+        self.report_text.insert(tk.END, "\n")
+
+        # === REAPPEARANCES ===
         repops = data.get('repops', [])
         self.report_text.insert(tk.END, f"REAPPEARANCES ({len(repops)})\n", 'subheader')
-        self.report_text.insert(tk.END, "-" * 70 + "\n", 'divider')
+        self.report_text.insert(tk.END, "-" * 90 + "\n", 'divider')
 
         if repops:
             self.report_text.insert(tk.END, "Findings that were resolved but returned:\n\n")
-            for item in repops[:15]:  # Limit to 15
-                self.report_text.insert(tk.END,
-                    f"  {item['hostname'][:25]:<25} [{item['severity'][:4]:>4}]\n", 'warning')
-                self.report_text.insert(tk.END,
-                    f"    {item['plugin_name'][:55]}\n")
-                self.report_text.insert(tk.END,
-                    f"    Reappeared {item['reappearances']}x | First: {item['first_seen']} | Last: {item['last_seen']}\n", 'divider')
-            if len(repops) > 15:
-                self.report_text.insert(tk.END, f"\n  ... and {len(repops) - 15} more reappearances\n", 'divider')
+            # Group by environment
+            repops_by_env = {}
+            for item in repops:
+                env = item.get('environment', 'Unknown')
+                if env not in repops_by_env:
+                    repops_by_env[env] = []
+                repops_by_env[env].append(item)
+
+            for env in sorted(repops_by_env.keys()):
+                items = repops_by_env[env]
+                self.report_text.insert(tk.END, f"  {env} ({len(items)} reappearances):\n", 'section')
+                for item in items:  # NO LIMIT - show all
+                    sev = item['severity'][:4] if len(item['severity']) > 4 else item['severity']
+                    self.report_text.insert(tk.END,
+                        f"    [{sev:>4}]  {item['hostname'][:25]:<25}\n", 'warning')
+                    self.report_text.insert(tk.END,
+                        f"           {item['plugin_name'][:55]}\n")
+                    self.report_text.insert(tk.END,
+                        f"           Reappeared {item['reappearances']}x | First: {item['first_seen']} | Last: {item['last_seen']}\n", 'divider')
         else:
             self.report_text.insert(tk.END, "  No reappearances detected in this period\n", 'success')
 
-        self.report_text.insert(tk.END, "\n" + "=" * 70 + "\n", 'divider')
+        self.report_text.insert(tk.END, "\n" + "=" * 90 + "\n", 'divider')
         self.report_text.insert(tk.END, "End of Report\n", 'divider')
 
         self.report_text.config(state=tk.DISABLED)
 
+    def _autosize_excel_columns(self, worksheet):
+        """Auto-size columns in an Excel worksheet based on content."""
+        for column_cells in worksheet.columns:
+            max_length = 0
+            column = column_cells[0].column_letter
+            for cell in column_cells:
+                try:
+                    if cell.value:
+                        cell_length = len(str(cell.value))
+                        if cell_length > max_length:
+                            max_length = cell_length
+                except:
+                    pass
+            # Add padding and cap at 60 characters
+            adjusted_width = min(max_length + 2, 60)
+            worksheet.column_dimensions[column].width = adjusted_width
+
     def _export_resolution_report(self):
-        """Export the resolution report to Excel."""
+        """Export the resolution report to Excel with auto-sized columns."""
         if self.historical_df.empty:
             messagebox.showwarning("No Data", "Please generate a report first")
             return
@@ -2902,30 +3188,73 @@ class NessusHistoryTrackerApp:
             report_data = self._calculate_weekly_resolution_data(start_date, end_date)
 
             with pd.ExcelWriter(filepath, engine='openpyxl') as writer:
-                # Weekly summary
+                # Summary sheet (first for visibility)
+                summary = report_data.get('ongoing_summary', {})
+                summary_data = [
+                    {'Metric': 'Report Period', 'Value': f"{start_str} to {end_str}"},
+                    {'Metric': 'Total Active Findings', 'Value': summary.get('total_active', 0)},
+                    {'Metric': 'Resolved This Period', 'Value': summary.get('total_resolved_period', 0)},
+                    {'Metric': 'Crit Active', 'Value': summary.get('crit_active', 0)},
+                    {'Metric': 'High Active', 'Value': summary.get('high_active', 0)},
+                    {'Metric': 'Med Active', 'Value': summary.get('med_active', 0)},
+                    {'Metric': 'Low Active', 'Value': summary.get('low_active', 0)},
+                ]
+                # Add by-environment summary
+                ongoing_by_env = report_data.get('ongoing_by_env', {})
+                for env, env_data in ongoing_by_env.items():
+                    summary_data.append({'Metric': f'--- {env} ---', 'Value': ''})
+                    summary_data.append({'Metric': f'  {env} Active', 'Value': env_data.get('total_active', 0)})
+                    summary_data.append({'Metric': f'  {env} Resolved', 'Value': env_data.get('total_resolved_period', 0)})
+                    summary_data.append({'Metric': f'  {env} Crit', 'Value': env_data.get('crit_active', 0)})
+                    summary_data.append({'Metric': f'  {env} High', 'Value': env_data.get('high_active', 0)})
+
+                summary_df = pd.DataFrame(summary_data)
+                summary_df.to_excel(writer, sheet_name='Summary', index=False)
+                self._autosize_excel_columns(writer.sheets['Summary'])
+
+                # Weekly summary - totals
                 if report_data['weekly_data']:
                     weekly_df = pd.DataFrame(report_data['weekly_data'])
-                    weekly_df.to_excel(writer, sheet_name='Weekly Summary', index=False)
+                    weekly_df.to_excel(writer, sheet_name='Weekly Totals', index=False)
+                    self._autosize_excel_columns(writer.sheets['Weekly Totals'])
 
-                # Fully closed
+                # Weekly summary - by environment
+                weekly_by_env = report_data.get('weekly_by_env', {})
+                if weekly_by_env:
+                    env_rows = []
+                    for env, weeks in weekly_by_env.items():
+                        for week in weeks:
+                            row = {'environment': env}
+                            row.update(week)
+                            env_rows.append(row)
+                    if env_rows:
+                        env_df = pd.DataFrame(env_rows)
+                        env_df.to_excel(writer, sheet_name='Weekly By Environment', index=False)
+                        self._autosize_excel_columns(writer.sheets['Weekly By Environment'])
+
+                # Fully closed (all findings, no limit)
                 if report_data['fully_closed']:
                     closed_df = pd.DataFrame(report_data['fully_closed'])
                     closed_df.to_excel(writer, sheet_name='Fully Closed', index=False)
+                    self._autosize_excel_columns(writer.sheets['Fully Closed'])
 
-                # Reappearances
+                # New findings in period (all, no limit)
+                if report_data.get('new_findings'):
+                    new_df = pd.DataFrame(report_data['new_findings'])
+                    new_df.to_excel(writer, sheet_name='New Findings', index=False)
+                    self._autosize_excel_columns(writer.sheets['New Findings'])
+
+                # Closed findings in period (all, no limit)
+                if report_data.get('closed_findings'):
+                    closed_period_df = pd.DataFrame(report_data['closed_findings'])
+                    closed_period_df.to_excel(writer, sheet_name='Closed Findings', index=False)
+                    self._autosize_excel_columns(writer.sheets['Closed Findings'])
+
+                # Reappearances (all, no limit)
                 if report_data['repops']:
                     repops_df = pd.DataFrame(report_data['repops'])
                     repops_df.to_excel(writer, sheet_name='Reappearances', index=False)
-
-                # Summary sheet
-                summary_data = [
-                    {'Metric': 'Total Active', 'Value': report_data['ongoing_summary'].get('total_active', 0)},
-                    {'Metric': 'Resolved This Period', 'Value': report_data['ongoing_summary'].get('total_resolved_period', 0)},
-                    {'Metric': 'Critical Active', 'Value': report_data['ongoing_summary'].get('critical_active', 0)},
-                    {'Metric': 'High Active', 'Value': report_data['ongoing_summary'].get('high_active', 0)},
-                ]
-                summary_df = pd.DataFrame(summary_data)
-                summary_df.to_excel(writer, sheet_name='Summary', index=False)
+                    self._autosize_excel_columns(writer.sheets['Reappearances'])
 
             messagebox.showinfo("Export Complete", f"Report exported to:\n{filepath}")
             self._log(f"Exported resolution report to {filepath}")
@@ -2933,6 +3262,320 @@ class NessusHistoryTrackerApp:
         except Exception as e:
             self._log(f"Error exporting report: {e}")
             messagebox.showerror("Export Error", f"Failed to export report: {e}")
+
+    def _export_resolution_pdf(self):
+        """Export the resolution report to a professional PDF with charts."""
+        if self.historical_df.empty:
+            messagebox.showwarning("No Data", "Please generate a report first")
+            return
+
+        # Get date range
+        start_str = self.report_start_date.get()
+        end_str = self.report_end_date.get()
+
+        if not start_str or not end_str:
+            messagebox.showwarning("Date Range", "Please select start and end dates")
+            return
+
+        filepath = filedialog.asksaveasfilename(
+            title="Export Resolution Report PDF",
+            defaultextension=".pdf",
+            filetypes=[("PDF files", "*.pdf")],
+            initialfile=f"resolution_report_{start_str}_to_{end_str}.pdf"
+        )
+
+        if not filepath:
+            return
+
+        try:
+            import matplotlib
+            matplotlib.use('Agg')  # Non-interactive backend
+            import matplotlib.pyplot as plt
+            from matplotlib.backends.backend_pdf import PdfPages
+            from datetime import datetime
+
+            start_date = pd.to_datetime(start_str)
+            end_date = pd.to_datetime(end_str)
+            report_data = self._calculate_weekly_resolution_data(start_date, end_date)
+
+            # Set up dark theme for plots
+            plt.style.use('dark_background')
+
+            with PdfPages(filepath) as pdf:
+                # === PAGE 1: Cover and Summary ===
+                fig, axes = plt.subplots(2, 2, figsize=(11, 8.5))
+                fig.suptitle(f'Weekly Resolution Report\n{start_str} to {end_str}',
+                            fontsize=16, fontweight='bold', y=0.98)
+
+                summary = report_data.get('ongoing_summary', {})
+                environments = report_data.get('environments', [])
+
+                # Chart 1: Severity Breakdown (Pie Chart)
+                ax1 = axes[0, 0]
+                severity_data = [
+                    summary.get('crit_active', 0),
+                    summary.get('high_active', 0),
+                    summary.get('med_active', 0),
+                    summary.get('low_active', 0)
+                ]
+                severity_labels = ['Critical', 'High', 'Medium', 'Low']
+                colors = ['#FF4444', '#FF8C00', '#FFD700', '#4CAF50']
+                # Filter out zero values
+                non_zero = [(l, d, c) for l, d, c in zip(severity_labels, severity_data, colors) if d > 0]
+                if non_zero:
+                    labels, data, cols = zip(*non_zero)
+                    ax1.pie(data, labels=labels, autopct='%1.1f%%', colors=cols, startangle=90)
+                    ax1.set_title('Active Findings by Severity', fontweight='bold')
+                else:
+                    ax1.text(0.5, 0.5, 'No Active Findings', ha='center', va='center', fontsize=12)
+                    ax1.set_title('Active Findings by Severity', fontweight='bold')
+
+                # Chart 2: Environment Distribution (Bar Chart)
+                ax2 = axes[0, 1]
+                ongoing_by_env = report_data.get('ongoing_by_env', {})
+                if ongoing_by_env:
+                    env_names = list(ongoing_by_env.keys())
+                    env_active = [ongoing_by_env[e].get('total_active', 0) for e in env_names]
+                    bars = ax2.bar(env_names, env_active, color='#4CAF50')
+                    ax2.set_title('Active Findings by Environment', fontweight='bold')
+                    ax2.set_ylabel('Count')
+                    # Rotate labels if many environments
+                    if len(env_names) > 3:
+                        ax2.tick_params(axis='x', rotation=45)
+                    for bar, val in zip(bars, env_active):
+                        ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5,
+                                str(val), ha='center', va='bottom', fontsize=9)
+                else:
+                    ax2.text(0.5, 0.5, 'No Environment Data', ha='center', va='center')
+                    ax2.set_title('Active Findings by Environment', fontweight='bold')
+
+                # Chart 3: Summary Text Box
+                ax3 = axes[1, 0]
+                ax3.axis('off')
+                summary_text = f"""
+SUMMARY STATISTICS
+────────────────────────────
+Total Active Findings:     {summary.get('total_active', 0):,}
+Resolved This Period:      {summary.get('total_resolved_period', 0):,}
+
+By Severity:
+  Critical:  {summary.get('crit_active', 0):,}
+  High:      {summary.get('high_active', 0):,}
+  Medium:    {summary.get('med_active', 0):,}
+  Low:       {summary.get('low_active', 0):,}
+
+Fully Closed Plugins:      {len(report_data.get('fully_closed', [])):,}
+Reappearances:             {len(report_data.get('repops', [])):,}
+New Findings:              {len(report_data.get('new_findings', [])):,}
+Closed Findings:           {len(report_data.get('closed_findings', [])):,}
+"""
+                ax3.text(0.1, 0.9, summary_text, transform=ax3.transAxes, fontsize=10,
+                        verticalalignment='top', fontfamily='monospace',
+                        bbox=dict(boxstyle='round', facecolor='#2a2a2a', alpha=0.8))
+
+                # Chart 4: Period Overview (New vs Closed)
+                ax4 = axes[1, 1]
+                overview_labels = ['New\nFindings', 'Closed\nFindings', 'Reappearances']
+                overview_data = [
+                    len(report_data.get('new_findings', [])),
+                    len(report_data.get('closed_findings', [])),
+                    len(report_data.get('repops', []))
+                ]
+                colors = ['#FF8C00', '#4CAF50', '#FF4444']
+                bars = ax4.bar(overview_labels, overview_data, color=colors)
+                ax4.set_title('Period Activity Overview', fontweight='bold')
+                ax4.set_ylabel('Count')
+                for bar, val in zip(bars, overview_data):
+                    ax4.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5,
+                            str(val), ha='center', va='bottom', fontsize=9)
+
+                plt.tight_layout(rect=[0, 0, 1, 0.95])
+                pdf.savefig(fig)
+                plt.close(fig)
+
+                # === PAGE 2: Weekly Trend ===
+                weekly_data = report_data.get('weekly_data', [])
+                if weekly_data:
+                    fig, axes = plt.subplots(2, 1, figsize=(11, 8.5))
+                    fig.suptitle('Weekly Trends', fontsize=14, fontweight='bold', y=0.98)
+
+                    weeks = [w['week_label'] for w in weekly_data]
+                    new_counts = [w['new'] for w in weekly_data]
+                    closed_counts = [w['closed'] for w in weekly_data]
+                    active_counts = [w['total_active'] for w in weekly_data]
+
+                    # Chart 1: New vs Closed over time
+                    ax1 = axes[0]
+                    x = range(len(weeks))
+                    width = 0.35
+                    ax1.bar([i - width/2 for i in x], new_counts, width, label='New', color='#FF8C00')
+                    ax1.bar([i + width/2 for i in x], closed_counts, width, label='Closed', color='#4CAF50')
+                    ax1.set_xlabel('Week')
+                    ax1.set_ylabel('Count')
+                    ax1.set_title('New vs Closed Findings by Week', fontweight='bold')
+                    ax1.set_xticks(x)
+                    ax1.set_xticklabels(weeks, rotation=45, ha='right')
+                    ax1.legend()
+
+                    # Chart 2: Active findings trend
+                    ax2 = axes[1]
+                    ax2.plot(weeks, active_counts, marker='o', linewidth=2, color='#2196F3')
+                    ax2.fill_between(weeks, active_counts, alpha=0.3, color='#2196F3')
+                    ax2.set_xlabel('Week')
+                    ax2.set_ylabel('Total Active')
+                    ax2.set_title('Total Active Findings Trend', fontweight='bold')
+                    ax2.tick_params(axis='x', rotation=45)
+
+                    plt.tight_layout(rect=[0, 0, 1, 0.95])
+                    pdf.savefig(fig)
+                    plt.close(fig)
+
+                # === PAGE 3: Severity Trends ===
+                if weekly_data:
+                    fig, ax = plt.subplots(figsize=(11, 8.5))
+                    fig.suptitle('New Findings by Severity Over Time', fontsize=14, fontweight='bold', y=0.98)
+
+                    weeks = [w['week_label'] for w in weekly_data]
+                    crit_new = [w.get('new_crit', 0) for w in weekly_data]
+                    high_new = [w.get('new_high', 0) for w in weekly_data]
+                    med_new = [w.get('new_med', 0) for w in weekly_data]
+                    low_new = [w.get('new_low', 0) for w in weekly_data]
+
+                    x = range(len(weeks))
+                    width = 0.2
+                    ax.bar([i - 1.5*width for i in x], crit_new, width, label='Critical', color='#FF4444')
+                    ax.bar([i - 0.5*width for i in x], high_new, width, label='High', color='#FF8C00')
+                    ax.bar([i + 0.5*width for i in x], med_new, width, label='Medium', color='#FFD700')
+                    ax.bar([i + 1.5*width for i in x], low_new, width, label='Low', color='#4CAF50')
+                    ax.set_xlabel('Week')
+                    ax.set_ylabel('Count')
+                    ax.set_title('New Findings by Severity', fontweight='bold')
+                    ax.set_xticks(x)
+                    ax.set_xticklabels(weeks, rotation=45, ha='right')
+                    ax.legend()
+
+                    plt.tight_layout(rect=[0, 0, 1, 0.95])
+                    pdf.savefig(fig)
+                    plt.close(fig)
+
+                # === PAGE 4: Environment Breakdown ===
+                weekly_by_env = report_data.get('weekly_by_env', {})
+                if weekly_by_env and len(weekly_by_env) > 1:
+                    fig, axes = plt.subplots(len(weekly_by_env), 1, figsize=(11, 3 * len(weekly_by_env)))
+                    fig.suptitle('Weekly Trends by Environment', fontsize=14, fontweight='bold', y=0.99)
+
+                    if len(weekly_by_env) == 1:
+                        axes = [axes]
+
+                    for idx, (env, env_weeks) in enumerate(weekly_by_env.items()):
+                        ax = axes[idx]
+                        weeks = [w['week_label'] for w in env_weeks]
+                        new_counts = [w['new'] for w in env_weeks]
+                        closed_counts = [w['closed'] for w in env_weeks]
+
+                        x = range(len(weeks))
+                        width = 0.35
+                        ax.bar([i - width/2 for i in x], new_counts, width, label='New', color='#FF8C00')
+                        ax.bar([i + width/2 for i in x], closed_counts, width, label='Closed', color='#4CAF50')
+                        ax.set_title(f'{env}', fontweight='bold')
+                        ax.set_ylabel('Count')
+                        ax.set_xticks(x)
+                        ax.set_xticklabels(weeks, rotation=45, ha='right')
+                        if idx == 0:
+                            ax.legend()
+
+                    plt.tight_layout(rect=[0, 0, 1, 0.97])
+                    pdf.savefig(fig)
+                    plt.close(fig)
+
+                # === PAGE 5: Fully Closed Details Table ===
+                fully_closed = report_data.get('fully_closed', [])
+                if fully_closed:
+                    # Split into multiple pages if needed (max 25 per page)
+                    items_per_page = 25
+                    for page_start in range(0, len(fully_closed), items_per_page):
+                        page_items = fully_closed[page_start:page_start + items_per_page]
+
+                        fig, ax = plt.subplots(figsize=(11, 8.5))
+                        ax.axis('off')
+                        page_num = page_start // items_per_page + 1
+                        total_pages = (len(fully_closed) - 1) // items_per_page + 1
+                        ax.set_title(f'Fully Closed Plugins ({len(fully_closed)} total) - Page {page_num}/{total_pages}',
+                                    fontweight='bold', fontsize=12, pad=20)
+
+                        # Create table data
+                        table_data = [['Sev', 'Plugin Name', 'Hosts', 'Last Seen', 'Env']]
+                        for item in page_items:
+                            table_data.append([
+                                item['severity'],
+                                item['plugin_name'][:40] + ('...' if len(item['plugin_name']) > 40 else ''),
+                                str(item['hosts_resolved']),
+                                item['last_seen'],
+                                item.get('environment', 'Unknown')[:10]
+                            ])
+
+                        table = ax.table(cellText=table_data, loc='center', cellLoc='left',
+                                        colWidths=[0.08, 0.45, 0.08, 0.15, 0.12])
+                        table.auto_set_font_size(False)
+                        table.set_fontsize(8)
+                        table.scale(1, 1.5)
+
+                        # Style header row
+                        for j in range(len(table_data[0])):
+                            table[(0, j)].set_facecolor('#3a3a3a')
+                            table[(0, j)].set_text_props(fontweight='bold')
+
+                        pdf.savefig(fig)
+                        plt.close(fig)
+
+                # === PAGE 6: Reappearances Details ===
+                repops = report_data.get('repops', [])
+                if repops:
+                    items_per_page = 25
+                    for page_start in range(0, len(repops), items_per_page):
+                        page_items = repops[page_start:page_start + items_per_page]
+
+                        fig, ax = plt.subplots(figsize=(11, 8.5))
+                        ax.axis('off')
+                        page_num = page_start // items_per_page + 1
+                        total_pages = (len(repops) - 1) // items_per_page + 1
+                        ax.set_title(f'Reappearances ({len(repops)} total) - Page {page_num}/{total_pages}',
+                                    fontweight='bold', fontsize=12, pad=20)
+
+                        table_data = [['Sev', 'Hostname', 'Plugin Name', 'Count', 'First', 'Last']]
+                        for item in page_items:
+                            table_data.append([
+                                item['severity'],
+                                item['hostname'][:20] + ('...' if len(item['hostname']) > 20 else ''),
+                                item['plugin_name'][:30] + ('...' if len(item['plugin_name']) > 30 else ''),
+                                str(item['reappearances']),
+                                item['first_seen'],
+                                item['last_seen']
+                            ])
+
+                        table = ax.table(cellText=table_data, loc='center', cellLoc='left',
+                                        colWidths=[0.08, 0.18, 0.34, 0.08, 0.15, 0.15])
+                        table.auto_set_font_size(False)
+                        table.set_fontsize(8)
+                        table.scale(1, 1.5)
+
+                        for j in range(len(table_data[0])):
+                            table[(0, j)].set_facecolor('#3a3a3a')
+                            table[(0, j)].set_text_props(fontweight='bold')
+
+                        pdf.savefig(fig)
+                        plt.close(fig)
+
+            messagebox.showinfo("Export Complete", f"PDF report exported to:\n{filepath}")
+            self._log(f"Exported PDF resolution report to {filepath}")
+
+        except ImportError as e:
+            self._log(f"PDF export requires matplotlib: {e}")
+            messagebox.showerror("Missing Dependency",
+                               "PDF export requires matplotlib.\nInstall with: pip install matplotlib")
+        except Exception as e:
+            self._log(f"Error exporting PDF report: {e}")
+            messagebox.showerror("Export Error", f"Failed to export PDF report: {e}")
 
     # Processing methods
     def _process_archives(self):
