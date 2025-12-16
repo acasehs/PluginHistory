@@ -2199,63 +2199,83 @@ class NessusHistoryTrackerApp:
             self._load_stig_files()
 
     def _load_stig_files(self):
-        """Load and parse selected STIG checklist files with deduplication."""
+        """Load and parse selected STIG checklist files with history tracking."""
         if not self.stig_file_paths:
             return
 
         try:
             self._log("Parsing STIG checklist files...")
 
-            # Get existing metadata for incremental import
-            existing_metadata = getattr(self, 'stig_checklist_metadata', None)
+            # Get existing data for incremental import with history
+            existing_df = self.stig_df if not self.stig_df.empty else None
 
-            # Parse with deduplication
+            # Parse with history tracking
             self.stig_df, checklists, import_stats = parse_multiple_cklb_files(
                 self.stig_file_paths,
-                existing_metadata=existing_metadata
+                existing_df=existing_df,
+                keep_history=True
             )
-
-            # Store metadata for future imports
-            if not hasattr(self, 'stig_checklist_metadata'):
-                self.stig_checklist_metadata = {}
 
             # Log import statistics
             self._log(f"STIG Import Statistics:")
             self._log(f"  Files processed: {import_stats['files_processed']}")
-            self._log(f"  New checklists: {import_stats['checklists_new']}")
-            self._log(f"  Updated checklists: {import_stats['checklists_updated']}")
-            if import_stats['files_skipped_older'] > 0:
-                self._log(f"  Skipped (older version): {import_stats['files_skipped_older']}")
+            self._log(f"  New findings: {import_stats['checklists_new']}")
+            self._log(f"  Historical records: {import_stats['checklists_historical']}")
             if import_stats['files_skipped_duplicate'] > 0:
                 self._log(f"  Skipped (duplicate): {import_stats['files_skipped_duplicate']}")
 
-            # Log skipped file details
-            for filename, reason in import_stats.get('skipped_details', []):
-                self._log(f"    - {filename}: {reason}")
+            # Log impact analysis if there are changes
+            impact = import_stats.get('impact_analysis', {})
+            if impact.get('findings_changed'):
+                self._log(f"Impact Analysis:")
+                self._log(f"  Remediated (Open → Fixed): {impact['remediated']}")
+                self._log(f"  Regressed (Fixed → Open): {impact['regressed']}")
+                self._log(f"  Status changes: {len(impact['findings_changed'])}")
+
+                # Log detailed changes (up to 10)
+                for i, change in enumerate(impact['findings_changed'][:10]):
+                    self._log(f"    [{change['hostname']}] {change['rule_id']}: "
+                             f"{change['old_status']} → {change['new_status']} "
+                             f"({change['old_version']} → {change['new_version']})")
+                if len(impact['findings_changed']) > 10:
+                    self._log(f"    ... and {len(impact['findings_changed']) - 10} more changes")
 
             if not self.stig_df.empty:
                 summary = get_stig_summary(self.stig_df)
-                self._log(f"Total: {summary['total_rules']} STIG rules from {len(checklists)} checklists")
-                self._log(f"  Open findings: {summary['total_findings']}")
+
+                # Count current vs historical
+                current_count = len(self.stig_df[self.stig_df.get('is_current', True) == True]) if 'is_current' in self.stig_df.columns else len(self.stig_df)
+                superseded_count = len(self.stig_df[self.stig_df.get('is_superseded', False) == True]) if 'is_superseded' in self.stig_df.columns else 0
+
+                self._log(f"Total: {len(self.stig_df)} STIG records ({current_count} current, {superseded_count} superseded)")
+                self._log(f"  Open findings (current): {summary['total_findings']}")
                 self._log(f"  Unique hosts: {summary['unique_hosts']}")
                 self._log(f"  By CAT: {summary.get('open_by_cat', {})}")
 
-                # Update filtered STIG data
-                self.filtered_stig_df = self.stig_df.copy()
+                # Update filtered STIG data (default to current only)
+                if 'is_current' in self.stig_df.columns:
+                    self.filtered_stig_df = self.stig_df[self.stig_df['is_current'] == True].copy()
+                else:
+                    self.filtered_stig_df = self.stig_df.copy()
 
                 # Refresh STIG tab if it exists
                 if hasattr(self, '_update_stig_tab'):
                     self.window.after(0, self._update_stig_tab)
 
                 # Build summary message
-                msg_parts = [f"Loaded {summary['total_rules']} rules"]
+                msg_parts = [f"Loaded {len(self.stig_df)} STIG records"]
+                msg_parts.append(f"Current: {current_count} | Historical: {superseded_count}")
                 if import_stats['checklists_new'] > 0:
-                    msg_parts.append(f"New: {import_stats['checklists_new']}")
-                if import_stats['checklists_updated'] > 0:
-                    msg_parts.append(f"Updated: {import_stats['checklists_updated']}")
-                skipped = import_stats['files_skipped_older'] + import_stats['files_skipped_duplicate']
-                if skipped > 0:
-                    msg_parts.append(f"Skipped: {skipped}")
+                    msg_parts.append(f"New findings: {import_stats['checklists_new']}")
+
+                # Impact summary
+                if impact.get('findings_changed'):
+                    msg_parts.append(f"")
+                    msg_parts.append(f"Impact Analysis:")
+                    msg_parts.append(f"  Remediated: {impact['remediated']}")
+                    msg_parts.append(f"  Regressed: {impact['regressed']}")
+
+                msg_parts.append(f"")
                 msg_parts.append(f"Open findings: {summary['total_findings']}")
                 msg_parts.append(f"Hosts: {summary['unique_hosts']}")
 
@@ -2266,6 +2286,8 @@ class NessusHistoryTrackerApp:
 
         except Exception as e:
             self._log(f"Error loading STIG files: {e}")
+            import traceback
+            self._log(traceback.format_exc())
             messagebox.showerror("Error", f"Failed to load STIG files: {e}")
 
     def _select_poam_file(self):
@@ -4811,6 +4833,11 @@ class NessusHistoryTrackerApp:
         notebook.add(stig_frame, text="STIG Checklists")
         self._build_host_stig_tab(stig_frame, hostname)
 
+        # Tab 3: Edit Host Properties
+        edit_frame = ttk.Frame(notebook)
+        notebook.add(edit_frame, text="Edit Host")
+        self._build_host_edit_tab(edit_frame, hostname, popup)
+
         # Close button
         close_btn = ttk.Button(popup, text="Close", command=popup.destroy)
         close_btn.pack(pady=10)
@@ -5096,6 +5123,175 @@ class NessusHistoryTrackerApp:
                     status_counts.get('Not Applicable', 0),
                     status_counts.get('Not Reviewed', 0)
                 ))
+
+    def _build_host_edit_tab(self, parent, hostname: str, popup):
+        """Build the Edit Host tab for manual property overrides."""
+        # Initialize host_overrides storage if not exists
+        if not hasattr(self, 'host_overrides'):
+            self.host_overrides = {}
+
+        # Get current values (from overrides or detected)
+        current_overrides = self.host_overrides.get(hostname, {})
+
+        # Try to get detected values from host_presence_df
+        detected_values = {}
+        if not self.host_presence_df.empty:
+            host_row = self.host_presence_df[
+                self.host_presence_df['hostname'].str.lower() == hostname.lower()
+            ]
+            if not host_row.empty:
+                row = host_row.iloc[0]
+                detected_values = {
+                    'host_type': row.get('host_type', 'Unknown'),
+                    'environment': row.get('environment', ''),
+                    'location': row.get('location', ''),
+                    'ip_address': row.get('ip_address', ''),
+                }
+
+        # Header
+        header = ttk.Label(parent, text=f"Edit Host Properties: {hostname}",
+                          font=('Arial', 12, 'bold'))
+        header.pack(pady=(20, 10))
+
+        ttk.Label(parent, text="Override auto-detected values. Saved to database on export.",
+                 foreground='gray').pack(pady=(0, 20))
+
+        # Form frame
+        form_frame = ttk.Frame(parent)
+        form_frame.pack(fill=tk.X, padx=50, pady=10)
+
+        # Host Type
+        row = 0
+        ttk.Label(form_frame, text="Host Type:", font=('Arial', 10, 'bold')).grid(
+            row=row, column=0, sticky='e', padx=(0, 10), pady=5)
+
+        host_type_var = tk.StringVar(value=current_overrides.get(
+            'host_type', detected_values.get('host_type', 'Unknown')))
+        host_type_combo = ttk.Combobox(form_frame, textvariable=host_type_var, width=25,
+                                       values=['Physical', 'Virtual', 'ILOM', 'BMC', 'Container', 'Unknown'])
+        host_type_combo.grid(row=row, column=1, sticky='w', pady=5)
+
+        detected_type = detected_values.get('host_type', 'Unknown')
+        ttk.Label(form_frame, text=f"(Detected: {detected_type})",
+                 foreground='gray').grid(row=row, column=2, sticky='w', padx=10)
+
+        # Environment
+        row += 1
+        ttk.Label(form_frame, text="Environment:", font=('Arial', 10, 'bold')).grid(
+            row=row, column=0, sticky='e', padx=(0, 10), pady=5)
+
+        environment_var = tk.StringVar(value=current_overrides.get(
+            'environment', detected_values.get('environment', '')))
+        env_combo = ttk.Combobox(form_frame, textvariable=environment_var, width=25,
+                                 values=['Production', 'Pre-Production', 'Development', 'Test', 'Lab', 'DR', ''])
+        env_combo.grid(row=row, column=1, sticky='w', pady=5)
+
+        detected_env = detected_values.get('environment', '')
+        if detected_env:
+            ttk.Label(form_frame, text=f"(Detected: {detected_env})",
+                     foreground='gray').grid(row=row, column=2, sticky='w', padx=10)
+
+        # Location
+        row += 1
+        ttk.Label(form_frame, text="Location:", font=('Arial', 10, 'bold')).grid(
+            row=row, column=0, sticky='e', padx=(0, 10), pady=5)
+
+        location_var = tk.StringVar(value=current_overrides.get(
+            'location', detected_values.get('location', '')))
+        location_entry = ttk.Entry(form_frame, textvariable=location_var, width=28)
+        location_entry.grid(row=row, column=1, sticky='w', pady=5)
+
+        detected_loc = detected_values.get('location', '')
+        if detected_loc:
+            ttk.Label(form_frame, text=f"(Detected: {detected_loc})",
+                     foreground='gray').grid(row=row, column=2, sticky='w', padx=10)
+
+        # Notes
+        row += 1
+        ttk.Label(form_frame, text="Notes:", font=('Arial', 10, 'bold')).grid(
+            row=row, column=0, sticky='ne', padx=(0, 10), pady=5)
+
+        notes_var = tk.StringVar(value=current_overrides.get('notes', ''))
+        notes_text = tk.Text(form_frame, width=30, height=4,
+                            bg=GUI_DARK_THEME['entry_bg'], fg=GUI_DARK_THEME['fg'])
+        notes_text.grid(row=row, column=1, sticky='w', pady=5)
+        notes_text.insert('1.0', current_overrides.get('notes', ''))
+
+        # Buttons frame
+        btn_frame = ttk.Frame(parent)
+        btn_frame.pack(pady=30)
+
+        def save_overrides():
+            """Save the overrides."""
+            overrides = {
+                'host_type': host_type_var.get(),
+                'environment': environment_var.get(),
+                'location': location_var.get(),
+                'notes': notes_text.get('1.0', 'end-1c'),
+                'override_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+
+            # Only save if values differ from detected
+            has_changes = False
+            for key, value in overrides.items():
+                if key == 'override_date':
+                    continue
+                detected = detected_values.get(key, '')
+                if value and value != detected:
+                    has_changes = True
+                    break
+
+            if has_changes or overrides.get('notes'):
+                self.host_overrides[hostname] = overrides
+                self._log(f"Saved overrides for host: {hostname}")
+                self._log(f"  Type: {overrides['host_type']}, Env: {overrides['environment']}")
+
+                # Update host_presence_df if it exists
+                if not self.host_presence_df.empty:
+                    mask = self.host_presence_df['hostname'].str.lower() == hostname.lower()
+                    if mask.any():
+                        if overrides['host_type']:
+                            self.host_presence_df.loc[mask, 'host_type'] = overrides['host_type']
+                        if overrides['environment']:
+                            self.host_presence_df.loc[mask, 'environment'] = overrides['environment']
+                        if overrides['location']:
+                            self.host_presence_df.loc[mask, 'location'] = overrides['location']
+
+                # Refresh hosts tab
+                if hasattr(self, '_update_host_tab'):
+                    self.window.after(0, self._update_host_tab)
+
+                messagebox.showinfo("Saved", f"Host overrides saved for {hostname}\n\n"
+                                   "Changes will be included in database export.")
+            else:
+                messagebox.showinfo("No Changes", "No overrides to save (values match detected).")
+
+        def clear_overrides():
+            """Clear overrides for this host."""
+            if hostname in self.host_overrides:
+                del self.host_overrides[hostname]
+                self._log(f"Cleared overrides for host: {hostname}")
+
+                # Reset form to detected values
+                host_type_var.set(detected_values.get('host_type', 'Unknown'))
+                environment_var.set(detected_values.get('environment', ''))
+                location_var.set(detected_values.get('location', ''))
+                notes_text.delete('1.0', tk.END)
+
+                messagebox.showinfo("Cleared", f"Overrides cleared for {hostname}")
+
+        save_btn = ttk.Button(btn_frame, text="Save Overrides", command=save_overrides)
+        save_btn.pack(side=tk.LEFT, padx=10)
+
+        clear_btn = ttk.Button(btn_frame, text="Clear Overrides", command=clear_overrides)
+        clear_btn.pack(side=tk.LEFT, padx=10)
+
+        # Show if overrides exist
+        if hostname in self.host_overrides:
+            override_info = ttk.Label(parent,
+                text=f"* Overrides exist for this host (saved {self.host_overrides[hostname].get('override_date', 'unknown')})",
+                foreground='#ffc107')
+            override_info.pack(pady=10)
 
     def _sort_lifecycle_tree(self, col):
         """Sort lifecycle treeview by column."""
@@ -11572,13 +11768,17 @@ class NessusHistoryTrackerApp:
         )
 
         if filepath:
+            # Get host_overrides if they exist
+            host_overrides = getattr(self, 'host_overrides', None)
+
             success = export_to_sqlite(
                 self.historical_df, self.lifecycle_df,
                 self.host_presence_df, self.scan_changes_df,
                 self.opdir_df, filepath,
                 iavm_df=self.iavm_df,
                 stig_df=self.stig_df,
-                poam_df=self.poam_df
+                poam_df=self.poam_df,
+                host_overrides=host_overrides
             )
 
             if success:
@@ -11588,6 +11788,8 @@ class NessusHistoryTrackerApp:
                     self._log(f"  Included {len(self.stig_df)} STIG findings")
                 if not self.poam_df.empty:
                     self._log(f"  Included {len(self.poam_df)} POAM entries")
+                if host_overrides:
+                    self._log(f"  Included {len(host_overrides)} host overrides")
                 messagebox.showinfo("Success", f"Exported to:\n{filepath}")
 
     def _export_json(self):

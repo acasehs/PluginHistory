@@ -37,7 +37,7 @@ STATUS_MAPPING = {
 
 @dataclass
 class ChecklistMetadata:
-    """Tracks checklist identity and version for deduplication."""
+    """Tracks checklist identity and version for deduplication and history."""
     hostname: str  # Extended hostname (e.g., server01_PRODDB)
     stig_id: str  # STIG benchmark ID
     stig_version: str  # e.g., "2"
@@ -46,11 +46,18 @@ class ChecklistMetadata:
     source_file: str  # Path to .cklb file
     file_mtime: Optional[float] = None  # File modification time
     checklist_id: str = ""  # UUID from checklist
+    checklist_date: Optional[datetime] = None  # Date from filename or file creation
+    import_date: Optional[datetime] = None  # When this was imported
 
     @property
     def checklist_key(self) -> str:
         """Composite key for identifying same host+STIG combination."""
         return f"{self.hostname}|{self.stig_id}"
+
+    @property
+    def version_key(self) -> str:
+        """Unique key including version for history tracking."""
+        return f"{self.hostname}|{self.stig_id}|V{self.stig_version}R{self.release_number}"
 
     def is_newer_than(self, other: 'ChecklistMetadata') -> bool:
         """
@@ -115,6 +122,55 @@ def parse_benchmark_date(date_str: str) -> Optional[datetime]:
     return None
 
 
+def extract_date_from_filename(file_path: str) -> Optional[datetime]:
+    """
+    Extract date from filename using common patterns.
+
+    Standard format: mmddyyyy (e.g., 12152024)
+    Also handles: mm-dd-yyyy, mm_dd_yyyy, yyyy-mm-dd, yyyymmdd
+
+    Falls back to file creation/modification date if no date found in name.
+    """
+    filename = os.path.basename(file_path)
+    name_without_ext = os.path.splitext(filename)[0]
+
+    # Date patterns to try (ordered by preference)
+    date_patterns = [
+        # mmddyyyy (standard) - e.g., 12152024
+        (r'(\d{2})(\d{2})(\d{4})', lambda m: f"{m.group(1)}/{m.group(2)}/{m.group(3)}", "%m/%d/%Y"),
+        # mm-dd-yyyy or mm_dd_yyyy
+        (r'(\d{2})[-_](\d{2})[-_](\d{4})', lambda m: f"{m.group(1)}/{m.group(2)}/{m.group(3)}", "%m/%d/%Y"),
+        # yyyy-mm-dd or yyyy_mm_dd
+        (r'(\d{4})[-_](\d{2})[-_](\d{2})', lambda m: f"{m.group(1)}-{m.group(2)}-{m.group(3)}", "%Y-%m-%d"),
+        # yyyymmdd - e.g., 20241215
+        (r'(\d{4})(\d{2})(\d{2})', lambda m: f"{m.group(1)}-{m.group(2)}-{m.group(3)}", "%Y-%m-%d"),
+        # mm/dd/yyyy in filename (rare but possible)
+        (r'(\d{2})/(\d{2})/(\d{4})', lambda m: f"{m.group(1)}/{m.group(2)}/{m.group(3)}", "%m/%d/%Y"),
+    ]
+
+    for pattern, formatter, date_fmt in date_patterns:
+        match = re.search(pattern, name_without_ext)
+        if match:
+            try:
+                date_str = formatter(match)
+                parsed = datetime.strptime(date_str, date_fmt)
+                # Sanity check: year should be reasonable (2000-2100)
+                if 2000 <= parsed.year <= 2100:
+                    return parsed
+            except ValueError:
+                continue
+
+    # No date in filename - fall back to file dates
+    try:
+        # Try creation time first (Windows), then modification time
+        stat = os.stat(file_path)
+        # Use the earlier of ctime or mtime as "checklist date"
+        file_time = min(stat.st_ctime, stat.st_mtime)
+        return datetime.fromtimestamp(file_time)
+    except OSError:
+        return None
+
+
 @dataclass
 class STIGRule:
     """Represents a single STIG rule/finding."""
@@ -165,6 +221,12 @@ class STIGRule:
     # Source file
     source_file: str = ""
     checklist_id: str = ""
+
+    # History tracking fields
+    checklist_date: Optional[datetime] = None  # Date from filename or file creation
+    import_date: Optional[datetime] = None  # When this record was imported
+    is_current: bool = True  # True if this is the latest version for this host+STIG
+    is_superseded: bool = False  # True if a newer STIG version exists
 
 
 @dataclass
@@ -281,6 +343,10 @@ def parse_cklb_file(file_path: str) -> Optional[STIGChecklist]:
         with open(file_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
 
+        # Extract checklist date from filename or file creation
+        checklist_date = extract_date_from_filename(file_path)
+        import_date = datetime.now()
+
         # Extract target data
         target_data = data.get('target_data', {})
 
@@ -354,7 +420,11 @@ def parse_cklb_file(file_path: str) -> Optional[STIGChecklist]:
                     created_at=parse_datetime(rule.get('createdAt')),
                     updated_at=parse_datetime(rule.get('updatedAt')),
                     source_file=str(file_path),
-                    checklist_id=checklist.checklist_id
+                    checklist_id=checklist.checklist_id,
+                    checklist_date=checklist_date,
+                    import_date=import_date,
+                    is_current=True,  # Will be updated by parse_multiple_cklb_files
+                    is_superseded=False  # Will be updated by parse_multiple_cklb_files
                 )
 
                 checklist.rules.append(stig_rule)
@@ -406,116 +476,163 @@ def extract_checklist_metadata(checklist: STIGChecklist, file_path: str) -> List
 
 
 def parse_multiple_cklb_files(file_paths: List[str],
-                              existing_metadata: Dict[str, ChecklistMetadata] = None
+                              existing_df: pd.DataFrame = None,
+                              keep_history: bool = True
                               ) -> Tuple[pd.DataFrame, List[STIGChecklist], Dict[str, Any]]:
     """
-    Parse multiple .cklb files and return consolidated DataFrame with deduplication.
+    Parse multiple .cklb files and return consolidated DataFrame with history tracking.
 
-    Handles duplicate checklists by keeping only the newest version based on:
-    1. STIG version
-    2. Release number
-    3. Benchmark date
-    4. File modification time
+    Keeps all versions for history tracking, marking older versions as superseded.
+    Tracks changes between versions for impact analysis.
 
     Args:
         file_paths: List of paths to .cklb files
-        existing_metadata: Optional dict of existing checklist metadata (key -> metadata)
-                          for incremental imports
+        existing_df: Optional existing DataFrame to merge with (for incremental imports)
+        keep_history: If True, keep all versions; if False, only keep latest
 
     Returns:
         Tuple of:
-        - DataFrame with all findings (deduplicated)
-        - List of STIGChecklist objects (deduplicated)
-        - Dict with import statistics (skipped, updated, new counts)
+        - DataFrame with all findings (with history if enabled)
+        - List of STIGChecklist objects
+        - Dict with import statistics and impact analysis
     """
-    # Track metadata by checklist key (hostname|stig_id)
-    metadata_tracker: Dict[str, ChecklistMetadata] = existing_metadata.copy() if existing_metadata else {}
-    checklist_tracker: Dict[str, STIGChecklist] = {}
-    rules_tracker: Dict[str, List[STIGRule]] = {}
+    all_checklists = []
+    all_rules: List[STIGRule] = []
 
     # Statistics
     stats = {
         'files_processed': 0,
-        'files_skipped_older': 0,
         'files_skipped_duplicate': 0,
         'checklists_new': 0,
-        'checklists_updated': 0,
-        'skipped_details': []  # List of (file, reason) tuples
+        'checklists_historical': 0,
+        'skipped_details': [],
+        'impact_analysis': {
+            'findings_changed': [],  # List of (hostname, stig_id, rule_id, old_status, new_status)
+            'new_findings': 0,
+            'remediated': 0,
+            'regressed': 0,
+            'unchanged': 0
+        }
     }
 
+    # Track seen version keys to prevent exact duplicates
+    seen_version_keys = set()
+
+    # If we have existing data, track what we already have
+    existing_rules_by_key = {}
+    if existing_df is not None and not existing_df.empty:
+        for _, row in existing_df.iterrows():
+            # Create version key: hostname|stig_id|version|release
+            ver_key = f"{row['hostname']}|{row['stig_id']}|V{row['stig_version']}R{row['release_number']}"
+            seen_version_keys.add(ver_key)
+
+            # Track by rule key for impact analysis
+            rule_key = f"{row['hostname']}|{row['stig_id']}|{row['sv_id_base']}"
+            if rule_key not in existing_rules_by_key:
+                existing_rules_by_key[rule_key] = []
+            existing_rules_by_key[rule_key].append(row)
+
+    # Parse all files
     for file_path in file_paths:
         checklist = parse_cklb_file(file_path)
         if not checklist:
             continue
 
         stats['files_processed'] += 1
+        all_checklists.append(checklist)
 
-        # Extract metadata for each STIG in this checklist
-        meta_list = extract_checklist_metadata(checklist, file_path)
-
-        # Group rules by STIG ID for this checklist
-        rules_by_stig: Dict[str, List[STIGRule]] = {}
+        # Check for duplicates by version key
         for rule in checklist.rules:
-            if rule.stig_id not in rules_by_stig:
-                rules_by_stig[rule.stig_id] = []
-            rules_by_stig[rule.stig_id].append(rule)
+            ver_key = f"{rule.hostname}|{rule.stig_id}|V{rule.stig_version}R{rule.release_number}"
 
-        # Check each STIG in this file
-        for meta in meta_list:
-            key = meta.checklist_key
+            if ver_key in seen_version_keys:
+                # Skip exact duplicate (same host, same STIG, same version)
+                stats['files_skipped_duplicate'] += 1
+                continue
 
-            if key in metadata_tracker:
-                existing_meta = metadata_tracker[key]
+            seen_version_keys.add(ver_key)
+            all_rules.append(rule)
 
-                # Check if this is the exact same file (duplicate import)
-                if meta.source_file == existing_meta.source_file:
-                    stats['files_skipped_duplicate'] += 1
-                    stats['skipped_details'].append((
-                        os.path.basename(file_path),
-                        f"Duplicate: already loaded"
-                    ))
-                    continue
+            # Track if this is a new checklist or historical
+            rule_key = f"{rule.hostname}|{rule.stig_id}|{rule.sv_id_base}"
+            if rule_key in existing_rules_by_key:
+                stats['checklists_historical'] += 1
 
-                # Compare versions to see if new file is newer
-                if meta.is_newer_than(existing_meta):
-                    # New file is newer - update
-                    logger.info(
-                        f"Updating {key}: V{existing_meta.stig_version}R{existing_meta.release_number} "
-                        f"-> V{meta.stig_version}R{meta.release_number}"
-                    )
-                    metadata_tracker[key] = meta
-                    rules_tracker[key] = rules_by_stig.get(meta.stig_id, [])
-                    stats['checklists_updated'] += 1
+                # Impact analysis - check for status changes
+                existing = existing_rules_by_key[rule_key]
+                # Find the most recent existing entry for this rule
+                latest_existing = max(existing, key=lambda r: (
+                    int(r.get('stig_version', 0) or 0),
+                    int(r.get('release_number', 0) or 0)
+                ))
+
+                old_status = latest_existing.get('status', '')
+                new_status = rule.status
+
+                if old_status != new_status:
+                    stats['impact_analysis']['findings_changed'].append({
+                        'hostname': rule.hostname,
+                        'stig_id': rule.stig_id,
+                        'rule_id': rule.rule_id,
+                        'rule_title': rule.rule_title[:50] + '...' if len(rule.rule_title) > 50 else rule.rule_title,
+                        'old_status': old_status,
+                        'new_status': new_status,
+                        'old_version': f"V{latest_existing.get('stig_version')}R{latest_existing.get('release_number')}",
+                        'new_version': f"V{rule.stig_version}R{rule.release_number}"
+                    })
+
+                    # Categorize the change
+                    if old_status == 'Open' and new_status in ('Not a Finding', 'Not Applicable'):
+                        stats['impact_analysis']['remediated'] += 1
+                    elif old_status in ('Not a Finding', 'Not Applicable') and new_status == 'Open':
+                        stats['impact_analysis']['regressed'] += 1
                 else:
-                    # Existing is newer or same - skip
-                    stats['files_skipped_older'] += 1
-                    stats['skipped_details'].append((
-                        os.path.basename(file_path),
-                        f"Older version: V{meta.stig_version}R{meta.release_number} "
-                        f"(have V{existing_meta.stig_version}R{existing_meta.release_number})"
-                    ))
-                    logger.info(
-                        f"Skipping older checklist for {key}: "
-                        f"V{meta.stig_version}R{meta.release_number} "
-                        f"(have V{existing_meta.stig_version}R{existing_meta.release_number})"
-                    )
-                    continue
+                    stats['impact_analysis']['unchanged'] += 1
             else:
-                # New checklist
-                metadata_tracker[key] = meta
-                rules_tracker[key] = rules_by_stig.get(meta.stig_id, [])
                 stats['checklists_new'] += 1
-
-        # Track the checklist object (may contain multiple STIGs)
-        checklist_tracker[file_path] = checklist
-
-    # Collect all rules from tracked checklists
-    all_rules = []
-    for rules in rules_tracker.values():
-        all_rules.extend(rules)
+                stats['impact_analysis']['new_findings'] += 1
 
     if not all_rules:
-        return pd.DataFrame(), list(checklist_tracker.values()), stats
+        return pd.DataFrame(), all_checklists, stats
+
+    # Determine is_current and is_superseded for all rules
+    # Group rules by hostname|stig_id to find latest versions
+    rules_by_checklist_key: Dict[str, List[STIGRule]] = {}
+    for rule in all_rules:
+        key = f"{rule.hostname}|{rule.stig_id}"
+        if key not in rules_by_checklist_key:
+            rules_by_checklist_key[key] = []
+        rules_by_checklist_key[key].append(rule)
+
+    # Mark is_current and is_superseded
+    for key, rules in rules_by_checklist_key.items():
+        # Sort by version (newest first)
+        rules.sort(key=lambda r: (
+            int(r.stig_version) if r.stig_version else 0,
+            int(r.release_number) if r.release_number else 0
+        ), reverse=True)
+
+        # Find the max version/release
+        max_version = max(int(r.stig_version) if r.stig_version else 0 for r in rules)
+        max_release_for_version = {}
+        for r in rules:
+            ver = int(r.stig_version) if r.stig_version else 0
+            rel = int(r.release_number) if r.release_number else 0
+            if ver not in max_release_for_version:
+                max_release_for_version[ver] = rel
+            else:
+                max_release_for_version[ver] = max(max_release_for_version[ver], rel)
+
+        # Update flags
+        for rule in rules:
+            ver = int(rule.stig_version) if rule.stig_version else 0
+            rel = int(rule.release_number) if rule.release_number else 0
+
+            # is_current: True if this is the latest version+release
+            rule.is_current = (ver == max_version and rel == max_release_for_version.get(ver, 0))
+
+            # is_superseded: True if a newer version exists
+            rule.is_superseded = not rule.is_current
 
     # Convert to DataFrame
     data = []
@@ -548,21 +665,77 @@ def parse_multiple_cklb_files(file_paths: List[str],
             'created_at': rule.created_at,
             'updated_at': rule.updated_at,
             'source_file': rule.source_file,
-            'checklist_id': rule.checklist_id
+            'checklist_id': rule.checklist_id,
+            'checklist_date': rule.checklist_date,
+            'import_date': rule.import_date,
+            'is_current': rule.is_current,
+            'is_superseded': rule.is_superseded
         })
 
     df = pd.DataFrame(data)
 
-    # Log summary
-    logger.info(
-        f"STIG Import: {stats['files_processed']} files processed, "
-        f"{stats['checklists_new']} new, {stats['checklists_updated']} updated, "
-        f"{stats['files_skipped_older']} skipped (older), "
-        f"{stats['files_skipped_duplicate']} skipped (duplicate)"
-    )
-    logger.info(f"Total: {len(df)} STIG findings from {len(checklist_tracker)} checklists")
+    # If we have existing data and keep_history, merge
+    if existing_df is not None and not existing_df.empty and keep_history:
+        # Add history columns to existing if missing
+        for col in ['checklist_date', 'import_date', 'is_current', 'is_superseded']:
+            if col not in existing_df.columns:
+                if col in ['is_current']:
+                    existing_df[col] = False  # Old data is no longer current
+                elif col in ['is_superseded']:
+                    existing_df[col] = True  # Old data is superseded
+                else:
+                    existing_df[col] = None
 
-    return df, list(checklist_tracker.values()), stats
+        # Mark existing data as superseded if we have newer versions
+        existing_df['is_superseded'] = True
+        existing_df['is_current'] = False
+
+        # Merge
+        df = pd.concat([existing_df, df], ignore_index=True)
+
+        # Re-calculate is_current across all data
+        df = _recalculate_current_flags(df)
+
+    # Log summary
+    impact = stats['impact_analysis']
+    logger.info(
+        f"STIG Import: {stats['files_processed']} files, "
+        f"{stats['checklists_new']} new findings, {stats['checklists_historical']} historical"
+    )
+    if impact['findings_changed']:
+        logger.info(
+            f"Impact: {impact['remediated']} remediated, {impact['regressed']} regressed, "
+            f"{len(impact['findings_changed'])} status changes"
+        )
+
+    return df, all_checklists, stats
+
+
+def _recalculate_current_flags(df: pd.DataFrame) -> pd.DataFrame:
+    """Recalculate is_current and is_superseded flags across entire DataFrame."""
+    if df.empty:
+        return df
+
+    df = df.copy()
+    df['is_current'] = False
+    df['is_superseded'] = True
+
+    # Group by hostname|stig_id|sv_id_base (same rule on same host)
+    for (hostname, stig_id, sv_id_base), group in df.groupby(['hostname', 'stig_id', 'sv_id_base']):
+        if len(group) == 0:
+            continue
+
+        # Find the latest version
+        latest_idx = group.apply(
+            lambda r: (int(r['stig_version']) if r['stig_version'] else 0,
+                      int(r['release_number']) if r['release_number'] else 0),
+            axis=1
+        ).idxmax()
+
+        df.loc[latest_idx, 'is_current'] = True
+        df.loc[latest_idx, 'is_superseded'] = False
+
+    return df
 
 
 def get_stig_summary(df: pd.DataFrame) -> Dict[str, Any]:
