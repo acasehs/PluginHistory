@@ -827,9 +827,9 @@ class NessusHistoryTrackerApp:
             self.timeline_ax2 = self.timeline_fig.add_subplot(222)
             self.timeline_ax2.set_title('Findings by Severity', color=GUI_DARK_THEME['fg'])
 
-            # New vs Resolved by month
+            # New vs Closed vs Unchanged by month
             self.timeline_ax3 = self.timeline_fig.add_subplot(223)
-            self.timeline_ax3.set_title('New vs Resolved', color=GUI_DARK_THEME['fg'])
+            self.timeline_ax3.set_title('New / Closed / Unchanged', color=GUI_DARK_THEME['fg'])
 
             # Cumulative risk
             self.timeline_ax4 = self.timeline_fig.add_subplot(224)
@@ -4237,7 +4237,7 @@ class NessusHistoryTrackerApp:
             self.timeline_ax2.legend(fontsize=7, facecolor=GUI_DARK_THEME['bg'], labelcolor=GUI_DARK_THEME['fg'])
         self.timeline_ax2.set_title('Findings by Severity', color=GUI_DARK_THEME['fg'], fontsize=10)
 
-        # Chart 3: New vs Resolved with data labels (grouped by interval)
+        # Chart 3: New vs Closed vs Unchanged with data labels (grouped by interval)
         scan_df = self._get_chart_data('scan_changes')
         if not scan_df.empty and 'change_type' in scan_df.columns:
             changes = scan_df.copy()
@@ -4245,25 +4245,58 @@ class NessusHistoryTrackerApp:
             changes['period'] = changes['scan_date'].dt.to_period(period_format)
             new_counts = changes[changes['change_type'] == 'New'].groupby('period').size()
             resolved_counts = changes[changes['change_type'] == 'Resolved'].groupby('period').size()
+            # Calculate unchanged (continuing) findings from historical data
+            unchanged_counts = changes[changes['change_type'] == 'Continuing'].groupby('period').size() if 'Continuing' in changes['change_type'].values else pd.Series(dtype=int)
+
+            # If no continuing data, calculate from total - new - resolved per period
+            if unchanged_counts.empty and not hist_df.empty:
+                hist_df_grouped = hist_df.copy()
+                hist_df_grouped['period'] = hist_df_grouped['scan_date'].dt.to_period(period_format)
+                total_per_period = hist_df_grouped.groupby('period').size()
+                # Align indices and calculate unchanged
+                all_periods = new_counts.index.union(resolved_counts.index).union(total_per_period.index)
+                unchanged_vals = []
+                for period in all_periods:
+                    total = total_per_period.get(period, 0)
+                    new = new_counts.get(period, 0)
+                    # Unchanged = findings that existed before and still exist
+                    # Approximate: total - new (new findings that appeared)
+                    unchanged = max(0, total - new)
+                    unchanged_vals.append(unchanged)
+                unchanged_counts = pd.Series(unchanged_vals, index=all_periods)
+
             period_labels = get_period_labels(new_counts.index, interval) if len(new_counts) > 0 else []
+            width = 0.25
             if len(new_counts) > 0:
-                bars1 = self.timeline_ax3.bar([i - 0.2 for i in range(len(new_counts))], new_counts.values, 0.4, label='New', color='#dc3545')
+                bars1 = self.timeline_ax3.bar([i - width for i in range(len(new_counts))], new_counts.values, width, label='New', color='#dc3545')
                 self.timeline_ax3.set_xticks(range(len(new_counts)))
                 self.timeline_ax3.set_xticklabels(period_labels, rotation=45, ha='right', fontsize=7)
                 if show_labels:
                     for bar, val in zip(bars1, new_counts.values):
-                        self.timeline_ax3.annotate(f'{int(val)}', xy=(bar.get_x() + bar.get_width()/2, val),
-                                                  xytext=(0, 2), textcoords='offset points',
-                                                  ha='center', va='bottom', fontsize=6, color='white')
+                        if val > 0:
+                            self.timeline_ax3.annotate(f'{int(val)}', xy=(bar.get_x() + bar.get_width()/2, val),
+                                                      xytext=(0, 2), textcoords='offset points',
+                                                      ha='center', va='bottom', fontsize=5, color='white')
             if len(resolved_counts) > 0:
-                bars2 = self.timeline_ax3.bar([i + 0.2 for i in range(len(resolved_counts))], resolved_counts.values, 0.4, label='Resolved', color='#28a745')
+                bars2 = self.timeline_ax3.bar([i for i in range(len(resolved_counts))], resolved_counts.values, width, label='Closed', color='#28a745')
                 if show_labels:
                     for bar, val in zip(bars2, resolved_counts.values):
-                        self.timeline_ax3.annotate(f'{int(val)}', xy=(bar.get_x() + bar.get_width()/2, val),
-                                                  xytext=(0, 2), textcoords='offset points',
-                                                  ha='center', va='bottom', fontsize=6, color='white')
-            self.timeline_ax3.legend(fontsize=7, facecolor=GUI_DARK_THEME['bg'], labelcolor=GUI_DARK_THEME['fg'])
-        self.timeline_ax3.set_title('New vs Resolved', color=GUI_DARK_THEME['fg'], fontsize=10)
+                        if val > 0:
+                            self.timeline_ax3.annotate(f'{int(val)}', xy=(bar.get_x() + bar.get_width()/2, val),
+                                                      xytext=(0, 2), textcoords='offset points',
+                                                      ha='center', va='bottom', fontsize=5, color='white')
+            if len(unchanged_counts) > 0:
+                # Align unchanged_counts to new_counts index
+                unchanged_aligned = [unchanged_counts.get(p, 0) for p in new_counts.index] if len(new_counts) > 0 else unchanged_counts.values
+                bars3 = self.timeline_ax3.bar([i + width for i in range(len(unchanged_aligned))], unchanged_aligned, width, label='Unchanged', color='#6c757d', alpha=0.7)
+                if show_labels:
+                    for bar, val in zip(bars3, unchanged_aligned):
+                        if val > 0:
+                            self.timeline_ax3.annotate(f'{int(val)}', xy=(bar.get_x() + bar.get_width()/2, val),
+                                                      xytext=(0, 2), textcoords='offset points',
+                                                      ha='center', va='bottom', fontsize=5, color='white')
+            self.timeline_ax3.legend(fontsize=6, facecolor=GUI_DARK_THEME['bg'], labelcolor=GUI_DARK_THEME['fg'])
+        self.timeline_ax3.set_title('New / Closed / Unchanged', color=GUI_DARK_THEME['fg'], fontsize=10)
 
         # Chart 4: Cumulative risk with current value label (grouped by interval)
         if 'severity_value' in hist_df.columns:
@@ -4454,7 +4487,11 @@ class NessusHistoryTrackerApp:
         ax.legend(fontsize=6, loc='upper left')
 
     def _draw_rolling_env_findings(self, ax, df, weeks, week_labels, show_labels):
-        """Draw unique findings per environment by week as grouped bars."""
+        """Draw unique findings per environment by week as grouped bars.
+
+        Shows total findings as solid color and NEW findings that week with transparency
+        at the bottom of each bar.
+        """
         # Get environment types
         if 'environment_type' not in df.columns:
             ax.text(0.5, 0.5, 'No environment data', ha='center', va='center',
@@ -4478,35 +4515,79 @@ class NessusHistoryTrackerApp:
         x = np.arange(len(weeks))
         width = 0.8 / max(len(environments), 1)
 
+        # Helper function to get finding identifiers for a week/env
+        def get_finding_ids(week_data, env):
+            env_data = week_data[week_data['environment_type'] == env]
+            if 'hostname' in env_data.columns and 'plugin_id' in env_data.columns:
+                return set(zip(env_data['hostname'], env_data['plugin_id']))
+            return set()
+
         for i, env in enumerate(environments[:4]):  # Limit to 4 environments for readability
-            counts = []
-            for week in weeks:
+            total_counts = []
+            new_counts = []
+            existing_counts = []
+            prev_findings = set()
+
+            for week_idx, week in enumerate(weeks):
                 week_start = week
                 week_end = week + pd.Timedelta(days=7)
                 week_data = df[(df['scan_date'] >= week_start) & (df['scan_date'] < week_end)]
-                env_data = week_data[week_data['environment_type'] == env]
-                # Count unique findings (hostname + plugin_id combo)
-                if 'hostname' in env_data.columns and 'plugin_id' in env_data.columns:
-                    unique_count = env_data.groupby(['hostname', 'plugin_id']).ngroups
+
+                # Get current week's findings
+                current_findings = get_finding_ids(week_data, env)
+                total_count = len(current_findings)
+
+                # Calculate new findings (not in previous week)
+                if week_idx == 0:
+                    # First week - all findings considered existing (no comparison)
+                    new_count = 0
+                    existing_count = total_count
                 else:
-                    unique_count = len(env_data)
-                counts.append(unique_count)
+                    new_findings = current_findings - prev_findings
+                    new_count = len(new_findings)
+                    existing_count = total_count - new_count
+
+                total_counts.append(total_count)
+                new_counts.append(new_count)
+                existing_counts.append(existing_count)
+                prev_findings = current_findings
 
             color = env_colors.get(env, default_colors[i % len(default_colors)])
             offset = (i - len(environments[:4])/2 + 0.5) * width
-            bars = ax.bar(x + offset, counts, width, label=env, color=color)
+
+            # Draw stacked bar: new findings (transparent) at bottom, existing (solid) on top
+            # New findings - transparent at 50% opacity
+            bars_new = ax.bar(x + offset, new_counts, width, color=color, alpha=0.5,
+                             edgecolor=color, linewidth=0.5)
+            # Existing findings - solid on top
+            bars_existing = ax.bar(x + offset, existing_counts, width, bottom=new_counts,
+                                  color=color, alpha=1.0, label=env)
 
             if show_labels:
-                for xi, val in zip(x + offset, counts):
-                    if val > 0:
-                        ax.annotate(f'{val}', xy=(xi, val), xytext=(0, 2),
+                for xi, total, new_val in zip(x + offset, total_counts, new_counts):
+                    if total > 0:
+                        # Show total at top
+                        ax.annotate(f'{total}', xy=(xi, total), xytext=(0, 2),
                                    textcoords='offset points', ha='center', va='bottom',
-                                   fontsize=5, color='white')
+                                   fontsize=5, color='white', fontweight='bold')
+                    if new_val > 0:
+                        # Show new count in the transparent section
+                        ax.annotate(f'+{new_val}', xy=(xi, new_val/2), xytext=(0, 0),
+                                   textcoords='offset points', ha='center', va='center',
+                                   fontsize=4, color='white', alpha=0.9)
 
         ax.set_xticks(x)
         ax.set_xticklabels(week_labels, rotation=45, ha='right', fontsize=7)
         ax.set_ylabel('Unique Findings', fontsize=8, color=GUI_DARK_THEME['fg'])
-        ax.legend(fontsize=6, loc='upper left')
+
+        # Custom legend with transparency explanation
+        from matplotlib.patches import Patch
+        legend_elements = []
+        for i, env in enumerate(environments[:4]):
+            color = env_colors.get(env, default_colors[i % len(default_colors)])
+            legend_elements.append(Patch(facecolor=color, label=env))
+        legend_elements.append(Patch(facecolor='gray', alpha=0.5, label='New this week'))
+        ax.legend(handles=legend_elements, fontsize=5, loc='upper left')
 
     def _draw_rolling_env_totals(self, ax, df, weeks, week_labels, severities, colors, show_labels):
         """Draw total findings per environment by severity per week."""
@@ -5200,7 +5281,7 @@ class NessusHistoryTrackerApp:
             chart_info = [
                 ('Total Findings Over Time', self._draw_total_findings_popout),
                 ('Findings by Severity Over Time', self._draw_severity_timeline_popout),
-                ('New vs Resolved Findings', self._draw_new_vs_resolved_popout),
+                ('New / Closed / Unchanged Findings', self._draw_new_vs_resolved_popout),
                 ('Cumulative Risk Exposure', self._draw_cumulative_risk_popout),
             ]
             title, redraw_func = chart_info[quadrant]
@@ -5490,8 +5571,9 @@ class NessusHistoryTrackerApp:
         ax.set_xlabel('Scan Date')
 
     def _draw_new_vs_resolved_popout(self, fig, ax, enlarged=False, show_labels=True):
-        """Draw new vs resolved findings for pop-out."""
+        """Draw new vs closed vs unchanged findings for pop-out."""
         df = self._get_chart_data('lifecycle')
+        hist_df = self._get_chart_data('historical')
 
         if df.empty or 'first_seen' not in df.columns:
             ax.text(0.5, 0.5, 'No lifecycle data available', ha='center', va='center',
@@ -5502,12 +5584,12 @@ class NessusHistoryTrackerApp:
         new_counts = df.groupby('first_seen').size().reset_index(name='new')
         new_counts = new_counts.sort_values('first_seen')
 
-        # Count resolved (last_seen != first_seen and status == 'resolved')
-        resolved_df = df[df['status'] == 'resolved'].copy() if 'status' in df.columns else pd.DataFrame()
+        # Count resolved/closed (status == 'resolved' or 'Fixed')
+        resolved_df = df[df['status'].isin(['resolved', 'Fixed', 'Resolved'])].copy() if 'status' in df.columns else pd.DataFrame()
         if not resolved_df.empty and 'last_seen' in resolved_df.columns:
-            resolved_counts = resolved_df.groupby('last_seen').size().reset_index(name='resolved')
+            resolved_counts = resolved_df.groupby('last_seen').size().reset_index(name='closed')
         else:
-            resolved_counts = pd.DataFrame({'last_seen': [], 'resolved': []})
+            resolved_counts = pd.DataFrame({'last_seen': [], 'closed': []})
 
         if len(new_counts) < 2:
             ax.text(0.5, 0.5, 'Need more data for timeline', ha='center', va='center',
@@ -5517,16 +5599,46 @@ class NessusHistoryTrackerApp:
         dates = new_counts['first_seen']
         new_vals = new_counts['new'].values
 
-        x = range(len(dates))
-        width = 0.35
+        # Calculate unchanged: total findings at each date - new findings
+        total_by_date = {}
+        if not hist_df.empty and 'scan_date' in hist_df.columns:
+            total_counts = hist_df.groupby('scan_date').size()
+            total_by_date = total_counts.to_dict()
 
-        bars1 = ax.bar([i - width/2 for i in x], new_vals, width, label='New', color='#dc3545')
+        unchanged_vals = []
+        for i, date in enumerate(dates):
+            total = total_by_date.get(date, 0)
+            new = new_vals[i]
+            # Unchanged = existing findings that continue (total - new)
+            unchanged = max(0, total - new)
+            unchanged_vals.append(unchanged)
+
+        x = range(len(dates))
+        width = 0.25
+
+        bars1 = ax.bar([i - width for i in x], new_vals, width, label='New', color='#dc3545')
 
         # Try to align resolved with dates
+        closed_vals = [0] * len(dates)
         if not resolved_counts.empty:
-            resolved_dict = dict(zip(resolved_counts['last_seen'], resolved_counts['resolved']))
-            resolved_vals = [resolved_dict.get(d, 0) for d in dates]
-            bars2 = ax.bar([i + width/2 for i in x], resolved_vals, width, label='Resolved', color='#28a745')
+            resolved_dict = dict(zip(resolved_counts['last_seen'], resolved_counts['closed']))
+            closed_vals = [resolved_dict.get(d, 0) for d in dates]
+            bars2 = ax.bar([i for i in x], closed_vals, width, label='Closed', color='#28a745')
+
+        # Unchanged findings
+        bars3 = ax.bar([i + width for i in x], unchanged_vals, width, label='Unchanged', color='#6c757d', alpha=0.7)
+
+        if show_labels:
+            for bar, val in zip(bars1, new_vals):
+                if val > 0:
+                    ax.annotate(f'{int(val)}', xy=(bar.get_x() + bar.get_width()/2, val),
+                               xytext=(0, 2), textcoords='offset points',
+                               ha='center', va='bottom', fontsize=7, color='white')
+            for bar, val in zip(bars3, unchanged_vals):
+                if val > 0:
+                    ax.annotate(f'{int(val)}', xy=(bar.get_x() + bar.get_width()/2, val),
+                               xytext=(0, 2), textcoords='offset points',
+                               ha='center', va='bottom', fontsize=7, color='white')
 
         ax.legend(loc='upper right', fontsize=9)
 
@@ -5541,9 +5653,17 @@ class NessusHistoryTrackerApp:
             ax.set_xticks(x)
             ax.set_xticklabels([str(d)[:10] for d in dates], fontsize=9, rotation=45, ha='right')
 
-        ax.set_title('New vs Resolved Findings')
+        ax.set_title('New / Closed / Unchanged Findings')
         ax.set_ylabel('Count')
         ax.set_xlabel('Date')
+
+        if enlarged:
+            # Show summary stats
+            total_new = sum(new_vals)
+            total_closed = sum(closed_vals)
+            net_change = total_new - total_closed
+            ax.text(0.02, 0.98, f'Total New: {total_new} | Closed: {total_closed} | Net: {net_change:+d}',
+                   transform=ax.transAxes, fontsize=10, va='top', color='#17a2b8')
 
     def _draw_cumulative_risk_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw cumulative risk exposure for pop-out."""

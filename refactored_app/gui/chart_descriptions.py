@@ -62,11 +62,11 @@ CHART_DESCRIPTIONS = {
         'filters': ['Date Range', 'Environment']
     },
     'new_vs_resolved': {
-        'title': 'New vs Resolved',
-        'description': 'Grouped bar chart comparing new findings discovered vs findings resolved per period. Net change shown.',
-        'cyber_context': 'Core metric for security program health. Resolved > New indicates reducing risk. Persistent deficit suggests inadequate resources or process issues.',
-        'inputs': 'scan_changes (New/Resolved events)',
-        'interpretation': 'Green bars (resolved) should exceed red bars (new). Calculate velocity: Resolved/New ratio > 1.0 means improving posture.',
+        'title': 'New / Closed / Unchanged',
+        'description': 'Grouped bar chart showing weekly breakdown of finding states: New (appeared this period), Closed (resolved), and Unchanged (continuing from previous period).',
+        'cyber_context': 'Core metric for security program health. Closed > New indicates reducing risk. Unchanged represents backlog that needs attention. Track ratio of all three for comprehensive program visibility.',
+        'inputs': 'scan_changes (New/Resolved/Continuing events), historical finding counts',
+        'interpretation': 'Green bars (closed) should exceed red bars (new). Gray bars (unchanged) show persistent backlog. Net change = New - Closed. Velocity ratio: Closed/New > 1.0 means improving posture.',
         'filters': ['Date Range', 'Severity', 'Environment']
     },
     'cumulative_risk': {
@@ -97,10 +97,10 @@ CHART_DESCRIPTIONS = {
     },
     'rolling_env_findings': {
         'title': 'Findings by Environment (Weekly)',
-        'description': 'Grouped bar chart showing unique findings (hostname + plugin_id combinations) per environment type for each week. Enables comparison of security posture across Production, PSS, Shared, and other environments.',
-        'cyber_context': 'Environment comparison highlights where security resources should focus. Production environments typically require faster remediation. Imbalances may indicate deployment or patching inconsistencies.',
-        'inputs': 'scan_date, environment_type, hostname, plugin_id',
-        'interpretation': 'Production findings should trend downward faster than others. Large gaps between environments may indicate inconsistent patch management. Missing bars indicate no scan data for that environment/week.',
+        'description': 'Grouped bar chart showing unique findings per environment type for each week. NEW findings that appeared that week are shown in transparent (50% opacity) at the bottom of each bar, while existing/continuing findings are solid. Enables tracking of both total findings and weekly new arrivals per environment.',
+        'cyber_context': 'Environment comparison highlights where security resources should focus. Transparent sections show NEW vulnerabilities appearing that week - high new counts indicate emerging risks. Solid sections represent backlog. Production environments typically require faster remediation.',
+        'inputs': 'scan_date, environment_type, hostname, plugin_id (compared week-over-week)',
+        'interpretation': 'Watch for large transparent (new) sections - indicates emerging risks. Solid sections (unchanged) represent persistent backlog. Total number shown at top, +N label shows new count. Production findings should trend downward.',
         'filters': ['Severity', 'Environment']
     },
     'rolling_env_totals': {
