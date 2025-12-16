@@ -2169,17 +2169,17 @@ class NessusHistoryTrackerApp:
             return 'replace'  # No existing items, just add
 
         # Create custom dialog
-        dialog = tk.Toplevel(self.root)
+        dialog = tk.Toplevel(self.window)
         dialog.title("Add or Replace?")
         dialog.geometry("350x180")
         dialog.configure(bg=GUI_DARK_THEME['bg'])
-        dialog.transient(self.root)
+        dialog.transient(self.window)
         dialog.grab_set()
 
         # Center the dialog
         dialog.update_idletasks()
-        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - (350 // 2)
-        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - (180 // 2)
+        x = self.window.winfo_x() + (self.window.winfo_width() // 2) - (350 // 2)
+        y = self.window.winfo_y() + (self.window.winfo_height() // 2) - (180 // 2)
         dialog.geometry(f"+{x}+{y}")
 
         result = tk.StringVar(value='cancel')
@@ -4039,7 +4039,7 @@ Risk Score: {risk_score:,}
         host_counts = active_df['hostname'].value_counts()
 
         # Create selection dialog
-        select_window = tk.Toplevel(self.root)
+        select_window = tk.Toplevel(self.window)
         select_window.title("Select Hosts for Report")
         select_window.geometry("400x500")
         select_window.configure(bg=GUI_DARK_THEME['bg'])
