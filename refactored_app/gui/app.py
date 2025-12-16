@@ -2154,13 +2154,99 @@ class NessusHistoryTrackerApp:
             return name
         return name[:max_len-3] + "..."
 
+    def _ask_add_or_replace(self, existing_count: int, new_count: int, item_type: str = "files") -> str:
+        """Ask user whether to add to or replace existing list.
+
+        Args:
+            existing_count: Number of items currently in the list
+            new_count: Number of new items being added
+            item_type: Description of item type (e.g., "files", "archives")
+
+        Returns:
+            'add' to append to existing, 'replace' to replace, 'cancel' to cancel
+        """
+        if existing_count == 0:
+            return 'replace'  # No existing items, just add
+
+        # Create custom dialog
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Add or Replace?")
+        dialog.geometry("350x180")
+        dialog.configure(bg=GUI_DARK_THEME['bg'])
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # Center the dialog
+        dialog.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - (350 // 2)
+        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - (180 // 2)
+        dialog.geometry(f"+{x}+{y}")
+
+        result = tk.StringVar(value='cancel')
+
+        # Message
+        msg = f"You have {existing_count} {item_type} already selected.\n\n"
+        msg += f"Do you want to add {new_count} new {item_type}\n"
+        msg += f"or replace the existing selection?"
+
+        ttk.Label(dialog, text=msg, justify=tk.CENTER,
+                 font=('Arial', 10)).pack(pady=20, padx=20)
+
+        # Button frame
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(pady=10)
+
+        def on_add():
+            result.set('add')
+            dialog.destroy()
+
+        def on_replace():
+            result.set('replace')
+            dialog.destroy()
+
+        def on_cancel():
+            result.set('cancel')
+            dialog.destroy()
+
+        ttk.Button(btn_frame, text=f"Add ({existing_count + new_count} total)",
+                  command=on_add, width=18).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text=f"Replace ({new_count} total)",
+                  command=on_replace, width=18).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Cancel",
+                  command=on_cancel, width=10).pack(side=tk.LEFT, padx=5)
+
+        # Handle window close
+        dialog.protocol("WM_DELETE_WINDOW", on_cancel)
+
+        # Wait for dialog to close
+        dialog.wait_window()
+
+        return result.get()
+
     def _select_archives(self):
         """Select Nessus archive files."""
         filetypes = (('Archive files', '*.zip'), ('Nessus files', '*.nessus'), ('All files', '*.*'))
         paths = filedialog.askopenfilenames(title='Select Nessus Archives', filetypes=filetypes)
 
         if paths:
-            self.archive_paths = list(paths)
+            new_paths = list(paths)
+            existing_count = len(self.archive_paths) if hasattr(self, 'archive_paths') and self.archive_paths else 0
+
+            if existing_count > 0:
+                action = self._ask_add_or_replace(existing_count, len(new_paths), "archive(s)")
+                if action == 'cancel':
+                    return
+                elif action == 'add':
+                    # Add to existing, avoiding duplicates
+                    existing_set = set(self.archive_paths)
+                    for p in new_paths:
+                        if p not in existing_set:
+                            self.archive_paths.append(p)
+                else:  # replace
+                    self.archive_paths = new_paths
+            else:
+                self.archive_paths = new_paths
+
             self.archives_label.config(text=f"{len(self.archive_paths)} file(s)", foreground="white")
             self._log(f"Selected {len(self.archive_paths)} archive(s)")
 
@@ -2214,10 +2300,29 @@ class NessusHistoryTrackerApp:
         paths = filedialog.askopenfilenames(title='Select STIG Checklist Files', filetypes=filetypes)
 
         if paths:
-            self.stig_file_paths = list(paths)
+            new_paths = list(paths)
+            existing_count = len(self.stig_file_paths) if hasattr(self, 'stig_file_paths') and self.stig_file_paths else 0
+
+            if existing_count > 0:
+                action = self._ask_add_or_replace(existing_count, len(new_paths), "STIG checklist(s)")
+                if action == 'cancel':
+                    return
+                elif action == 'add':
+                    # Add to existing, avoiding duplicates
+                    existing_set = set(self.stig_file_paths)
+                    for p in new_paths:
+                        if p not in existing_set:
+                            self.stig_file_paths.append(p)
+                else:  # replace
+                    self.stig_file_paths = new_paths
+                    # Clear existing STIG data when replacing
+                    self.stig_df = pd.DataFrame()
+            else:
+                self.stig_file_paths = new_paths
+
             count = len(self.stig_file_paths)
             if count == 1:
-                display_text = self._truncate_filename(os.path.basename(paths[0]))
+                display_text = self._truncate_filename(os.path.basename(self.stig_file_paths[0]))
             else:
                 display_text = f"{count} files"
             self.stig_label.config(text=display_text, foreground="white")
@@ -2269,22 +2374,23 @@ class NessusHistoryTrackerApp:
                     self._log(f"    ... and {len(impact['findings_changed']) - 10} more changes")
 
             if not self.stig_df.empty:
-                summary = get_stig_summary(self.stig_df)
-
                 # Count current vs historical
                 current_count = len(self.stig_df[self.stig_df.get('is_current', True) == True]) if 'is_current' in self.stig_df.columns else len(self.stig_df)
                 superseded_count = len(self.stig_df[self.stig_df.get('is_superseded', False) == True]) if 'is_superseded' in self.stig_df.columns else 0
-
-                self._log(f"Total: {len(self.stig_df)} STIG records ({current_count} current, {superseded_count} superseded)")
-                self._log(f"  Open findings (current): {summary['total_findings']}")
-                self._log(f"  Unique hosts: {summary['unique_hosts']}")
-                self._log(f"  By CAT: {summary.get('open_by_cat', {})}")
 
                 # Update filtered STIG data (default to current only)
                 if 'is_current' in self.stig_df.columns:
                     self.filtered_stig_df = self.stig_df[self.stig_df['is_current'] == True].copy()
                 else:
                     self.filtered_stig_df = self.stig_df.copy()
+
+                # Get summary from CURRENT findings only (not superseded)
+                summary = get_stig_summary(self.filtered_stig_df)
+
+                self._log(f"Total: {len(self.stig_df)} STIG records ({current_count} current, {superseded_count} superseded)")
+                self._log(f"  Open findings (current): {summary['total_findings']}")
+                self._log(f"  Unique hosts: {summary['unique_hosts']}")
+                self._log(f"  By CAT: {summary.get('open_by_cat', {})}")
 
                 # Refresh STIG tab if it exists
                 if hasattr(self, '_update_stig_tab'):
@@ -2304,7 +2410,7 @@ class NessusHistoryTrackerApp:
                     msg_parts.append(f"  Regressed: {impact['regressed']}")
 
                 msg_parts.append(f"")
-                msg_parts.append(f"Open findings: {summary['total_findings']}")
+                msg_parts.append(f"Open findings (current): {summary['total_findings']}")
                 msg_parts.append(f"Hosts: {summary['unique_hosts']}")
 
                 messagebox.showinfo("STIG Loaded", "\n".join(msg_parts))
