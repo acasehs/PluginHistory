@@ -2797,21 +2797,13 @@ class NessusHistoryTrackerApp:
         df['first_seen'] = pd.to_datetime(df['first_seen'])
         df['last_seen'] = pd.to_datetime(df['last_seen'])
 
-        # Get environment column if exists, or add it from hostname classification
-        env_col = None
-        for col in ['environment_type', 'environment', 'env', 'Environment']:
-            if col in df.columns:
-                env_col = col
-                break
-
-        # If no environment column, add one from hostname classification
-        if env_col is None:
-            if 'hostname' in df.columns:
-                df['environment_type'] = df['hostname'].apply(self._get_environment_type)
-                env_col = 'environment_type'
-            else:
-                df['environment'] = 'Unknown'
-                env_col = 'environment'
+        # ALWAYS recalculate environment from current settings/mappings
+        # This ensures user's environment config is applied even if an old column exists
+        env_col = 'environment_type'
+        if 'hostname' in df.columns:
+            df['environment_type'] = df['hostname'].apply(self._get_environment_type)
+        else:
+            df['environment_type'] = 'Unknown'
 
         # Fill missing environments
         df[env_col] = df[env_col].fillna('Unknown').replace('', 'Unknown')
