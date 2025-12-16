@@ -17,7 +17,10 @@ def export_to_sqlite(historical_df: pd.DataFrame,
                     scan_changes_df: pd.DataFrame,
                     opdir_df: pd.DataFrame,
                     filepath: str,
-                    iavm_df: pd.DataFrame = None) -> bool:
+                    iavm_df: pd.DataFrame = None,
+                    stig_df: pd.DataFrame = None,
+                    poam_df: pd.DataFrame = None,
+                    host_overrides: Dict[str, Any] = None) -> bool:
     """
     Export all analysis data to a SQLite database.
 
@@ -29,6 +32,9 @@ def export_to_sqlite(historical_df: pd.DataFrame,
         opdir_df: DataFrame with OPDIR mapping data
         filepath: Output database file path
         iavm_df: DataFrame with IAVM notice summaries (optional)
+        stig_df: DataFrame with STIG checklist findings (optional)
+        poam_df: DataFrame with POAM entries (optional)
+        host_overrides: Dict of hostname -> override properties (optional)
 
     Returns:
         True if successful
@@ -92,6 +98,33 @@ def export_to_sqlite(historical_df: pd.DataFrame,
             prepare_df(iavm_df).to_sql('iavm_notices', conn, if_exists='replace', index=False)
             print(f"Exported {len(iavm_df)} rows to iavm_notices")
 
+        # Export STIG findings if provided
+        if stig_df is not None and not stig_df.empty:
+            prepare_df(stig_df).to_sql('stig_findings', conn, if_exists='replace', index=False)
+            print(f"Exported {len(stig_df)} rows to stig_findings")
+
+        # Export POAM entries if provided
+        if poam_df is not None and not poam_df.empty:
+            prepare_df(poam_df).to_sql('poam_entries', conn, if_exists='replace', index=False)
+            print(f"Exported {len(poam_df)} rows to poam_entries")
+
+        # Export host overrides if provided
+        if host_overrides:
+            override_rows = []
+            for hostname, overrides in host_overrides.items():
+                override_rows.append({
+                    'hostname': hostname,
+                    'host_type': overrides.get('host_type', ''),
+                    'environment': overrides.get('environment', ''),
+                    'location': overrides.get('location', ''),
+                    'notes': overrides.get('notes', ''),
+                    'override_date': overrides.get('override_date', '')
+                })
+            if override_rows:
+                overrides_df = pd.DataFrame(override_rows)
+                overrides_df.to_sql('host_overrides', conn, if_exists='replace', index=False)
+                print(f"Exported {len(overrides_df)} rows to host_overrides")
+
         # Create summary table (counts exclude Info findings)
         summary_data = {
             'export_timestamp': [datetime.now().strftime('%Y-%m-%d %H:%M:%S')],
@@ -101,6 +134,9 @@ def export_to_sqlite(historical_df: pd.DataFrame,
             'total_scans': [len(scan_changes_df) + 1 if not scan_changes_df.empty else 0],
             'total_opdir_entries': [len(opdir_df) if not opdir_df.empty else 0],
             'total_iavm_notices': [len(iavm_df) if iavm_df is not None and not iavm_df.empty else 0],
+            'total_stig_findings': [len(stig_df) if stig_df is not None and not stig_df.empty else 0],
+            'total_poam_entries': [len(poam_df) if poam_df is not None and not poam_df.empty else 0],
+            'total_host_overrides': [len(host_overrides) if host_overrides else 0],
             'info_findings_excluded': [info_excluded_count]
         }
         pd.DataFrame(summary_data).to_sql('export_summary', conn, if_exists='replace', index=False)
