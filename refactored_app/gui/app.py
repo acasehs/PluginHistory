@@ -36,6 +36,10 @@ from ..analysis.scan_changes import analyze_scan_changes
 from ..analysis.opdir_compliance import load_opdir_mapping, enrich_with_opdir
 from ..analysis.iavm_parser import load_iavm_summaries, enrich_findings_with_iavm
 from ..parsers.stig_parser import parse_multiple_cklb_files, get_stig_summary, get_consolidated_findings
+from ..parsers.poam_parser import (
+    parse_poam_excel, entries_to_dataframe, expand_consolidated_poams,
+    get_poam_summary, match_poam_to_findings, POAMEntry
+)
 from ..analysis.advanced_metrics import (
     get_all_advanced_metrics, calculate_reopen_rate, calculate_coverage_metrics,
     calculate_remediation_rate, calculate_sla_breach_tracking, calculate_normalized_metrics,
@@ -85,6 +89,8 @@ class NessusHistoryTrackerApp:
         self.opdir_df = pd.DataFrame()
         self.iavm_df = pd.DataFrame()
         self.stig_df = pd.DataFrame()  # STIG checklist findings
+        self.poam_df = pd.DataFrame()  # POAM entries
+        self.poam_entries: List[POAMEntry] = []  # Raw POAM entry objects
         self.plugins_dict = None
 
         # Filtered data for display
@@ -93,6 +99,7 @@ class NessusHistoryTrackerApp:
         self.filtered_historical_df = pd.DataFrame()
         self.filtered_scan_changes_df = pd.DataFrame()
         self.filtered_stig_df = pd.DataFrame()  # Filtered STIG findings
+        self.filtered_poam_df = pd.DataFrame()  # Filtered POAM entries
 
         # File paths
         self.archive_paths: List[str] = []
@@ -101,6 +108,7 @@ class NessusHistoryTrackerApp:
         self.opdir_file_path: Optional[str] = None
         self.iavm_file_path: Optional[str] = None
         self.stig_file_paths: List[str] = []  # STIG .cklb files
+        self.poam_file_path: Optional[str] = None  # POAM Excel file
 
         # Filter variables
         self.filter_include_info = tk.BooleanVar(value=True)
@@ -257,6 +265,7 @@ class NessusHistoryTrackerApp:
         self._build_host_tracking_tab()
         self._build_advanced_tab()
         self._build_stig_tab()  # STIG checklist findings
+        self._build_poam_tab()  # POA&M tracking
         self._build_reporting_tab()  # Weekly resolution reports
         self._build_logging_tab()  # Moved to last
 
@@ -317,6 +326,14 @@ class NessusHistoryTrackerApp:
         self.stig_label = ttk.Label(stig_row, text="None", foreground="gray", width=16, anchor=tk.W)
         self.stig_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Button(stig_row, text="...", command=self._select_stig_files, width=3).pack(side=tk.RIGHT)
+
+        # POAM row
+        poam_row = ttk.Frame(file_frame)
+        poam_row.pack(fill=tk.X, pady=2)
+        ttk.Label(poam_row, text="7. POAM:", width=11).pack(side=tk.LEFT)
+        self.poam_label = ttk.Label(poam_row, text="None", foreground="gray", width=16, anchor=tk.W)
+        self.poam_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(poam_row, text="...", command=self._select_poam_file, width=3).pack(side=tk.RIGHT)
 
     def _build_filter_panel(self, parent):
         """Build filter controls section with 2-column layout."""
@@ -1513,6 +1530,48 @@ class NessusHistoryTrackerApp:
         else:
             ttk.Label(stig_frame, text="Install matplotlib for STIG visualizations").pack(pady=50)
 
+    def _build_poam_tab(self):
+        """Build POAM (Plan of Action & Milestones) tracking tab."""
+        poam_frame = ttk.Frame(self.notebook)
+        self.notebook.add(poam_frame, text="POA&M")
+        self.poam_tab_frame = poam_frame
+
+        if HAS_MATPLOTLIB:
+            self.poam_fig = Figure(figsize=(10, 8), dpi=100, facecolor=GUI_DARK_THEME['bg'])
+
+            # Status distribution (pie chart)
+            self.poam_ax1 = self.poam_fig.add_subplot(221)
+            self.poam_ax1.set_title('POAM Status Distribution', color=GUI_DARK_THEME['fg'])
+
+            # Severity breakdown (horizontal bar)
+            self.poam_ax2 = self.poam_fig.add_subplot(222)
+            self.poam_ax2.set_title('POAMs by Severity', color=GUI_DARK_THEME['fg'])
+
+            # Overdue POAMs timeline
+            self.poam_ax3 = self.poam_fig.add_subplot(223)
+            self.poam_ax3.set_title('Due Date Distribution', color=GUI_DARK_THEME['fg'])
+
+            # Source breakdown (ACAS vs STIG)
+            self.poam_ax4 = self.poam_fig.add_subplot(224)
+            self.poam_ax4.set_title('POAMs by Source', color=GUI_DARK_THEME['fg'])
+
+            for ax in [self.poam_ax1, self.poam_ax2, self.poam_ax3, self.poam_ax4]:
+                ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
+                ax.tick_params(colors=GUI_DARK_THEME['fg'])
+                for spine in ax.spines.values():
+                    spine.set_color(GUI_DARK_THEME['fg'])
+
+            self.poam_canvas = FigureCanvasTkAgg(self.poam_fig, master=poam_frame)
+            self.poam_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+            # Bind double-click for pop-out
+            hint = ttk.Label(poam_frame, text="Double-click chart to pop-out | Load POAM (.xlsx) from Data Sources",
+                            font=('Arial', 8), foreground='gray')
+            hint.pack(anchor=tk.SE, padx=5)
+            self._bind_chart_popouts_poam()
+        else:
+            ttk.Label(poam_frame, text="Install matplotlib for POAM visualizations").pack(pady=50)
+
     def _build_reporting_tab(self):
         """Build the Reporting tab for weekly resolution reports."""
         reporting_frame = ttk.Frame(self.notebook)
@@ -2115,6 +2174,151 @@ class NessusHistoryTrackerApp:
         except Exception as e:
             self._log(f"Error loading STIG files: {e}")
             messagebox.showerror("Error", f"Failed to load STIG files: {e}")
+
+    def _select_poam_file(self):
+        """Select POAM Excel file."""
+        filetypes = (('Excel files', '*.xlsx;*.xls'), ('All files', '*.*'))
+        path = filedialog.askopenfilename(title='Select POAM File', filetypes=filetypes)
+
+        if path:
+            self.poam_file_path = path
+            self.poam_label.config(text=self._truncate_filename(os.path.basename(path)), foreground="white")
+            self._log(f"Selected POAM file: {os.path.basename(path)}")
+
+            # Parse POAM file immediately
+            self._load_poam_file()
+
+    def _load_poam_file(self):
+        """Load and parse selected POAM file."""
+        if not self.poam_file_path:
+            return
+
+        try:
+            self._log("Parsing POAM file...")
+            raw_df, entries = parse_poam_excel(self.poam_file_path)
+
+            if entries:
+                # Expand consolidated POAMs to individual entries
+                expanded_entries = expand_consolidated_poams(entries)
+                self.poam_entries = expanded_entries
+
+                # Convert to DataFrame
+                self.poam_df = entries_to_dataframe(expanded_entries)
+                self.filtered_poam_df = self.poam_df.copy()
+
+                # Get summary
+                summary = get_poam_summary(expanded_entries)
+                self._log(f"Loaded {summary['total_poams']} POAM entries")
+                self._log(f"  ACAS/Plugin-based: {summary['acas_count']}")
+                self._log(f"  STIG-based: {summary['stig_count']}")
+                self._log(f"  Overdue: {summary['overdue_count']}")
+                self._log(f"  Status: {summary['status_counts']}")
+
+                # Update POAM tab visualizations
+                self.window.after(0, self._update_poam_tab)
+
+                # Match POAMs to findings if scan data is available
+                if not self.df.empty or not self.stig_df.empty:
+                    self._perform_poam_matching()
+
+                messagebox.showinfo("POAM Loaded",
+                    f"Loaded {summary['total_poams']} POAM entries\n"
+                    f"ACAS: {summary['acas_count']} | STIG: {summary['stig_count']}\n"
+                    f"Overdue: {summary['overdue_count']}")
+            else:
+                self._log("No POAM entries found in file")
+                messagebox.showwarning("No Data", "No POAM entries found in file")
+
+        except Exception as e:
+            self._log(f"Error loading POAM file: {e}")
+            messagebox.showerror("Error", f"Failed to load POAM file: {e}")
+
+    def _perform_poam_matching(self):
+        """Match POAM entries to Tenable findings and STIG checklists."""
+        if not self.poam_entries:
+            return
+
+        try:
+            from ..models.hostname_structure import normalize_hostname_for_matching
+
+            # Match ACAS POAMs to Tenable findings
+            acas_matches = 0
+            if not self.df.empty:
+                # Build findings index
+                findings_by_key = {}
+                for idx, row in self.df.iterrows():
+                    hostname = str(row.get('hostname', '') or '').lower()
+                    plugin_id = str(row.get('plugin_id', ''))
+                    if hostname and plugin_id:
+                        norm_host = normalize_hostname_for_matching(hostname)
+                        key = f"{plugin_id}|{norm_host}"
+                        if key not in findings_by_key:
+                            findings_by_key[key] = []
+                        findings_by_key[key].append(idx)
+
+                # Match POAMs
+                for entry in self.poam_entries:
+                    if not entry.is_plugin_id or not entry.plugin_id:
+                        continue
+
+                    for hostname in entry.affected_hardware_list:
+                        norm_host = normalize_hostname_for_matching(hostname.lower())
+                        key = f"{entry.plugin_id}|{norm_host}"
+                        if key in findings_by_key:
+                            acas_matches += 1
+                            # Mark as having POAM in the DataFrame
+                            for finding_idx in findings_by_key[key]:
+                                if 'poam_status' not in self.df.columns:
+                                    self.df['poam_status'] = ''
+                                    self.filtered_df['poam_status'] = ''
+                                self.df.loc[finding_idx, 'poam_status'] = entry.poam_status
+                                if finding_idx in self.filtered_df.index:
+                                    self.filtered_df.loc[finding_idx, 'poam_status'] = entry.poam_status
+
+            # Match STIG POAMs to STIG findings
+            stig_matches = 0
+            if not self.stig_df.empty and 'sv_id' in self.stig_df.columns:
+                from ..parsers.stig_parser import extract_sv_base_id
+
+                # Build STIG findings index
+                stig_by_key = {}
+                for idx, row in self.stig_df.iterrows():
+                    hostname = str(row.get('hostname', '') or '').lower()
+                    sv_id = str(row.get('sv_id', ''))
+                    if hostname and sv_id:
+                        sv_base = extract_sv_base_id(sv_id)
+                        norm_host = normalize_hostname_for_matching(hostname)
+                        key = f"{sv_base}|{norm_host}"
+                        if key not in stig_by_key:
+                            stig_by_key[key] = []
+                        stig_by_key[key].append(idx)
+
+                # Match STIG POAMs
+                for entry in self.poam_entries:
+                    if not entry.is_stig_rule or not entry.sv_id_base:
+                        continue
+
+                    for hostname in entry.affected_hardware_list:
+                        norm_host = normalize_hostname_for_matching(hostname.lower())
+                        key = f"{entry.sv_id_base}|{norm_host}"
+                        if key in stig_by_key:
+                            stig_matches += 1
+                            # Mark as having POAM in the STIG DataFrame
+                            for finding_idx in stig_by_key[key]:
+                                if 'poam_status' not in self.stig_df.columns:
+                                    self.stig_df['poam_status'] = ''
+                                    self.filtered_stig_df['poam_status'] = ''
+                                self.stig_df.loc[finding_idx, 'poam_status'] = entry.poam_status
+                                if finding_idx in self.filtered_stig_df.index:
+                                    self.filtered_stig_df.loc[finding_idx, 'poam_status'] = entry.poam_status
+
+            if acas_matches > 0 or stig_matches > 0:
+                self._log(f"POAM Matching: {acas_matches} ACAS findings, {stig_matches} STIG findings")
+            else:
+                self._log("No POAM matches found with current data")
+
+        except Exception as e:
+            self._log(f"Error during POAM matching: {e}")
 
     def _update_stig_tab(self):
         """Update the STIG Findings tab with current data."""
@@ -8631,6 +8835,343 @@ class NessusHistoryTrackerApp:
         ax.set_xlabel('Open Findings', fontsize=10 if enlarged else 8)
         ax.set_title('Open Findings: CAT Severity by STIG', fontsize=12 if enlarged else 10)
         ax.legend(loc='lower right', fontsize=8 if enlarged else 6)
+
+    # ==================== POAM Tab Methods ====================
+
+    def _bind_chart_popouts_poam(self):
+        """Bind double-click pop-out for POAM tab charts."""
+        if not hasattr(self, 'poam_canvas'):
+            return
+
+        def get_click_quadrant(event):
+            widget = event.widget
+            w, h = widget.winfo_width(), widget.winfo_height()
+            x, y = event.x, event.y
+            col = 0 if x < w / 2 else 1
+            row = 0 if y < h / 2 else 1
+            return row * 2 + col
+
+        def on_double_click(event):
+            quadrant = get_click_quadrant(event)
+            chart_info = [
+                ('POAM Status Distribution', self._draw_poam_status_popout),
+                ('POAMs by Severity', self._draw_poam_severity_popout),
+                ('Due Date Distribution', self._draw_poam_due_date_popout),
+                ('POAMs by Source', self._draw_poam_source_popout),
+            ]
+            title, redraw_func = chart_info[quadrant]
+            ChartPopoutModal(self.window, title, redraw_func)
+
+        self.poam_canvas.get_tk_widget().bind('<Double-Button-1>', on_double_click)
+
+    def _update_poam_tab(self):
+        """Update the POAM tab with current data."""
+        if not HAS_MATPLOTLIB or not hasattr(self, 'poam_fig'):
+            return
+
+        df = self.filtered_poam_df if not self.filtered_poam_df.empty else self.poam_df
+
+        # Clear all axes
+        for ax in [self.poam_ax1, self.poam_ax2, self.poam_ax3, self.poam_ax4]:
+            ax.clear()
+            ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
+            ax.tick_params(colors=GUI_DARK_THEME['fg'])
+            for spine in ax.spines.values():
+                spine.set_color(GUI_DARK_THEME['fg'])
+
+        if df.empty:
+            for ax in [self.poam_ax1, self.poam_ax2, self.poam_ax3, self.poam_ax4]:
+                ax.text(0.5, 0.5, 'No POAM data loaded\n(Load .xlsx from Data Sources)',
+                       ha='center', va='center', color='white', fontsize=10,
+                       transform=ax.transAxes)
+            self.poam_canvas.draw()
+            return
+
+        # Chart 1: Status Distribution (Pie)
+        self._draw_poam_status_chart(self.poam_ax1)
+
+        # Chart 2: Severity Breakdown (Bar)
+        self._draw_poam_severity_chart(self.poam_ax2)
+
+        # Chart 3: Due Date Distribution
+        self._draw_poam_due_date_chart(self.poam_ax3)
+
+        # Chart 4: Source Breakdown (ACAS vs STIG)
+        self._draw_poam_source_chart(self.poam_ax4)
+
+        self.poam_fig.tight_layout()
+        self.poam_canvas.draw()
+
+    def _draw_poam_status_chart(self, ax, enlarged=False):
+        """Draw POAM status distribution pie chart."""
+        df = self.filtered_poam_df if not self.filtered_poam_df.empty else self.poam_df
+
+        if df.empty or 'poam_status' not in df.columns:
+            ax.text(0.5, 0.5, 'No POAM data', ha='center', va='center',
+                   color='white', fontsize=10)
+            return
+
+        status_counts = df['poam_status'].value_counts()
+
+        if status_counts.empty:
+            ax.text(0.5, 0.5, 'No status data', ha='center', va='center',
+                   color='white', fontsize=10)
+            return
+
+        # Status colors
+        status_colors = {
+            'Not Started': '#dc3545',   # Red
+            'Started': '#ffc107',       # Yellow
+            'In Progress': '#fd7e14',   # Orange
+            'Complete': '#28a745',      # Green
+            'Completed': '#28a745',     # Green (alt)
+            'Closed': '#17a2b8',        # Cyan
+        }
+
+        colors = [status_colors.get(s, '#6c757d') for s in status_counts.index]
+        labels = [f'{s}\n({c})' for s, c in status_counts.items()]
+        explode = [0.05 if status_counts.idxmax() == s else 0 for s in status_counts.index]
+
+        wedges, texts, autotexts = ax.pie(
+            status_counts.values, labels=labels, colors=colors,
+            autopct='%1.1f%%', explode=explode,
+            textprops={'color': 'white', 'fontsize': 8 if not enlarged else 10}
+        )
+
+        ax.set_title('POAM Status Distribution', color=GUI_DARK_THEME['fg'],
+                    fontsize=10 if not enlarged else 12)
+
+    def _draw_poam_severity_chart(self, ax, enlarged=False):
+        """Draw POAM severity breakdown bar chart."""
+        df = self.filtered_poam_df if not self.filtered_poam_df.empty else self.poam_df
+
+        if df.empty:
+            ax.text(0.5, 0.5, 'No POAM data', ha='center', va='center',
+                   color='white', fontsize=10)
+            return
+
+        # Try to get severity from raw_severity or calculated from CVSS
+        if 'raw_severity' in df.columns:
+            severity_col = 'raw_severity'
+        elif 'cvss_base_score' in df.columns:
+            # Calculate severity from CVSS
+            def cvss_to_severity(score):
+                if pd.isna(score):
+                    return 'Unknown'
+                score = float(score) if score else 0
+                if score >= 9.0:
+                    return 'Critical'
+                elif score >= 7.0:
+                    return 'High'
+                elif score >= 4.0:
+                    return 'Medium'
+                elif score > 0:
+                    return 'Low'
+                return 'Info'
+            df = df.copy()
+            df['calc_severity'] = df['cvss_base_score'].apply(cvss_to_severity)
+            severity_col = 'calc_severity'
+        else:
+            ax.text(0.5, 0.5, 'No severity data', ha='center', va='center',
+                   color='white', fontsize=10)
+            return
+
+        severity_counts = df[severity_col].value_counts()
+
+        # Severity colors and order
+        severity_colors = {
+            'Critical': '#8b0000',
+            'High': '#dc3545',
+            'Medium': '#fd7e14',
+            'Low': '#ffc107',
+            'Info': '#17a2b8',
+            'Unknown': '#6c757d',
+        }
+        severity_order = ['Critical', 'High', 'Medium', 'Low', 'Info', 'Unknown']
+        ordered_counts = severity_counts.reindex(
+            [s for s in severity_order if s in severity_counts.index]
+        )
+
+        if ordered_counts.empty:
+            ax.text(0.5, 0.5, 'No severity data', ha='center', va='center',
+                   color='white', fontsize=10)
+            return
+
+        bars = ax.barh(range(len(ordered_counts)), ordered_counts.values,
+                      color=[severity_colors.get(s, '#6c757d') for s in ordered_counts.index])
+
+        ax.set_yticks(range(len(ordered_counts)))
+        ax.set_yticklabels(ordered_counts.index, fontsize=8 if not enlarged else 10)
+        ax.set_xlabel('Count', fontsize=8 if not enlarged else 10)
+        ax.set_title('POAMs by Severity', color=GUI_DARK_THEME['fg'],
+                    fontsize=10 if not enlarged else 12)
+
+        # Add count labels
+        for i, (bar, count) in enumerate(zip(bars, ordered_counts.values)):
+            ax.text(bar.get_width() + 0.5, bar.get_y() + bar.get_height()/2,
+                   str(count), va='center', fontsize=7 if not enlarged else 9, color='white')
+
+    def _draw_poam_due_date_chart(self, ax, enlarged=False):
+        """Draw POAM due date distribution chart."""
+        df = self.filtered_poam_df if not self.filtered_poam_df.empty else self.poam_df
+
+        if df.empty or 'scheduled_completion_date' not in df.columns:
+            ax.text(0.5, 0.5, 'No due date data', ha='center', va='center',
+                   color='white', fontsize=10)
+            return
+
+        # Parse dates and count by status
+        df = df.copy()
+        df['due_date'] = pd.to_datetime(df['scheduled_completion_date'], errors='coerce')
+        valid_df = df.dropna(subset=['due_date'])
+
+        if valid_df.empty:
+            ax.text(0.5, 0.5, 'No valid due dates', ha='center', va='center',
+                   color='white', fontsize=10)
+            return
+
+        today = pd.Timestamp.now()
+
+        # Categorize by due date status
+        def categorize_due_date(row):
+            due = row['due_date']
+            status = row.get('poam_status', '')
+            if status.lower() in ['complete', 'completed', 'closed']:
+                return 'Completed'
+            elif due < today:
+                return 'Overdue'
+            elif due < today + pd.Timedelta(days=30):
+                return 'Due Soon (30d)'
+            elif due < today + pd.Timedelta(days=90):
+                return 'Due 30-90d'
+            else:
+                return 'Due 90d+'
+
+        valid_df['due_category'] = valid_df.apply(categorize_due_date, axis=1)
+        category_counts = valid_df['due_category'].value_counts()
+
+        # Category colors and order
+        category_colors = {
+            'Overdue': '#dc3545',
+            'Due Soon (30d)': '#fd7e14',
+            'Due 30-90d': '#ffc107',
+            'Due 90d+': '#28a745',
+            'Completed': '#17a2b8',
+        }
+        category_order = ['Overdue', 'Due Soon (30d)', 'Due 30-90d', 'Due 90d+', 'Completed']
+        ordered_counts = category_counts.reindex(
+            [c for c in category_order if c in category_counts.index]
+        )
+
+        if ordered_counts.empty:
+            ax.text(0.5, 0.5, 'No categorized dates', ha='center', va='center',
+                   color='white', fontsize=10)
+            return
+
+        bars = ax.bar(range(len(ordered_counts)), ordered_counts.values,
+                     color=[category_colors.get(c, '#6c757d') for c in ordered_counts.index])
+
+        ax.set_xticks(range(len(ordered_counts)))
+        ax.set_xticklabels(ordered_counts.index, fontsize=7 if not enlarged else 9, rotation=15, ha='right')
+        ax.set_ylabel('Count', fontsize=8 if not enlarged else 10)
+        ax.set_title('Due Date Distribution', color=GUI_DARK_THEME['fg'],
+                    fontsize=10 if not enlarged else 12)
+
+        # Add count labels on top
+        for bar, count in zip(bars, ordered_counts.values):
+            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5,
+                   str(count), ha='center', fontsize=7 if not enlarged else 9, color='white')
+
+    def _draw_poam_source_chart(self, ax, enlarged=False):
+        """Draw POAM source breakdown (ACAS vs STIG) chart."""
+        df = self.filtered_poam_df if not self.filtered_poam_df.empty else self.poam_df
+
+        if df.empty:
+            ax.text(0.5, 0.5, 'No POAM data', ha='center', va='center',
+                   color='white', fontsize=10)
+            return
+
+        # Determine source from is_plugin_id and is_stig_rule columns
+        if 'is_plugin_id' in df.columns and 'is_stig_rule' in df.columns:
+            acas_count = df['is_plugin_id'].sum()
+            stig_count = df['is_stig_rule'].sum()
+            other_count = len(df) - acas_count - stig_count
+        else:
+            # Fallback: try to infer from vulnerability_library_rule_id
+            if 'vulnerability_library_rule_id' in df.columns:
+                def classify_rule_id(rule_id):
+                    if pd.isna(rule_id):
+                        return 'Unknown'
+                    rule_id = str(rule_id)
+                    if rule_id.isdigit():
+                        return 'ACAS'
+                    elif 'SV-' in rule_id.upper():
+                        return 'STIG'
+                    return 'Other'
+                df = df.copy()
+                df['source'] = df['vulnerability_library_rule_id'].apply(classify_rule_id)
+                source_counts = df['source'].value_counts()
+                acas_count = source_counts.get('ACAS', 0)
+                stig_count = source_counts.get('STIG', 0)
+                other_count = source_counts.get('Other', 0) + source_counts.get('Unknown', 0)
+            else:
+                ax.text(0.5, 0.5, 'No source data', ha='center', va='center',
+                       color='white', fontsize=10)
+                return
+
+        # Create pie chart
+        labels = []
+        values = []
+        colors = []
+        source_colors = {
+            'ACAS': '#17a2b8',   # Cyan
+            'STIG': '#28a745',   # Green
+            'Other': '#6c757d', # Gray
+        }
+
+        if acas_count > 0:
+            labels.append(f'ACAS\n({acas_count})')
+            values.append(acas_count)
+            colors.append(source_colors['ACAS'])
+        if stig_count > 0:
+            labels.append(f'STIG\n({stig_count})')
+            values.append(stig_count)
+            colors.append(source_colors['STIG'])
+        if other_count > 0:
+            labels.append(f'Other\n({other_count})')
+            values.append(other_count)
+            colors.append(source_colors['Other'])
+
+        if not values:
+            ax.text(0.5, 0.5, 'No source data', ha='center', va='center',
+                   color='white', fontsize=10)
+            return
+
+        wedges, texts, autotexts = ax.pie(
+            values, labels=labels, colors=colors,
+            autopct='%1.1f%%',
+            textprops={'color': 'white', 'fontsize': 8 if not enlarged else 10}
+        )
+
+        ax.set_title('POAMs by Source', color=GUI_DARK_THEME['fg'],
+                    fontsize=10 if not enlarged else 12)
+
+    # Pop-out drawing methods for POAM
+    def _draw_poam_status_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw POAM status distribution for pop-out."""
+        self._draw_poam_status_chart(ax, enlarged=True)
+
+    def _draw_poam_severity_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw POAM severity breakdown for pop-out."""
+        self._draw_poam_severity_chart(ax, enlarged=True)
+
+    def _draw_poam_due_date_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw POAM due date distribution for pop-out."""
+        self._draw_poam_due_date_chart(ax, enlarged=True)
+
+    def _draw_poam_source_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw POAM source breakdown for pop-out."""
+        self._draw_poam_source_chart(ax, enlarged=True)
 
     def _draw_heatmap_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw Risk Heatmap for pop-out."""
