@@ -35,6 +35,7 @@ from ..analysis.host_presence import create_host_presence_analysis
 from ..analysis.scan_changes import analyze_scan_changes
 from ..analysis.opdir_compliance import load_opdir_mapping, enrich_with_opdir
 from ..analysis.iavm_parser import load_iavm_summaries, enrich_findings_with_iavm
+from ..parsers.stig_parser import parse_multiple_cklb_files, get_stig_summary, get_consolidated_findings
 from ..analysis.advanced_metrics import (
     get_all_advanced_metrics, calculate_reopen_rate, calculate_coverage_metrics,
     calculate_remediation_rate, calculate_sla_breach_tracking, calculate_normalized_metrics,
@@ -80,6 +81,7 @@ class NessusHistoryTrackerApp:
         self.scan_changes_df = pd.DataFrame()
         self.opdir_df = pd.DataFrame()
         self.iavm_df = pd.DataFrame()
+        self.stig_df = pd.DataFrame()  # STIG checklist findings
         self.plugins_dict = None
 
         # Filtered data for display
@@ -87,6 +89,7 @@ class NessusHistoryTrackerApp:
         self.filtered_host_df = pd.DataFrame()
         self.filtered_historical_df = pd.DataFrame()
         self.filtered_scan_changes_df = pd.DataFrame()
+        self.filtered_stig_df = pd.DataFrame()  # Filtered STIG findings
 
         # File paths
         self.archive_paths: List[str] = []
@@ -94,6 +97,7 @@ class NessusHistoryTrackerApp:
         self.existing_db_path: Optional[str] = None
         self.opdir_file_path: Optional[str] = None
         self.iavm_file_path: Optional[str] = None
+        self.stig_file_paths: List[str] = []  # STIG .cklb files
 
         # Filter variables
         self.filter_include_info = tk.BooleanVar(value=True)
@@ -257,7 +261,7 @@ class NessusHistoryTrackerApp:
         file_frame.pack(fill=tk.X, pady=(0, 5))
 
         # Load order hint
-        hint_label = ttk.Label(file_frame, text="Load order: DB → Archives → Plugins → OPDIR → IAVM",
+        hint_label = ttk.Label(file_frame, text="Load order: DB → Archives → Plugins → OPDIR → IAVM → STIGs",
                               font=('TkDefaultFont', 8), foreground='#888888')
         hint_label.pack(anchor=tk.W, pady=(0, 3))
 
@@ -300,6 +304,14 @@ class NessusHistoryTrackerApp:
         self.iavm_label = ttk.Label(iavm_row, text="None", foreground="gray", width=16, anchor=tk.W)
         self.iavm_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Button(iavm_row, text="...", command=self._select_iavm_file, width=3).pack(side=tk.RIGHT)
+
+        # STIG Checklists row
+        stig_row = ttk.Frame(file_frame)
+        stig_row.pack(fill=tk.X, pady=2)
+        ttk.Label(stig_row, text="6. STIGs:", width=11).pack(side=tk.LEFT)
+        self.stig_label = ttk.Label(stig_row, text="None", foreground="gray", width=16, anchor=tk.W)
+        self.stig_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(stig_row, text="...", command=self._select_stig_files, width=3).pack(side=tk.RIGHT)
 
     def _build_filter_panel(self, parent):
         """Build filter controls section with 2-column layout."""
@@ -1916,6 +1928,59 @@ class NessusHistoryTrackerApp:
             self._log(f"Selected IAVM file: {os.path.basename(path)}")
             self.settings_manager.update_recent_file('iavm', path)
 
+    def _select_stig_files(self):
+        """Select STIG Checklist files (.cklb JSON format)."""
+        filetypes = (('STIG Checklists', '*.cklb'), ('JSON files', '*.json'), ('All files', '*.*'))
+        paths = filedialog.askopenfilenames(title='Select STIG Checklist Files', filetypes=filetypes)
+
+        if paths:
+            self.stig_file_paths = list(paths)
+            count = len(self.stig_file_paths)
+            if count == 1:
+                display_text = self._truncate_filename(os.path.basename(paths[0]))
+            else:
+                display_text = f"{count} files"
+            self.stig_label.config(text=display_text, foreground="white")
+            self._log(f"Selected {count} STIG checklist file(s)")
+
+            # Parse STIG files immediately
+            self._load_stig_files()
+
+    def _load_stig_files(self):
+        """Load and parse selected STIG checklist files."""
+        if not self.stig_file_paths:
+            return
+
+        try:
+            self._log("Parsing STIG checklist files...")
+            self.stig_df, checklists = parse_multiple_cklb_files(self.stig_file_paths)
+
+            if not self.stig_df.empty:
+                summary = get_stig_summary(self.stig_df)
+                self._log(f"Loaded {summary['total_rules']} STIG rules from {len(checklists)} checklists")
+                self._log(f"  Open findings: {summary['total_findings']}")
+                self._log(f"  Unique hosts: {summary['unique_hosts']}")
+                self._log(f"  By CAT: {summary.get('open_by_cat', {})}")
+
+                # Update filtered STIG data
+                self.filtered_stig_df = self.stig_df.copy()
+
+                # Refresh STIG tab if it exists
+                if hasattr(self, '_update_stig_tab'):
+                    self.window.after(0, self._update_stig_tab)
+
+                messagebox.showinfo("STIG Loaded",
+                    f"Loaded {summary['total_rules']} rules\n"
+                    f"Open findings: {summary['total_findings']}\n"
+                    f"Hosts: {summary['unique_hosts']}")
+            else:
+                self._log("No STIG findings found in selected files")
+                messagebox.showwarning("No Data", "No STIG findings found in selected files")
+
+        except Exception as e:
+            self._log(f"Error loading STIG files: {e}")
+            messagebox.showerror("Error", f"Failed to load STIG files: {e}")
+
     # Processing methods
     def _process_archives(self):
         """Process selected archives in a background thread."""
@@ -1943,10 +2008,18 @@ class NessusHistoryTrackerApp:
                     self._log_safe("Loading plugins database...")
                     self.plugins_dict = load_plugins_database(self.plugins_db_path)
 
-                # Process archives or load existing DB FIRST
-                if self.existing_db_path and not self.archive_paths:
+                # Process archives and/or load existing DB
+                if self.existing_db_path:
+                    # Always load existing database first
                     self._load_existing_database_thread()
+
+                    if self.archive_paths:
+                        # Both DB and new archives - append new findings
+                        existing_count = len(self.historical_df)
+                        self._log_safe(f"Appending new archives to existing {existing_count} findings...")
+                        self._append_new_archives_thread()
                 else:
+                    # No existing DB - process archives as new
                     self._process_new_archives_thread()
 
                 # After loading database, check if we need to load OPDIR from file
@@ -2109,6 +2182,82 @@ class NessusHistoryTrackerApp:
         if all_findings:
             self.historical_df = pd.concat(all_findings, ignore_index=True)
             self._log_safe(f"Total findings: {len(self.historical_df)}")
+
+        # Run analysis refresh on main thread
+        self.window.after(0, self._refresh_analysis_internal)
+
+    def _append_new_archives_thread(self):
+        """Append new archive files to existing database (called from thread)."""
+        import tempfile
+
+        self._log_safe("Processing new archives to append...")
+
+        all_findings = []
+        temp_dirs = []
+
+        for archive_path in self.archive_paths:
+            self._log_safe(f"Processing: {os.path.basename(archive_path)}")
+
+            if archive_path.endswith('.zip'):
+                temp_dir = tempfile.mkdtemp()
+                temp_dirs.append(temp_dir)
+                extract_nested_archives(archive_path, temp_dir)
+                nessus_files = find_files_by_extension(temp_dir, '.nessus')
+            else:
+                nessus_files = [archive_path]
+
+            if nessus_files:
+                findings_df, _ = parse_multiple_nessus_files(nessus_files, self.plugins_dict)
+                if not findings_df.empty:
+                    findings_df = enrich_findings_with_severity(findings_df)
+                    all_findings.append(findings_df)
+
+        # Cleanup temp directories
+        for temp_dir in temp_dirs:
+            cleanup_temp_directory(temp_dir)
+
+        if all_findings:
+            new_findings_df = pd.concat(all_findings, ignore_index=True)
+            new_count = len(new_findings_df)
+            self._log_safe(f"New findings from archives: {new_count}")
+
+            # Check for duplicates before appending
+            if not self.historical_df.empty:
+                # Identify key columns for deduplication
+                key_cols = ['hostname', 'plugin_id', 'scan_date']
+                available_keys = [col for col in key_cols if col in self.historical_df.columns and col in new_findings_df.columns]
+
+                if available_keys:
+                    # Convert scan_date to datetime in new findings
+                    if 'scan_date' in new_findings_df.columns:
+                        new_findings_df['scan_date'] = pd.to_datetime(new_findings_df['scan_date'])
+
+                    # Find truly new findings (not already in DB)
+                    existing_keys = set(self.historical_df[available_keys].apply(tuple, axis=1))
+                    new_keys = new_findings_df[available_keys].apply(tuple, axis=1)
+                    is_new = ~new_keys.isin(existing_keys)
+
+                    unique_new_findings = new_findings_df[is_new]
+                    duplicate_count = new_count - len(unique_new_findings)
+
+                    if duplicate_count > 0:
+                        self._log_safe(f"Skipped {duplicate_count} duplicate findings already in database")
+
+                    if len(unique_new_findings) > 0:
+                        # Append unique findings
+                        self.historical_df = pd.concat([self.historical_df, unique_new_findings], ignore_index=True)
+                        self._log_safe(f"Appended {len(unique_new_findings)} new findings")
+                        self._log_safe(f"Total findings now: {len(self.historical_df)}")
+                    else:
+                        self._log_safe("No new unique findings to append")
+                else:
+                    # No key columns available, just append all
+                    self.historical_df = pd.concat([self.historical_df, new_findings_df], ignore_index=True)
+                    self._log_safe(f"Appended {new_count} findings (no dedup possible)")
+            else:
+                # No existing data, just set
+                self.historical_df = new_findings_df
+                self._log_safe(f"Set {new_count} findings as initial data")
 
         # Run analysis refresh on main thread
         self.window.after(0, self._refresh_analysis_internal)
