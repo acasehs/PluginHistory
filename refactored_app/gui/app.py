@@ -253,6 +253,7 @@ class NessusHistoryTrackerApp:
         self._build_metrics_tab()
         self._build_host_tracking_tab()
         self._build_advanced_tab()
+        self._build_stig_tab()  # STIG checklist findings
         self._build_logging_tab()  # Moved to last
 
     def _build_file_selection(self, parent):
@@ -1457,6 +1458,48 @@ class NessusHistoryTrackerApp:
         else:
             ttk.Label(advanced_frame, text="Install matplotlib for advanced visualizations").pack(pady=50)
 
+    def _build_stig_tab(self):
+        """Build STIG Findings visualization tab with CAT severity charts."""
+        stig_frame = ttk.Frame(self.notebook)
+        self.notebook.add(stig_frame, text="STIG Findings")
+        self.stig_tab_frame = stig_frame
+
+        if HAS_MATPLOTLIB:
+            self.stig_fig = Figure(figsize=(10, 8), dpi=100, facecolor=GUI_DARK_THEME['bg'])
+
+            # CAT severity distribution (pie chart)
+            self.stig_ax1 = self.stig_fig.add_subplot(221)
+            self.stig_ax1.set_title('Findings by CAT Severity', color=GUI_DARK_THEME['fg'])
+
+            # Status distribution (horizontal bar)
+            self.stig_ax2 = self.stig_fig.add_subplot(222)
+            self.stig_ax2.set_title('Findings by Status', color=GUI_DARK_THEME['fg'])
+
+            # Open findings by STIG (horizontal bar)
+            self.stig_ax3 = self.stig_fig.add_subplot(223)
+            self.stig_ax3.set_title('Open Findings by STIG', color=GUI_DARK_THEME['fg'])
+
+            # Open findings by CAT and STIG (stacked bar)
+            self.stig_ax4 = self.stig_fig.add_subplot(224)
+            self.stig_ax4.set_title('Open Findings: CAT by STIG', color=GUI_DARK_THEME['fg'])
+
+            for ax in [self.stig_ax1, self.stig_ax2, self.stig_ax3, self.stig_ax4]:
+                ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
+                ax.tick_params(colors=GUI_DARK_THEME['fg'])
+                for spine in ax.spines.values():
+                    spine.set_color(GUI_DARK_THEME['fg'])
+
+            self.stig_canvas = FigureCanvasTkAgg(self.stig_fig, master=stig_frame)
+            self.stig_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+            # Bind double-click for pop-out
+            hint = ttk.Label(stig_frame, text="Double-click chart to pop-out | Load STIG Checklists (.cklb) from Data Sources",
+                            font=('Arial', 8), foreground='gray')
+            hint.pack(anchor=tk.SE, padx=5)
+            self._bind_chart_popouts_stig()
+        else:
+            ttk.Label(stig_frame, text="Install matplotlib for STIG visualizations").pack(pady=50)
+
     # Helper methods
     def _get_current_date_interval(self) -> str:
         """
@@ -1980,6 +2023,139 @@ class NessusHistoryTrackerApp:
         except Exception as e:
             self._log(f"Error loading STIG files: {e}")
             messagebox.showerror("Error", f"Failed to load STIG files: {e}")
+
+    def _update_stig_tab(self):
+        """Update the STIG Findings tab with current data."""
+        if not HAS_MATPLOTLIB or not hasattr(self, 'stig_fig'):
+            return
+
+        df = self.filtered_stig_df if not self.filtered_stig_df.empty else self.stig_df
+
+        # Clear all axes
+        for ax in [self.stig_ax1, self.stig_ax2, self.stig_ax3, self.stig_ax4]:
+            ax.clear()
+            ax.set_facecolor(GUI_DARK_THEME['entry_bg'])
+            ax.tick_params(colors=GUI_DARK_THEME['fg'])
+            for spine in ax.spines.values():
+                spine.set_color(GUI_DARK_THEME['fg'])
+
+        if df.empty:
+            for ax in [self.stig_ax1, self.stig_ax2, self.stig_ax3, self.stig_ax4]:
+                ax.text(0.5, 0.5, 'No STIG data loaded\n(Load .cklb files from Data Sources)',
+                       ha='center', va='center', color='white', fontsize=10,
+                       transform=ax.transAxes)
+            self.stig_fig.tight_layout()
+            self.stig_canvas.draw()
+            return
+
+        # CAT severity colors
+        cat_colors = {
+            'CAT I': '#dc3545',    # Red
+            'CAT II': '#fd7e14',   # Orange
+            'CAT III': '#ffc107',  # Yellow
+            'Unknown': '#6c757d'   # Gray
+        }
+        cat_order = ['CAT I', 'CAT II', 'CAT III', 'Unknown']
+
+        # Status colors
+        status_colors = {
+            'Open': '#dc3545',           # Red
+            'Not a Finding': '#28a745',  # Green
+            'Not Applicable': '#17a2b8', # Blue
+            'Not Reviewed': '#6c757d'    # Gray
+        }
+
+        # Chart 1: CAT Severity Pie (Open findings only)
+        open_df = df[df['status'] == 'Open'] if 'status' in df.columns else df
+        if not open_df.empty and 'cat_severity' in open_df.columns:
+            cat_counts = open_df['cat_severity'].value_counts()
+            ordered_counts = cat_counts.reindex([c for c in cat_order if c in cat_counts.index])
+
+            if not ordered_counts.empty:
+                colors = [cat_colors.get(cat, '#6c757d') for cat in ordered_counts.index]
+                labels = [f'{cat}\n({count})' for cat, count in ordered_counts.items()]
+
+                self.stig_ax1.pie(ordered_counts.values, labels=labels, colors=colors,
+                                 autopct='%1.1f%%', textprops={'color': 'white', 'fontsize': 8})
+                self.stig_ax1.set_title('Open Findings by CAT Severity', color=GUI_DARK_THEME['fg'])
+        else:
+            self.stig_ax1.text(0.5, 0.5, 'No open findings', ha='center', va='center',
+                             color='white', transform=self.stig_ax1.transAxes)
+            self.stig_ax1.set_title('Open Findings by CAT Severity', color=GUI_DARK_THEME['fg'])
+
+        # Chart 2: Status Distribution
+        if 'status' in df.columns:
+            status_counts = df['status'].value_counts()
+            colors = [status_colors.get(s, '#6c757d') for s in status_counts.index]
+            bars = self.stig_ax2.barh(range(len(status_counts)), status_counts.values, color=colors)
+            self.stig_ax2.set_yticks(range(len(status_counts)))
+            self.stig_ax2.set_yticklabels(status_counts.index, fontsize=8, color=GUI_DARK_THEME['fg'])
+            self.stig_ax2.set_xlabel('Count', fontsize=8, color=GUI_DARK_THEME['fg'])
+            self.stig_ax2.set_title('Rules by Status', color=GUI_DARK_THEME['fg'])
+
+            for bar, count in zip(bars, status_counts.values):
+                self.stig_ax2.text(bar.get_width() + 0.5, bar.get_y() + bar.get_height()/2,
+                                  str(count), va='center', fontsize=7, color='white')
+
+        # Chart 3: Open Findings by STIG
+        if not open_df.empty and 'stig_display_name' in open_df.columns:
+            stig_counts = open_df['stig_display_name'].value_counts().head(10)
+
+            def truncate_name(name, max_len=30):
+                return name[:max_len] + '...' if len(str(name)) > max_len else str(name)
+
+            truncated = [truncate_name(n) for n in stig_counts.index]
+            bars = self.stig_ax3.barh(range(len(stig_counts)), stig_counts.values, color='#dc3545')
+            self.stig_ax3.set_yticks(range(len(stig_counts)))
+            self.stig_ax3.set_yticklabels(truncated, fontsize=7, color=GUI_DARK_THEME['fg'])
+            self.stig_ax3.set_xlabel('Open Findings', fontsize=8, color=GUI_DARK_THEME['fg'])
+            self.stig_ax3.set_title('Open Findings by STIG', color=GUI_DARK_THEME['fg'])
+
+            for bar, count in zip(bars, stig_counts.values):
+                self.stig_ax3.text(bar.get_width() + 0.5, bar.get_y() + bar.get_height()/2,
+                                  str(count), va='center', fontsize=7, color='white')
+        else:
+            self.stig_ax3.text(0.5, 0.5, 'No open findings', ha='center', va='center',
+                             color='white', transform=self.stig_ax3.transAxes)
+            self.stig_ax3.set_title('Open Findings by STIG', color=GUI_DARK_THEME['fg'])
+
+        # Chart 4: Stacked CAT by STIG
+        if not open_df.empty and 'stig_display_name' in open_df.columns and 'cat_severity' in open_df.columns:
+            pivot = open_df.pivot_table(index='stig_display_name', columns='cat_severity',
+                                       aggfunc='size', fill_value=0)
+
+            # Limit to top 10 STIGs by total count
+            pivot['total'] = pivot.sum(axis=1)
+            pivot = pivot.nlargest(10, 'total').drop(columns='total')
+
+            cols_ordered = [c for c in cat_order if c in pivot.columns]
+
+            def truncate_name(name, max_len=25):
+                return name[:max_len] + '...' if len(str(name)) > max_len else str(name)
+
+            y_labels = [truncate_name(n) for n in pivot.index]
+            y_pos = range(len(pivot.index))
+
+            left = np.zeros(len(pivot.index))
+            for cat in cols_ordered:
+                if cat in pivot.columns:
+                    values = pivot[cat].values
+                    self.stig_ax4.barh(y_pos, values, left=left, color=cat_colors.get(cat, '#6c757d'),
+                                      label=cat)
+                    left += values
+
+            self.stig_ax4.set_yticks(y_pos)
+            self.stig_ax4.set_yticklabels(y_labels, fontsize=6, color=GUI_DARK_THEME['fg'])
+            self.stig_ax4.set_xlabel('Open Findings', fontsize=8, color=GUI_DARK_THEME['fg'])
+            self.stig_ax4.set_title('Open: CAT Severity by STIG', color=GUI_DARK_THEME['fg'])
+            self.stig_ax4.legend(loc='lower right', fontsize=6)
+        else:
+            self.stig_ax4.text(0.5, 0.5, 'No open findings', ha='center', va='center',
+                             color='white', transform=self.stig_ax4.transAxes)
+            self.stig_ax4.set_title('Open: CAT Severity by STIG', color=GUI_DARK_THEME['fg'])
+
+        self.stig_fig.tight_layout()
+        self.stig_canvas.draw()
 
     # Processing methods
     def _process_archives(self):
@@ -7430,6 +7606,204 @@ class NessusHistoryTrackerApp:
             ChartPopoutModal(self.window, title, redraw_func)
 
         self.advanced_canvas4.get_tk_widget().bind('<Double-Button-1>', on_double_click)
+
+    def _bind_chart_popouts_stig(self):
+        """Bind double-click pop-out for STIG tab charts."""
+        if not hasattr(self, 'stig_canvas'):
+            return
+
+        def get_click_quadrant(event):
+            widget = event.widget
+            w, h = widget.winfo_width(), widget.winfo_height()
+            x, y = event.x, event.y
+            col = 0 if x < w / 2 else 1
+            row = 0 if y < h / 2 else 1
+            return row * 2 + col
+
+        def on_double_click(event):
+            quadrant = get_click_quadrant(event)
+            chart_info = [
+                ('Findings by CAT Severity', self._draw_stig_cat_severity_popout),
+                ('Findings by Status', self._draw_stig_status_popout),
+                ('Open Findings by STIG', self._draw_stig_by_stig_popout),
+                ('Open Findings: CAT by STIG', self._draw_stig_cat_by_stig_popout),
+            ]
+            title, redraw_func = chart_info[quadrant]
+            ChartPopoutModal(self.window, title, redraw_func)
+
+        self.stig_canvas.get_tk_widget().bind('<Double-Button-1>', on_double_click)
+
+    def _draw_stig_cat_severity_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw CAT severity pie chart for STIG findings pop-out."""
+        df = self.filtered_stig_df if hasattr(self, 'filtered_stig_df') and not self.filtered_stig_df.empty else self.stig_df
+
+        if df.empty or 'cat_severity' not in df.columns:
+            ax.text(0.5, 0.5, 'No STIG data available\n(Load .cklb files from Data Sources)',
+                   ha='center', va='center', color='white', fontsize=12)
+            return
+
+        # Count findings by CAT severity (only Open findings)
+        open_df = df[df['status'] == 'Open'] if 'status' in df.columns else df
+        cat_counts = open_df['cat_severity'].value_counts()
+
+        if cat_counts.empty:
+            ax.text(0.5, 0.5, 'No open findings', ha='center', va='center', color='white', fontsize=12)
+            return
+
+        # CAT severity colors (CAT I = most critical)
+        cat_colors = {
+            'CAT I': '#dc3545',    # Red (Critical)
+            'CAT II': '#fd7e14',   # Orange (High)
+            'CAT III': '#ffc107',  # Yellow (Medium)
+            'Unknown': '#6c757d'   # Gray
+        }
+
+        # Order by severity
+        cat_order = ['CAT I', 'CAT II', 'CAT III', 'Unknown']
+        ordered_counts = cat_counts.reindex([c for c in cat_order if c in cat_counts.index])
+
+        colors = [cat_colors.get(cat, '#6c757d') for cat in ordered_counts.index]
+        labels = [f'{cat}\n({count})' for cat, count in ordered_counts.items()]
+        explode = [0.05 if ordered_counts.idxmax() == cat else 0 for cat in ordered_counts.index]
+
+        wedges, texts, autotexts = ax.pie(ordered_counts.values, labels=labels, colors=colors,
+                                          autopct='%1.1f%%', explode=explode,
+                                          textprops={'color': 'white', 'fontsize': 10 if enlarged else 8})
+
+        ax.set_title('Open Findings by CAT Severity', fontsize=12 if enlarged else 10)
+
+        if enlarged:
+            total = ordered_counts.sum()
+            ax.text(0.5, -0.1, f'Total Open Findings: {total}', transform=ax.transAxes,
+                   ha='center', fontsize=10, color='gray')
+
+    def _draw_stig_status_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw status distribution for STIG findings pop-out."""
+        df = self.filtered_stig_df if hasattr(self, 'filtered_stig_df') and not self.filtered_stig_df.empty else self.stig_df
+
+        if df.empty or 'status' not in df.columns:
+            ax.text(0.5, 0.5, 'No STIG data available\n(Load .cklb files from Data Sources)',
+                   ha='center', va='center', color='white', fontsize=12)
+            return
+
+        status_counts = df['status'].value_counts()
+
+        if status_counts.empty:
+            ax.text(0.5, 0.5, 'No data', ha='center', va='center', color='white', fontsize=12)
+            return
+
+        # Status colors
+        status_colors = {
+            'Open': '#dc3545',           # Red
+            'Not a Finding': '#28a745',  # Green
+            'Not Applicable': '#17a2b8', # Blue
+            'Not Reviewed': '#6c757d'    # Gray
+        }
+
+        colors = [status_colors.get(s, '#6c757d') for s in status_counts.index]
+        bars = ax.barh(range(len(status_counts)), status_counts.values, color=colors)
+
+        ax.set_yticks(range(len(status_counts)))
+        ax.set_yticklabels(status_counts.index, fontsize=10 if enlarged else 8)
+        ax.set_xlabel('Count', fontsize=10 if enlarged else 8)
+        ax.set_title('Rules by Status', fontsize=12 if enlarged else 10)
+
+        # Add count labels
+        for i, (bar, count) in enumerate(zip(bars, status_counts.values)):
+            ax.text(bar.get_width() + 0.5, bar.get_y() + bar.get_height()/2,
+                   str(count), va='center', fontsize=9 if enlarged else 7, color='white')
+
+        if enlarged:
+            ax.text(0.98, 0.02, f'Total Rules: {status_counts.sum()}', transform=ax.transAxes,
+                   ha='right', fontsize=9, color='gray')
+
+    def _draw_stig_by_stig_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw open findings by STIG for pop-out."""
+        df = self.filtered_stig_df if hasattr(self, 'filtered_stig_df') and not self.filtered_stig_df.empty else self.stig_df
+
+        if df.empty or 'stig_display_name' not in df.columns:
+            ax.text(0.5, 0.5, 'No STIG data available\n(Load .cklb files from Data Sources)',
+                   ha='center', va='center', color='white', fontsize=12)
+            return
+
+        # Only Open findings
+        open_df = df[df['status'] == 'Open'] if 'status' in df.columns else df
+
+        if open_df.empty:
+            ax.text(0.5, 0.5, 'No open findings', ha='center', va='center', color='white', fontsize=12)
+            return
+
+        stig_counts = open_df['stig_display_name'].value_counts()
+
+        # Truncate STIG names if too long
+        def truncate_name(name, max_len=40):
+            return name[:max_len] + '...' if len(str(name)) > max_len else str(name)
+
+        truncated_names = [truncate_name(n) for n in stig_counts.index]
+
+        bars = ax.barh(range(len(stig_counts)), stig_counts.values, color='#dc3545')
+
+        ax.set_yticks(range(len(stig_counts)))
+        ax.set_yticklabels(truncated_names, fontsize=9 if enlarged else 7)
+        ax.set_xlabel('Open Findings', fontsize=10 if enlarged else 8)
+        ax.set_title('Open Findings by STIG', fontsize=12 if enlarged else 10)
+
+        # Add count labels
+        for bar, count in zip(bars, stig_counts.values):
+            ax.text(bar.get_width() + 0.5, bar.get_y() + bar.get_height()/2,
+                   str(count), va='center', fontsize=9 if enlarged else 7, color='white')
+
+    def _draw_stig_cat_by_stig_popout(self, fig, ax, enlarged=False, show_labels=True):
+        """Draw stacked bar chart of CAT severity by STIG for pop-out."""
+        df = self.filtered_stig_df if hasattr(self, 'filtered_stig_df') and not self.filtered_stig_df.empty else self.stig_df
+
+        if df.empty or 'stig_display_name' not in df.columns or 'cat_severity' not in df.columns:
+            ax.text(0.5, 0.5, 'No STIG data available\n(Load .cklb files from Data Sources)',
+                   ha='center', va='center', color='white', fontsize=12)
+            return
+
+        # Only Open findings
+        open_df = df[df['status'] == 'Open'] if 'status' in df.columns else df
+
+        if open_df.empty:
+            ax.text(0.5, 0.5, 'No open findings', ha='center', va='center', color='white', fontsize=12)
+            return
+
+        # Create pivot table
+        pivot = open_df.pivot_table(index='stig_display_name', columns='cat_severity',
+                                   aggfunc='size', fill_value=0)
+
+        # CAT severity colors and order
+        cat_colors = {
+            'CAT I': '#dc3545',
+            'CAT II': '#fd7e14',
+            'CAT III': '#ffc107',
+            'Unknown': '#6c757d'
+        }
+        cat_order = ['CAT I', 'CAT II', 'CAT III', 'Unknown']
+        cols_ordered = [c for c in cat_order if c in pivot.columns]
+
+        # Truncate STIG names
+        def truncate_name(name, max_len=35):
+            return name[:max_len] + '...' if len(str(name)) > max_len else str(name)
+
+        y_labels = [truncate_name(n) for n in pivot.index]
+        y_pos = range(len(pivot.index))
+
+        # Draw stacked bars
+        left = np.zeros(len(pivot.index))
+        for cat in cols_ordered:
+            if cat in pivot.columns:
+                values = pivot[cat].values
+                ax.barh(y_pos, values, left=left, color=cat_colors.get(cat, '#6c757d'),
+                       label=cat)
+                left += values
+
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels(y_labels, fontsize=8 if enlarged else 6)
+        ax.set_xlabel('Open Findings', fontsize=10 if enlarged else 8)
+        ax.set_title('Open Findings: CAT Severity by STIG', fontsize=12 if enlarged else 10)
+        ax.legend(loc='lower right', fontsize=8 if enlarged else 6)
 
     def _draw_heatmap_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw Risk Heatmap for pop-out."""

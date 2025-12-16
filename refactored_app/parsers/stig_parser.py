@@ -69,6 +69,9 @@ class STIGRule:
     stig_name: str
     stig_display_name: str
     release_info: str
+    stig_version: str  # e.g., "2"
+    release_number: str  # e.g., "6"
+    benchmark_date: str  # e.g., "02 Apr 2025"
 
     # CCI references
     ccis: List[str] = field(default_factory=list)
@@ -153,6 +156,36 @@ def parse_datetime(dt_string: Optional[str]) -> Optional[datetime]:
     return None
 
 
+def parse_release_info(release_info: str) -> Dict[str, str]:
+    """
+    Parse the release_info field to extract release number and benchmark date.
+
+    Example input: "Release: 6 Benchmark Date: 02 Apr 2025"
+    Returns: {'release': '6', 'benchmark_date': '02 Apr 2025'}
+    """
+    result = {'release': '', 'benchmark_date': ''}
+
+    if not release_info:
+        return result
+
+    # Extract release number
+    release_match = re.search(r'Release:\s*(\d+)', release_info, re.IGNORECASE)
+    if release_match:
+        result['release'] = release_match.group(1)
+
+    # Extract benchmark date
+    date_match = re.search(r'Benchmark Date:\s*(.+?)(?:$|\s*Release)', release_info, re.IGNORECASE)
+    if date_match:
+        result['benchmark_date'] = date_match.group(1).strip()
+    else:
+        # Try alternate pattern - date at end
+        date_match = re.search(r'Benchmark Date:\s*(.+)$', release_info, re.IGNORECASE)
+        if date_match:
+            result['benchmark_date'] = date_match.group(1).strip()
+
+    return result
+
+
 def parse_cklb_file(file_path: str) -> Optional[STIGChecklist]:
     """
     Parse a .cklb (JSON) STIG checklist file.
@@ -196,6 +229,11 @@ def parse_cklb_file(file_path: str) -> Optional[STIGChecklist]:
             }
             checklist.stigs.append(stig_info)
 
+            # Parse release info for this STIG
+            release_info = stig.get('release_info', '')
+            parsed_release = parse_release_info(release_info)
+            stig_version = str(stig.get('version', ''))
+
             # Parse rules within this STIG
             for rule in stig.get('rules', []):
                 severity = rule.get('severity', 'unknown')
@@ -226,7 +264,10 @@ def parse_cklb_file(file_path: str) -> Optional[STIGChecklist]:
                     ip_address=checklist.ip_address,
                     stig_name=stig.get('stig_name', ''),
                     stig_display_name=stig.get('display_name', ''),
-                    release_info=stig.get('release_info', ''),
+                    release_info=release_info,
+                    stig_version=stig_version,
+                    release_number=parsed_release['release'],
+                    benchmark_date=parsed_release['benchmark_date'],
                     ccis=rule.get('ccis', []) or [],
                     legacy_ids=rule.get('legacy_ids', []) or [],
                     created_at=parse_datetime(rule.get('createdAt')),
@@ -293,6 +334,9 @@ def parse_multiple_cklb_files(file_paths: List[str]) -> Tuple[pd.DataFrame, List
             'stig_name': rule.stig_name,
             'stig_display_name': rule.stig_display_name,
             'release_info': rule.release_info,
+            'stig_version': rule.stig_version,
+            'release_number': rule.release_number,
+            'benchmark_date': rule.benchmark_date,
             'ccis': ','.join(rule.ccis) if rule.ccis else '',
             'legacy_ids': ','.join(rule.legacy_ids) if rule.legacy_ids else '',
             'created_at': rule.created_at,
