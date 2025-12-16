@@ -1636,41 +1636,65 @@ class NessusHistoryTrackerApp:
         self.notebook.add(reporting_frame, text="Reporting")
         self.reporting_frame = reporting_frame
 
-        # Top controls frame
-        controls_frame = ttk.Frame(reporting_frame)
-        controls_frame.pack(fill=tk.X, padx=10, pady=5)
+        # Row 1: Date range and weekly report controls
+        row1_frame = ttk.Frame(reporting_frame)
+        row1_frame.pack(fill=tk.X, padx=10, pady=(5, 2))
 
         # Date range selection
-        ttk.Label(controls_frame, text="Report Period:").pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Label(row1_frame, text="Report Period:").pack(side=tk.LEFT, padx=(0, 5))
 
         # Start date dropdown
-        ttk.Label(controls_frame, text="From:").pack(side=tk.LEFT, padx=(10, 2))
-        self.report_start_date = ttk.Combobox(controls_frame, width=12, state='readonly')
+        ttk.Label(row1_frame, text="From:").pack(side=tk.LEFT, padx=(10, 2))
+        self.report_start_date = ttk.Combobox(row1_frame, width=12, state='readonly')
         self.report_start_date.pack(side=tk.LEFT, padx=(0, 10))
 
         # End date dropdown
-        ttk.Label(controls_frame, text="To:").pack(side=tk.LEFT, padx=(0, 2))
-        self.report_end_date = ttk.Combobox(controls_frame, width=12, state='readonly')
+        ttk.Label(row1_frame, text="To:").pack(side=tk.LEFT, padx=(0, 2))
+        self.report_end_date = ttk.Combobox(row1_frame, width=12, state='readonly')
         self.report_end_date.pack(side=tk.LEFT, padx=(0, 20))
 
         # Generate report button
-        ttk.Button(controls_frame, text="Generate Weekly Report",
+        ttk.Button(row1_frame, text="Generate Weekly Report",
                   command=self._generate_weekly_resolution_report).pack(side=tk.LEFT, padx=5)
 
         # Export button
-        ttk.Button(controls_frame, text="Export to Excel",
+        ttk.Button(row1_frame, text="Export Excel",
                   command=self._export_resolution_report).pack(side=tk.LEFT, padx=5)
 
-        # PDF Export button
-        ttk.Button(controls_frame, text="Export to PDF",
+        # PDF Export button for weekly report
+        ttk.Button(row1_frame, text="Export PDF",
                   command=self._export_resolution_pdf).pack(side=tk.LEFT, padx=5)
 
         # Environment filter
-        ttk.Label(controls_frame, text="Environment:").pack(side=tk.LEFT, padx=(20, 5))
-        self.report_env_filter = ttk.Combobox(controls_frame, width=15, state='readonly',
+        ttk.Label(row1_frame, text="Env:").pack(side=tk.LEFT, padx=(20, 5))
+        self.report_env_filter = ttk.Combobox(row1_frame, width=12, state='readonly',
                                               values=["All Combined", "All Separate"])
         self.report_env_filter.set("All Combined")
         self.report_env_filter.pack(side=tk.LEFT)
+
+        # Row 2: Additional PDF Reports
+        row2_frame = ttk.Frame(reporting_frame)
+        row2_frame.pack(fill=tk.X, padx=10, pady=(2, 5))
+
+        ttk.Label(row2_frame, text="PDF Reports:", font=('Arial', 9, 'bold')).pack(side=tk.LEFT, padx=(0, 10))
+
+        ttk.Button(row2_frame, text="Executive Summary",
+                  command=self._export_executive_summary_pdf).pack(side=tk.LEFT, padx=3)
+
+        ttk.Button(row2_frame, text="Host Risk Assessment",
+                  command=self._export_host_risk_pdf).pack(side=tk.LEFT, padx=3)
+
+        ttk.Button(row2_frame, text="Vulnerability Aging",
+                  command=self._export_aging_report_pdf).pack(side=tk.LEFT, padx=3)
+
+        ttk.Button(row2_frame, text="Remediation Priority",
+                  command=self._export_remediation_priority_pdf).pack(side=tk.LEFT, padx=3)
+
+        ttk.Button(row2_frame, text="Monthly Metrics",
+                  command=self._export_monthly_metrics_pdf).pack(side=tk.LEFT, padx=3)
+
+        ttk.Button(row2_frame, text="Compliance Status",
+                  command=self._export_compliance_status_pdf).pack(side=tk.LEFT, padx=3)
 
         # Main content area with scrollable text/table
         content_frame = ttk.Frame(reporting_frame)
@@ -3576,6 +3600,1123 @@ Closed Findings:           {len(report_data.get('closed_findings', [])):,}
         except Exception as e:
             self._log(f"Error exporting PDF report: {e}")
             messagebox.showerror("Export Error", f"Failed to export PDF report: {e}")
+
+    def _export_executive_summary_pdf(self):
+        """Export Executive Summary PDF - high-level overview for leadership."""
+        if self.historical_df.empty and self.lifecycle_df.empty:
+            messagebox.showwarning("No Data", "Please load scan data first")
+            return
+
+        filepath = filedialog.asksaveasfilename(
+            title="Export Executive Summary PDF",
+            defaultextension=".pdf",
+            filetypes=[("PDF files", "*.pdf")],
+            initialfile=f"executive_summary_{datetime.now().strftime('%Y%m%d')}.pdf"
+        )
+
+        if not filepath:
+            return
+
+        try:
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+            from matplotlib.backends.backend_pdf import PdfPages
+            import numpy as np
+
+            df = self.lifecycle_df if not self.lifecycle_df.empty else self.historical_df
+
+            # Set up dark theme
+            plt.style.use('dark_background')
+
+            with PdfPages(filepath) as pdf:
+                # === PAGE 1: Executive Overview ===
+                fig = plt.figure(figsize=(11, 8.5))
+                fig.suptitle('Executive Security Summary', fontsize=18, fontweight='bold', y=0.98)
+
+                # Calculate key metrics
+                total_findings = len(df)
+                active_findings = len(df[df['status'] == 'Active']) if 'status' in df.columns else total_findings
+                resolved_findings = len(df[df['status'] == 'Resolved']) if 'status' in df.columns else 0
+
+                # Severity breakdown
+                sev_counts = {'Critical': 0, 'High': 0, 'Medium': 0, 'Low': 0}
+                if 'severity_text' in df.columns:
+                    active_df = df[df['status'] == 'Active'] if 'status' in df.columns else df
+                    for sev in sev_counts.keys():
+                        sev_counts[sev] = len(active_df[active_df['severity_text'] == sev])
+
+                # Environment breakdown
+                env_col = None
+                for col in ['environment', 'env', 'Environment']:
+                    if col in df.columns:
+                        env_col = col
+                        break
+
+                # Risk Score calculation (weighted)
+                risk_score = (sev_counts['Critical'] * 10 + sev_counts['High'] * 5 +
+                             sev_counts['Medium'] * 2 + sev_counts['Low'] * 1)
+                max_risk = active_findings * 10 if active_findings > 0 else 1
+                risk_percentage = min(100, (risk_score / max_risk) * 100)
+
+                # Subplot layout
+                gs = fig.add_gridspec(3, 3, hspace=0.4, wspace=0.3)
+
+                # Risk Gauge (top center spanning 2 cols)
+                ax_gauge = fig.add_subplot(gs[0, :2])
+                ax_gauge.set_xlim(0, 100)
+                ax_gauge.set_ylim(0, 1)
+                ax_gauge.axis('off')
+
+                # Draw gauge background
+                colors_gauge = ['#28a745', '#ffc107', '#fd7e14', '#dc3545']
+                for i, (start, end) in enumerate([(0, 25), (25, 50), (50, 75), (75, 100)]):
+                    ax_gauge.axhspan(0.3, 0.7, xmin=start/100, xmax=end/100, color=colors_gauge[i], alpha=0.3)
+
+                # Draw risk indicator
+                ax_gauge.axvline(x=risk_percentage, ymin=0.2, ymax=0.8, color='white', linewidth=4)
+                ax_gauge.text(50, 0.9, 'RISK LEVEL', ha='center', fontsize=12, fontweight='bold')
+                ax_gauge.text(risk_percentage, 0.1, f'{risk_percentage:.0f}%', ha='center', fontsize=14, fontweight='bold')
+
+                # Key Metrics Box (top right)
+                ax_metrics = fig.add_subplot(gs[0, 2])
+                ax_metrics.axis('off')
+                metrics_text = f"""
+KEY METRICS
+─────────────
+Total Findings: {total_findings:,}
+Active: {active_findings:,}
+Resolved: {resolved_findings:,}
+Risk Score: {risk_score:,}
+"""
+                ax_metrics.text(0.1, 0.9, metrics_text, transform=ax_metrics.transAxes, fontsize=10,
+                               verticalalignment='top', fontfamily='monospace',
+                               bbox=dict(boxstyle='round', facecolor='#2a2a2a', alpha=0.8))
+
+                # Severity Pie Chart
+                ax_sev = fig.add_subplot(gs[1, 0])
+                sev_data = [sev_counts['Critical'], sev_counts['High'], sev_counts['Medium'], sev_counts['Low']]
+                sev_labels = ['Critical', 'High', 'Medium', 'Low']
+                colors = ['#dc3545', '#fd7e14', '#ffc107', '#28a745']
+                non_zero = [(l, d, c) for l, d, c in zip(sev_labels, sev_data, colors) if d > 0]
+                if non_zero:
+                    labels, data, cols = zip(*non_zero)
+                    ax_sev.pie(data, labels=labels, autopct='%1.0f%%', colors=cols, startangle=90)
+                ax_sev.set_title('Active by Severity', fontweight='bold', fontsize=10)
+
+                # Top Hosts Bar Chart
+                ax_hosts = fig.add_subplot(gs[1, 1:])
+                if 'hostname' in df.columns:
+                    active_df = df[df['status'] == 'Active'] if 'status' in df.columns else df
+                    top_hosts = active_df['hostname'].value_counts().head(10)
+                    if not top_hosts.empty:
+                        bars = ax_hosts.barh(range(len(top_hosts)), top_hosts.values, color='#17a2b8')
+                        ax_hosts.set_yticks(range(len(top_hosts)))
+                        ax_hosts.set_yticklabels([h[:25] for h in top_hosts.index], fontsize=8)
+                        ax_hosts.set_xlabel('Finding Count')
+                        ax_hosts.set_title('Top 10 Hosts by Findings', fontweight='bold', fontsize=10)
+                        ax_hosts.invert_yaxis()
+
+                # Environment breakdown (if available)
+                ax_env = fig.add_subplot(gs[2, 0])
+                if env_col and env_col in df.columns:
+                    active_df = df[df['status'] == 'Active'] if 'status' in df.columns else df
+                    env_counts = active_df[env_col].value_counts()
+                    if not env_counts.empty:
+                        ax_env.pie(env_counts.values, labels=env_counts.index, autopct='%1.0f%%', startangle=90)
+                ax_env.set_title('By Environment', fontweight='bold', fontsize=10)
+
+                # Top Vulnerabilities
+                ax_vulns = fig.add_subplot(gs[2, 1:])
+                if 'plugin_name' in df.columns:
+                    active_df = df[df['status'] == 'Active'] if 'status' in df.columns else df
+                    top_vulns = active_df['plugin_name'].value_counts().head(8)
+                    if not top_vulns.empty:
+                        ax_vulns.barh(range(len(top_vulns)), top_vulns.values, color='#fd7e14')
+                        ax_vulns.set_yticks(range(len(top_vulns)))
+                        ax_vulns.set_yticklabels([v[:40] for v in top_vulns.index], fontsize=7)
+                        ax_vulns.set_xlabel('Host Count')
+                        ax_vulns.set_title('Top 8 Vulnerabilities', fontweight='bold', fontsize=10)
+                        ax_vulns.invert_yaxis()
+
+                plt.tight_layout(rect=[0, 0, 1, 0.95])
+                pdf.savefig(fig)
+                plt.close(fig)
+
+                # === PAGE 2: Trend Analysis ===
+                if 'first_seen' in df.columns:
+                    fig, axes = plt.subplots(2, 1, figsize=(11, 8.5))
+                    fig.suptitle('Security Trend Analysis', fontsize=14, fontweight='bold')
+
+                    df_copy = df.copy()
+                    df_copy['first_seen'] = pd.to_datetime(df_copy['first_seen'])
+
+                    # Monthly discovery trend
+                    ax1 = axes[0]
+                    monthly = df_copy.groupby(df_copy['first_seen'].dt.to_period('M')).size()
+                    if len(monthly) > 1:
+                        ax1.plot(monthly.index.astype(str), monthly.values, marker='o', linewidth=2, color='#17a2b8')
+                        ax1.fill_between(monthly.index.astype(str), monthly.values, alpha=0.3, color='#17a2b8')
+                        ax1.set_xlabel('Month')
+                        ax1.set_ylabel('New Findings')
+                        ax1.set_title('Monthly Vulnerability Discovery', fontweight='bold')
+                        ax1.tick_params(axis='x', rotation=45)
+
+                    # Severity trend over time
+                    ax2 = axes[1]
+                    if 'severity_text' in df_copy.columns:
+                        for sev, color in [('Critical', '#dc3545'), ('High', '#fd7e14')]:
+                            sev_df = df_copy[df_copy['severity_text'] == sev]
+                            if not sev_df.empty:
+                                sev_monthly = sev_df.groupby(sev_df['first_seen'].dt.to_period('M')).size()
+                                if len(sev_monthly) > 1:
+                                    ax2.plot(sev_monthly.index.astype(str), sev_monthly.values,
+                                            marker='o', label=sev, color=color, linewidth=2)
+                        ax2.set_xlabel('Month')
+                        ax2.set_ylabel('Finding Count')
+                        ax2.set_title('Critical/High Findings Over Time', fontweight='bold')
+                        ax2.legend()
+                        ax2.tick_params(axis='x', rotation=45)
+
+                    plt.tight_layout()
+                    pdf.savefig(fig)
+                    plt.close(fig)
+
+            messagebox.showinfo("Export Complete", f"Executive Summary exported to:\n{filepath}")
+            self._log(f"Exported Executive Summary PDF to {filepath}")
+
+        except ImportError as e:
+            messagebox.showerror("Missing Dependency", "PDF export requires matplotlib.")
+        except Exception as e:
+            self._log(f"Error exporting Executive Summary: {e}")
+            messagebox.showerror("Export Error", f"Failed to export: {e}")
+
+    def _export_host_risk_pdf(self):
+        """Export Host Risk Assessment PDF - per-host vulnerability details."""
+        if self.historical_df.empty and self.lifecycle_df.empty:
+            messagebox.showwarning("No Data", "Please load scan data first")
+            return
+
+        # Let user select which host(s) to report on
+        df = self.lifecycle_df if not self.lifecycle_df.empty else self.historical_df
+
+        if 'hostname' not in df.columns:
+            messagebox.showwarning("No Host Data", "No hostname data available")
+            return
+
+        # Get list of hosts sorted by finding count
+        active_df = df[df['status'] == 'Active'] if 'status' in df.columns else df
+        host_counts = active_df['hostname'].value_counts()
+
+        # Create selection dialog
+        select_window = tk.Toplevel(self.root)
+        select_window.title("Select Hosts for Report")
+        select_window.geometry("400x500")
+        select_window.configure(bg=GUI_DARK_THEME['bg'])
+
+        ttk.Label(select_window, text="Select hosts to include in report:",
+                 font=('Arial', 10, 'bold')).pack(pady=10)
+
+        # Listbox with scrollbar
+        list_frame = ttk.Frame(select_window)
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        scrollbar = ttk.Scrollbar(list_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        host_listbox = tk.Listbox(list_frame, selectmode=tk.MULTIPLE,
+                                  bg=GUI_DARK_THEME['entry_bg'], fg=GUI_DARK_THEME['fg'],
+                                  yscrollcommand=scrollbar.set, font=('Consolas', 9))
+        host_listbox.pack(fill=tk.BOTH, expand=True)
+        scrollbar.config(command=host_listbox.yview)
+
+        for host in host_counts.index[:100]:  # Limit to top 100
+            count = host_counts[host]
+            host_listbox.insert(tk.END, f"{host} ({count} findings)")
+
+        # Select top 10 by default
+        for i in range(min(10, len(host_counts))):
+            host_listbox.selection_set(i)
+
+        def generate_report():
+            selected = host_listbox.curselection()
+            if not selected:
+                messagebox.showwarning("No Selection", "Please select at least one host")
+                return
+
+            selected_hosts = [host_counts.index[i] for i in selected]
+            select_window.destroy()
+            self._generate_host_risk_pdf(selected_hosts, df)
+
+        ttk.Button(select_window, text="Generate Report", command=generate_report).pack(pady=10)
+        ttk.Button(select_window, text="Select All Top 20",
+                  command=lambda: [host_listbox.selection_set(i) for i in range(min(20, len(host_counts)))]).pack(pady=5)
+
+    def _generate_host_risk_pdf(self, hosts: list, df: pd.DataFrame):
+        """Generate the Host Risk Assessment PDF for selected hosts."""
+        filepath = filedialog.asksaveasfilename(
+            title="Export Host Risk Assessment PDF",
+            defaultextension=".pdf",
+            filetypes=[("PDF files", "*.pdf")],
+            initialfile=f"host_risk_assessment_{datetime.now().strftime('%Y%m%d')}.pdf"
+        )
+
+        if not filepath:
+            return
+
+        try:
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+            from matplotlib.backends.backend_pdf import PdfPages
+
+            plt.style.use('dark_background')
+
+            with PdfPages(filepath) as pdf:
+                for host in hosts:
+                    host_df = df[df['hostname'] == host]
+                    active_df = host_df[host_df['status'] == 'Active'] if 'status' in host_df.columns else host_df
+
+                    fig, axes = plt.subplots(2, 2, figsize=(11, 8.5))
+                    fig.suptitle(f'Host Risk Assessment: {host}', fontsize=14, fontweight='bold')
+
+                    # Severity breakdown
+                    ax1 = axes[0, 0]
+                    if 'severity_text' in active_df.columns and not active_df.empty:
+                        sev_counts = active_df['severity_text'].value_counts()
+                        colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#28a745'}
+                        bar_colors = [colors.get(s, '#6c757d') for s in sev_counts.index]
+                        ax1.bar(sev_counts.index, sev_counts.values, color=bar_colors)
+                        ax1.set_ylabel('Count')
+                        ax1.set_title('Active Findings by Severity', fontweight='bold')
+                    else:
+                        ax1.text(0.5, 0.5, 'No Active Findings', ha='center', va='center')
+                        ax1.set_title('Active Findings by Severity', fontweight='bold')
+
+                    # Risk score
+                    ax2 = axes[0, 1]
+                    ax2.axis('off')
+                    sev_counts_dict = {'Critical': 0, 'High': 0, 'Medium': 0, 'Low': 0}
+                    if 'severity_text' in active_df.columns:
+                        for sev in sev_counts_dict.keys():
+                            sev_counts_dict[sev] = len(active_df[active_df['severity_text'] == sev])
+
+                    risk_score = (sev_counts_dict['Critical'] * 10 + sev_counts_dict['High'] * 5 +
+                                 sev_counts_dict['Medium'] * 2 + sev_counts_dict['Low'] * 1)
+
+                    total_findings = len(host_df)
+                    active_count = len(active_df)
+                    resolved_count = total_findings - active_count
+
+                    info_text = f"""
+HOST SUMMARY
+─────────────────────
+Hostname: {host[:40]}
+Total Findings: {total_findings}
+Active: {active_count}
+Resolved: {resolved_count}
+
+RISK SCORE: {risk_score}
+
+By Severity (Active):
+  Critical: {sev_counts_dict['Critical']}
+  High: {sev_counts_dict['High']}
+  Medium: {sev_counts_dict['Medium']}
+  Low: {sev_counts_dict['Low']}
+"""
+                    ax2.text(0.1, 0.95, info_text, transform=ax2.transAxes, fontsize=10,
+                            verticalalignment='top', fontfamily='monospace',
+                            bbox=dict(boxstyle='round', facecolor='#2a2a2a', alpha=0.8))
+
+                    # Finding timeline
+                    ax3 = axes[1, 0]
+                    if 'first_seen' in host_df.columns:
+                        host_df_copy = host_df.copy()
+                        host_df_copy['first_seen'] = pd.to_datetime(host_df_copy['first_seen'])
+                        monthly = host_df_copy.groupby(host_df_copy['first_seen'].dt.to_period('M')).size()
+                        if len(monthly) > 1:
+                            ax3.bar(monthly.index.astype(str), monthly.values, color='#17a2b8')
+                            ax3.set_xlabel('Month')
+                            ax3.set_ylabel('New Findings')
+                            ax3.set_title('Discovery Timeline', fontweight='bold')
+                            ax3.tick_params(axis='x', rotation=45)
+                        else:
+                            ax3.text(0.5, 0.5, 'Insufficient timeline data', ha='center', va='center')
+                            ax3.set_title('Discovery Timeline', fontweight='bold')
+
+                    # Top vulnerabilities for this host
+                    ax4 = axes[1, 1]
+                    if 'plugin_name' in active_df.columns and not active_df.empty:
+                        top_vulns = active_df['plugin_name'].value_counts().head(8)
+                        if not top_vulns.empty:
+                            ax4.barh(range(len(top_vulns)), top_vulns.values, color='#fd7e14')
+                            ax4.set_yticks(range(len(top_vulns)))
+                            ax4.set_yticklabels([v[:35] for v in top_vulns.index], fontsize=8)
+                            ax4.set_xlabel('Count')
+                            ax4.set_title('Top Vulnerabilities', fontweight='bold')
+                            ax4.invert_yaxis()
+                    else:
+                        ax4.text(0.5, 0.5, 'No vulnerability data', ha='center', va='center')
+                        ax4.set_title('Top Vulnerabilities', fontweight='bold')
+
+                    plt.tight_layout(rect=[0, 0, 1, 0.95])
+                    pdf.savefig(fig)
+                    plt.close(fig)
+
+            messagebox.showinfo("Export Complete", f"Host Risk Assessment exported to:\n{filepath}")
+            self._log(f"Exported Host Risk Assessment PDF for {len(hosts)} hosts")
+
+        except Exception as e:
+            self._log(f"Error exporting Host Risk Assessment: {e}")
+            messagebox.showerror("Export Error", f"Failed to export: {e}")
+
+    def _export_aging_report_pdf(self):
+        """Export Vulnerability Aging PDF - SLA compliance tracking."""
+        if self.lifecycle_df.empty and self.historical_df.empty:
+            messagebox.showwarning("No Data", "Please load scan data first")
+            return
+
+        filepath = filedialog.asksaveasfilename(
+            title="Export Vulnerability Aging PDF",
+            defaultextension=".pdf",
+            filetypes=[("PDF files", "*.pdf")],
+            initialfile=f"vulnerability_aging_{datetime.now().strftime('%Y%m%d')}.pdf"
+        )
+
+        if not filepath:
+            return
+
+        try:
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+            from matplotlib.backends.backend_pdf import PdfPages
+
+            df = self.lifecycle_df if not self.lifecycle_df.empty else self.historical_df
+            plt.style.use('dark_background')
+
+            # Calculate aging for active findings
+            active_df = df[df['status'] == 'Active'].copy() if 'status' in df.columns else df.copy()
+
+            if 'first_seen' not in active_df.columns:
+                messagebox.showwarning("Missing Data", "No first_seen date available for aging analysis")
+                return
+
+            active_df['first_seen'] = pd.to_datetime(active_df['first_seen'])
+            today = pd.Timestamp.now()
+            active_df['age_days'] = (today - active_df['first_seen']).dt.days
+
+            # Define aging buckets
+            def age_bucket(days):
+                if days <= 30:
+                    return '0-30 days'
+                elif days <= 60:
+                    return '31-60 days'
+                elif days <= 90:
+                    return '61-90 days'
+                elif days <= 180:
+                    return '91-180 days'
+                else:
+                    return '180+ days'
+
+            active_df['age_bucket'] = active_df['age_days'].apply(age_bucket)
+
+            # Define SLA thresholds (typical)
+            sla_thresholds = {
+                'Critical': 15,
+                'High': 30,
+                'Medium': 90,
+                'Low': 180
+            }
+
+            with PdfPages(filepath) as pdf:
+                # === PAGE 1: Aging Overview ===
+                fig, axes = plt.subplots(2, 2, figsize=(11, 8.5))
+                fig.suptitle('Vulnerability Aging Analysis', fontsize=14, fontweight='bold')
+
+                # Aging distribution
+                ax1 = axes[0, 0]
+                bucket_order = ['0-30 days', '31-60 days', '61-90 days', '91-180 days', '180+ days']
+                bucket_counts = active_df['age_bucket'].value_counts().reindex(bucket_order, fill_value=0)
+                colors = ['#28a745', '#17a2b8', '#ffc107', '#fd7e14', '#dc3545']
+                ax1.bar(bucket_counts.index, bucket_counts.values, color=colors)
+                ax1.set_ylabel('Finding Count')
+                ax1.set_title('Findings by Age', fontweight='bold')
+                ax1.tick_params(axis='x', rotation=45)
+
+                # SLA compliance
+                ax2 = axes[0, 1]
+                if 'severity_text' in active_df.columns:
+                    sla_data = []
+                    for sev, threshold in sla_thresholds.items():
+                        sev_df = active_df[active_df['severity_text'] == sev]
+                        if len(sev_df) > 0:
+                            compliant = len(sev_df[sev_df['age_days'] <= threshold])
+                            non_compliant = len(sev_df) - compliant
+                            sla_data.append({
+                                'severity': sev,
+                                'compliant': compliant,
+                                'non_compliant': non_compliant,
+                                'compliance_rate': (compliant / len(sev_df)) * 100
+                            })
+
+                    if sla_data:
+                        sevs = [d['severity'] for d in sla_data]
+                        compliance_rates = [d['compliance_rate'] for d in sla_data]
+                        colors = ['#dc3545', '#fd7e14', '#ffc107', '#28a745']
+                        bars = ax2.bar(sevs, compliance_rates, color=colors[:len(sevs)])
+                        ax2.axhline(y=80, color='white', linestyle='--', alpha=0.5, label='80% Target')
+                        ax2.set_ylabel('Compliance %')
+                        ax2.set_title('SLA Compliance by Severity', fontweight='bold')
+                        ax2.set_ylim(0, 100)
+                        for bar, rate in zip(bars, compliance_rates):
+                            ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 2,
+                                    f'{rate:.0f}%', ha='center', fontsize=9)
+                else:
+                    ax2.text(0.5, 0.5, 'No severity data', ha='center', va='center')
+                    ax2.set_title('SLA Compliance by Severity', fontweight='bold')
+
+                # Overdue findings summary
+                ax3 = axes[1, 0]
+                ax3.axis('off')
+                overdue_text = "SLA SUMMARY\n" + "─" * 30 + "\n"
+                overdue_text += f"SLA Thresholds:\n"
+                for sev, threshold in sla_thresholds.items():
+                    overdue_text += f"  {sev}: {threshold} days\n"
+                overdue_text += f"\n{'─' * 30}\n"
+
+                total_overdue = 0
+                if 'severity_text' in active_df.columns:
+                    for sev, threshold in sla_thresholds.items():
+                        sev_df = active_df[active_df['severity_text'] == sev]
+                        overdue = len(sev_df[sev_df['age_days'] > threshold])
+                        total_overdue += overdue
+                        overdue_text += f"{sev} Overdue: {overdue}\n"
+
+                overdue_text += f"\nTOTAL OVERDUE: {total_overdue}"
+                ax3.text(0.1, 0.9, overdue_text, transform=ax3.transAxes, fontsize=10,
+                        verticalalignment='top', fontfamily='monospace',
+                        bbox=dict(boxstyle='round', facecolor='#2a2a2a', alpha=0.8))
+
+                # Oldest findings
+                ax4 = axes[1, 1]
+                oldest = active_df.nlargest(10, 'age_days')
+                if not oldest.empty and 'plugin_name' in oldest.columns:
+                    labels = [f"{row['plugin_name'][:30]}" for _, row in oldest.iterrows()]
+                    ages = oldest['age_days'].values
+                    colors = ['#dc3545' if a > 180 else '#fd7e14' if a > 90 else '#ffc107' for a in ages]
+                    ax4.barh(range(len(oldest)), ages, color=colors)
+                    ax4.set_yticks(range(len(oldest)))
+                    ax4.set_yticklabels(labels, fontsize=7)
+                    ax4.set_xlabel('Days Old')
+                    ax4.set_title('Oldest Active Findings', fontweight='bold')
+                    ax4.invert_yaxis()
+
+                plt.tight_layout(rect=[0, 0, 1, 0.95])
+                pdf.savefig(fig)
+                plt.close(fig)
+
+                # === PAGE 2: Aging Details Table ===
+                fig, ax = plt.subplots(figsize=(11, 8.5))
+                ax.axis('off')
+                ax.set_title('Overdue Findings Details', fontweight='bold', fontsize=12, pad=20)
+
+                # Get overdue findings
+                overdue_list = []
+                if 'severity_text' in active_df.columns:
+                    for sev, threshold in sla_thresholds.items():
+                        sev_df = active_df[(active_df['severity_text'] == sev) & (active_df['age_days'] > threshold)]
+                        for _, row in sev_df.head(10).iterrows():  # Limit per severity
+                            overdue_list.append({
+                                'severity': sev,
+                                'age': row['age_days'],
+                                'hostname': row.get('hostname', 'Unknown')[:20],
+                                'plugin': row.get('plugin_name', 'Unknown')[:35],
+                                'overdue_by': row['age_days'] - threshold
+                            })
+
+                if overdue_list:
+                    table_data = [['Sev', 'Age', 'Overdue By', 'Host', 'Vulnerability']]
+                    for item in overdue_list[:25]:
+                        table_data.append([
+                            item['severity'][:4],
+                            f"{item['age']}d",
+                            f"+{item['overdue_by']}d",
+                            item['hostname'],
+                            item['plugin']
+                        ])
+
+                    table = ax.table(cellText=table_data, loc='center', cellLoc='left',
+                                    colWidths=[0.08, 0.08, 0.1, 0.22, 0.42])
+                    table.auto_set_font_size(False)
+                    table.set_fontsize(8)
+                    table.scale(1, 1.5)
+
+                    for j in range(len(table_data[0])):
+                        table[(0, j)].set_facecolor('#3a3a3a')
+                        table[(0, j)].set_text_props(fontweight='bold')
+                else:
+                    ax.text(0.5, 0.5, 'No overdue findings - Great job!', ha='center', va='center',
+                           fontsize=14, color='#28a745')
+
+                pdf.savefig(fig)
+                plt.close(fig)
+
+            messagebox.showinfo("Export Complete", f"Vulnerability Aging report exported to:\n{filepath}")
+            self._log(f"Exported Vulnerability Aging PDF")
+
+        except Exception as e:
+            self._log(f"Error exporting Aging Report: {e}")
+            messagebox.showerror("Export Error", f"Failed to export: {e}")
+
+    def _export_remediation_priority_pdf(self):
+        """Export Remediation Priority PDF - actionable for IT teams."""
+        if self.lifecycle_df.empty and self.historical_df.empty:
+            messagebox.showwarning("No Data", "Please load scan data first")
+            return
+
+        filepath = filedialog.asksaveasfilename(
+            title="Export Remediation Priority PDF",
+            defaultextension=".pdf",
+            filetypes=[("PDF files", "*.pdf")],
+            initialfile=f"remediation_priority_{datetime.now().strftime('%Y%m%d')}.pdf"
+        )
+
+        if not filepath:
+            return
+
+        try:
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+            from matplotlib.backends.backend_pdf import PdfPages
+
+            df = self.lifecycle_df if not self.lifecycle_df.empty else self.historical_df
+            plt.style.use('dark_background')
+
+            # Get active findings
+            active_df = df[df['status'] == 'Active'].copy() if 'status' in df.columns else df.copy()
+
+            with PdfPages(filepath) as pdf:
+                # === PAGE 1: Priority Overview ===
+                fig, axes = plt.subplots(2, 2, figsize=(11, 8.5))
+                fig.suptitle('Remediation Priority Analysis', fontsize=14, fontweight='bold')
+
+                # Calculate impact score (severity * affected hosts)
+                if 'plugin_id' in active_df.columns and 'severity_text' in active_df.columns:
+                    severity_weight = {'Critical': 10, 'High': 5, 'Medium': 2, 'Low': 1}
+                    plugin_impact = active_df.groupby(['plugin_id', 'plugin_name', 'severity_text']).agg({
+                        'hostname': 'nunique'
+                    }).reset_index()
+                    plugin_impact.columns = ['plugin_id', 'plugin_name', 'severity', 'affected_hosts']
+                    plugin_impact['impact_score'] = plugin_impact.apply(
+                        lambda x: x['affected_hosts'] * severity_weight.get(x['severity'], 1), axis=1)
+                    plugin_impact = plugin_impact.sort_values('impact_score', ascending=False)
+
+                    # Top 15 by impact
+                    ax1 = axes[0, 0]
+                    top_impact = plugin_impact.head(15)
+                    if not top_impact.empty:
+                        colors = [{'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#28a745'}.get(s, '#6c757d')
+                                 for s in top_impact['severity']]
+                        ax1.barh(range(len(top_impact)), top_impact['impact_score'].values, color=colors)
+                        ax1.set_yticks(range(len(top_impact)))
+                        ax1.set_yticklabels([p[:35] for p in top_impact['plugin_name']], fontsize=7)
+                        ax1.set_xlabel('Impact Score (Severity × Hosts)')
+                        ax1.set_title('Top 15 by Impact', fontweight='bold', fontsize=10)
+                        ax1.invert_yaxis()
+
+                    # Quick Wins (Low effort, high impact - multiple hosts, same fix)
+                    ax2 = axes[0, 1]
+                    quick_wins = plugin_impact[plugin_impact['affected_hosts'] >= 3].head(10)
+                    if not quick_wins.empty:
+                        ax2.barh(range(len(quick_wins)), quick_wins['affected_hosts'].values, color='#28a745')
+                        ax2.set_yticks(range(len(quick_wins)))
+                        ax2.set_yticklabels([p[:30] for p in quick_wins['plugin_name']], fontsize=7)
+                        ax2.set_xlabel('Affected Hosts')
+                        ax2.set_title('Quick Wins (3+ Hosts, Single Fix)', fontweight='bold', fontsize=10)
+                        ax2.invert_yaxis()
+                    else:
+                        ax2.text(0.5, 0.5, 'No quick wins identified', ha='center', va='center')
+                        ax2.set_title('Quick Wins', fontweight='bold', fontsize=10)
+
+                # Critical/High priorities
+                ax3 = axes[1, 0]
+                if 'severity_text' in active_df.columns:
+                    crit_high = active_df[active_df['severity_text'].isin(['Critical', 'High'])]
+                    if not crit_high.empty and 'plugin_name' in crit_high.columns:
+                        ch_counts = crit_high.groupby(['plugin_name', 'severity_text']).size().reset_index(name='count')
+                        ch_counts = ch_counts.sort_values('count', ascending=False).head(12)
+                        colors = ['#dc3545' if s == 'Critical' else '#fd7e14' for s in ch_counts['severity_text']]
+                        ax3.barh(range(len(ch_counts)), ch_counts['count'].values, color=colors)
+                        ax3.set_yticks(range(len(ch_counts)))
+                        ax3.set_yticklabels([p[:30] for p in ch_counts['plugin_name']], fontsize=7)
+                        ax3.set_xlabel('Instance Count')
+                        ax3.set_title('Critical/High Priority Items', fontweight='bold', fontsize=10)
+                        ax3.invert_yaxis()
+                else:
+                    ax3.text(0.5, 0.5, 'No severity data', ha='center', va='center')
+                    ax3.set_title('Critical/High Priority Items', fontweight='bold', fontsize=10)
+
+                # Summary stats
+                ax4 = axes[1, 1]
+                ax4.axis('off')
+
+                total_unique_vulns = active_df['plugin_id'].nunique() if 'plugin_id' in active_df.columns else 0
+                total_instances = len(active_df)
+                total_hosts = active_df['hostname'].nunique() if 'hostname' in active_df.columns else 0
+
+                crit_count = len(active_df[active_df['severity_text'] == 'Critical']) if 'severity_text' in active_df.columns else 0
+                high_count = len(active_df[active_df['severity_text'] == 'High']) if 'severity_text' in active_df.columns else 0
+
+                summary_text = f"""
+REMEDIATION SUMMARY
+───────────────────────────
+Unique Vulnerabilities: {total_unique_vulns:,}
+Total Instances: {total_instances:,}
+Affected Hosts: {total_hosts:,}
+
+PRIORITY BREAKDOWN
+───────────────────────────
+Critical Items: {crit_count:,}
+High Items: {high_count:,}
+
+RECOMMENDATIONS
+───────────────────────────
+1. Address Critical items first
+2. Target Quick Wins for rapid
+   reduction in exposure
+3. Group similar vulnerabilities
+   for efficient patching
+"""
+                ax4.text(0.05, 0.95, summary_text, transform=ax4.transAxes, fontsize=9,
+                        verticalalignment='top', fontfamily='monospace',
+                        bbox=dict(boxstyle='round', facecolor='#2a2a2a', alpha=0.8))
+
+                plt.tight_layout(rect=[0, 0, 1, 0.95])
+                pdf.savefig(fig)
+                plt.close(fig)
+
+                # === PAGE 2+: Detailed Priority List ===
+                if 'plugin_id' in active_df.columns:
+                    priority_list = plugin_impact.head(50)  # Top 50 priorities
+
+                    items_per_page = 20
+                    for page_start in range(0, len(priority_list), items_per_page):
+                        page_items = priority_list.iloc[page_start:page_start + items_per_page]
+
+                        fig, ax = plt.subplots(figsize=(11, 8.5))
+                        ax.axis('off')
+                        page_num = page_start // items_per_page + 1
+                        total_pages = (len(priority_list) - 1) // items_per_page + 1
+                        ax.set_title(f'Priority Remediation List - Page {page_num}/{total_pages}',
+                                    fontweight='bold', fontsize=12, pad=20)
+
+                        table_data = [['#', 'Sev', 'Vulnerability', 'Hosts', 'Impact']]
+                        for idx, (_, row) in enumerate(page_items.iterrows(), start=page_start + 1):
+                            table_data.append([
+                                str(idx),
+                                row['severity'][:4],
+                                row['plugin_name'][:45],
+                                str(row['affected_hosts']),
+                                str(int(row['impact_score']))
+                            ])
+
+                        table = ax.table(cellText=table_data, loc='center', cellLoc='left',
+                                        colWidths=[0.05, 0.08, 0.55, 0.1, 0.1])
+                        table.auto_set_font_size(False)
+                        table.set_fontsize(8)
+                        table.scale(1, 1.5)
+
+                        for j in range(len(table_data[0])):
+                            table[(0, j)].set_facecolor('#3a3a3a')
+                            table[(0, j)].set_text_props(fontweight='bold')
+
+                        pdf.savefig(fig)
+                        plt.close(fig)
+
+            messagebox.showinfo("Export Complete", f"Remediation Priority report exported to:\n{filepath}")
+            self._log(f"Exported Remediation Priority PDF")
+
+        except Exception as e:
+            self._log(f"Error exporting Remediation Priority: {e}")
+            messagebox.showerror("Export Error", f"Failed to export: {e}")
+
+    def _export_monthly_metrics_pdf(self):
+        """Export Monthly Metrics PDF - trend analysis over time."""
+        if self.lifecycle_df.empty and self.historical_df.empty:
+            messagebox.showwarning("No Data", "Please load scan data first")
+            return
+
+        filepath = filedialog.asksaveasfilename(
+            title="Export Monthly Metrics PDF",
+            defaultextension=".pdf",
+            filetypes=[("PDF files", "*.pdf")],
+            initialfile=f"monthly_metrics_{datetime.now().strftime('%Y%m%d')}.pdf"
+        )
+
+        if not filepath:
+            return
+
+        try:
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+            from matplotlib.backends.backend_pdf import PdfPages
+
+            df = self.lifecycle_df if not self.lifecycle_df.empty else self.historical_df
+            plt.style.use('dark_background')
+
+            if 'first_seen' not in df.columns:
+                messagebox.showwarning("Missing Data", "No date data available for metrics")
+                return
+
+            df_copy = df.copy()
+            df_copy['first_seen'] = pd.to_datetime(df_copy['first_seen'])
+            if 'last_seen' in df_copy.columns:
+                df_copy['last_seen'] = pd.to_datetime(df_copy['last_seen'])
+
+            with PdfPages(filepath) as pdf:
+                # === PAGE 1: Monthly Overview ===
+                fig, axes = plt.subplots(2, 2, figsize=(11, 8.5))
+                fig.suptitle('Monthly Security Metrics', fontsize=14, fontweight='bold')
+
+                # New findings per month
+                ax1 = axes[0, 0]
+                monthly_new = df_copy.groupby(df_copy['first_seen'].dt.to_period('M')).size()
+                if len(monthly_new) > 1:
+                    ax1.bar(monthly_new.index.astype(str), monthly_new.values, color='#fd7e14')
+                    ax1.set_xlabel('Month')
+                    ax1.set_ylabel('New Findings')
+                    ax1.set_title('New Findings by Month', fontweight='bold')
+                    ax1.tick_params(axis='x', rotation=45)
+
+                # Resolved per month (if we have status)
+                ax2 = axes[0, 1]
+                if 'status' in df_copy.columns and 'last_seen' in df_copy.columns:
+                    resolved_df = df_copy[df_copy['status'] == 'Resolved']
+                    if not resolved_df.empty:
+                        monthly_resolved = resolved_df.groupby(resolved_df['last_seen'].dt.to_period('M')).size()
+                        if len(monthly_resolved) > 1:
+                            ax2.bar(monthly_resolved.index.astype(str), monthly_resolved.values, color='#28a745')
+                            ax2.set_xlabel('Month')
+                            ax2.set_ylabel('Resolved Findings')
+                            ax2.set_title('Resolved by Month', fontweight='bold')
+                            ax2.tick_params(axis='x', rotation=45)
+                        else:
+                            ax2.text(0.5, 0.5, 'Insufficient resolution data', ha='center', va='center')
+                else:
+                    ax2.text(0.5, 0.5, 'No resolution data', ha='center', va='center')
+                ax2.set_title('Resolved by Month', fontweight='bold')
+
+                # Net change (new - resolved)
+                ax3 = axes[1, 0]
+                if 'status' in df_copy.columns and 'last_seen' in df_copy.columns:
+                    resolved_df = df_copy[df_copy['status'] == 'Resolved']
+                    if not resolved_df.empty:
+                        monthly_resolved = resolved_df.groupby(resolved_df['last_seen'].dt.to_period('M')).size()
+                        # Align indices
+                        all_months = sorted(set(monthly_new.index) | set(monthly_resolved.index))
+                        net_change = []
+                        months_labels = []
+                        for month in all_months:
+                            new_val = monthly_new.get(month, 0)
+                            res_val = monthly_resolved.get(month, 0)
+                            net_change.append(new_val - res_val)
+                            months_labels.append(str(month))
+
+                        colors = ['#dc3545' if v > 0 else '#28a745' for v in net_change]
+                        ax3.bar(months_labels, net_change, color=colors)
+                        ax3.axhline(y=0, color='white', linestyle='-', alpha=0.3)
+                        ax3.set_xlabel('Month')
+                        ax3.set_ylabel('Net Change')
+                        ax3.set_title('Net Change (New - Resolved)', fontweight='bold')
+                        ax3.tick_params(axis='x', rotation=45)
+                else:
+                    ax3.text(0.5, 0.5, 'No resolution data', ha='center', va='center')
+                    ax3.set_title('Net Change', fontweight='bold')
+
+                # Cumulative trend
+                ax4 = axes[1, 1]
+                if 'status' in df_copy.columns:
+                    # Calculate cumulative active over time
+                    active_count = len(df_copy[df_copy['status'] == 'Active'])
+                    resolved_count = len(df_copy[df_copy['status'] == 'Resolved'])
+                    total = len(df_copy)
+
+                    metrics_text = f"""
+CURRENT STATE
+─────────────────────
+Total Findings: {total:,}
+Active: {active_count:,}
+Resolved: {resolved_count:,}
+
+Resolution Rate: {(resolved_count/total*100):.1f}%
+
+PERIOD ANALYSIS
+─────────────────────
+Data Range:
+  {df_copy['first_seen'].min().strftime('%Y-%m-%d')}
+  to
+  {df_copy['first_seen'].max().strftime('%Y-%m-%d')}
+
+Months of Data: {len(monthly_new)}
+Avg New/Month: {monthly_new.mean():.0f}
+"""
+                    ax4.axis('off')
+                    ax4.text(0.1, 0.9, metrics_text, transform=ax4.transAxes, fontsize=10,
+                            verticalalignment='top', fontfamily='monospace',
+                            bbox=dict(boxstyle='round', facecolor='#2a2a2a', alpha=0.8))
+                else:
+                    ax4.text(0.5, 0.5, 'Limited metrics available', ha='center', va='center')
+
+                plt.tight_layout(rect=[0, 0, 1, 0.95])
+                pdf.savefig(fig)
+                plt.close(fig)
+
+                # === PAGE 2: Severity Trends ===
+                if 'severity_text' in df_copy.columns:
+                    fig, axes = plt.subplots(2, 1, figsize=(11, 8.5))
+                    fig.suptitle('Severity Trends Over Time', fontsize=14, fontweight='bold')
+
+                    # Stacked area chart of severity over time
+                    ax1 = axes[0]
+                    severity_monthly = df_copy.groupby([df_copy['first_seen'].dt.to_period('M'), 'severity_text']).size().unstack(fill_value=0)
+                    if not severity_monthly.empty:
+                        colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#28a745'}
+                        for sev in ['Critical', 'High', 'Medium', 'Low']:
+                            if sev in severity_monthly.columns:
+                                ax1.plot(severity_monthly.index.astype(str), severity_monthly[sev],
+                                        label=sev, color=colors[sev], linewidth=2, marker='o')
+                        ax1.set_xlabel('Month')
+                        ax1.set_ylabel('New Findings')
+                        ax1.set_title('New Findings by Severity', fontweight='bold')
+                        ax1.legend()
+                        ax1.tick_params(axis='x', rotation=45)
+
+                    # Critical/High ratio over time
+                    ax2 = axes[1]
+                    if 'Critical' in severity_monthly.columns or 'High' in severity_monthly.columns:
+                        crit_high = severity_monthly.get('Critical', 0) + severity_monthly.get('High', 0)
+                        total_monthly = severity_monthly.sum(axis=1)
+                        ratio = (crit_high / total_monthly * 100).fillna(0)
+                        ax2.fill_between(ratio.index.astype(str), ratio.values, alpha=0.3, color='#dc3545')
+                        ax2.plot(ratio.index.astype(str), ratio.values, color='#dc3545', linewidth=2)
+                        ax2.set_xlabel('Month')
+                        ax2.set_ylabel('Percentage')
+                        ax2.set_title('Critical/High as % of Total', fontweight='bold')
+                        ax2.set_ylim(0, 100)
+                        ax2.tick_params(axis='x', rotation=45)
+
+                    plt.tight_layout(rect=[0, 0, 1, 0.95])
+                    pdf.savefig(fig)
+                    plt.close(fig)
+
+                # === PAGE 3: Environment Trends (if available) ===
+                env_col = None
+                for col in ['environment', 'env', 'Environment']:
+                    if col in df_copy.columns:
+                        env_col = col
+                        break
+
+                if env_col:
+                    fig, ax = plt.subplots(figsize=(11, 8.5))
+                    fig.suptitle('Environment Trends', fontsize=14, fontweight='bold')
+
+                    env_monthly = df_copy.groupby([df_copy['first_seen'].dt.to_period('M'), env_col]).size().unstack(fill_value=0)
+                    if not env_monthly.empty:
+                        env_monthly.plot(kind='bar', stacked=True, ax=ax, colormap='tab10')
+                        ax.set_xlabel('Month')
+                        ax.set_ylabel('New Findings')
+                        ax.set_title('New Findings by Environment', fontweight='bold')
+                        ax.tick_params(axis='x', rotation=45)
+                        ax.legend(title='Environment', bbox_to_anchor=(1.02, 1), loc='upper left')
+
+                    plt.tight_layout(rect=[0, 0, 0.85, 0.95])
+                    pdf.savefig(fig)
+                    plt.close(fig)
+
+            messagebox.showinfo("Export Complete", f"Monthly Metrics report exported to:\n{filepath}")
+            self._log(f"Exported Monthly Metrics PDF")
+
+        except Exception as e:
+            self._log(f"Error exporting Monthly Metrics: {e}")
+            messagebox.showerror("Export Error", f"Failed to export: {e}")
+
+    def _export_compliance_status_pdf(self):
+        """Export Compliance Status PDF - STIG/POAM compliance tracking."""
+        # Check if we have STIG or POAM data
+        has_stig = hasattr(self, 'stig_df') and not self.stig_df.empty
+        has_poam = hasattr(self, 'poam_df') and not self.poam_df.empty
+
+        if not has_stig and not has_poam:
+            # Fall back to regular vulnerability data
+            if self.lifecycle_df.empty and self.historical_df.empty:
+                messagebox.showwarning("No Data", "Please load STIG checklists or vulnerability data first")
+                return
+
+        filepath = filedialog.asksaveasfilename(
+            title="Export Compliance Status PDF",
+            defaultextension=".pdf",
+            filetypes=[("PDF files", "*.pdf")],
+            initialfile=f"compliance_status_{datetime.now().strftime('%Y%m%d')}.pdf"
+        )
+
+        if not filepath:
+            return
+
+        try:
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+            from matplotlib.backends.backend_pdf import PdfPages
+
+            plt.style.use('dark_background')
+
+            with PdfPages(filepath) as pdf:
+                # === PAGE 1: Compliance Overview ===
+                fig, axes = plt.subplots(2, 2, figsize=(11, 8.5))
+                fig.suptitle('Compliance Status Report', fontsize=14, fontweight='bold')
+
+                # STIG Compliance (if available)
+                ax1 = axes[0, 0]
+                if has_stig:
+                    stig_df = self.stig_df
+                    # Calculate compliance by status
+                    if 'status' in stig_df.columns:
+                        status_counts = stig_df['status'].value_counts()
+                        # Map to compliance categories
+                        compliant = status_counts.get('NotAFinding', 0) + status_counts.get('Not_Applicable', 0)
+                        non_compliant = status_counts.get('Open', 0)
+                        not_reviewed = status_counts.get('Not_Reviewed', 0)
+
+                        data = [compliant, non_compliant, not_reviewed]
+                        labels = ['Compliant', 'Non-Compliant', 'Not Reviewed']
+                        colors = ['#28a745', '#dc3545', '#6c757d']
+                        non_zero = [(l, d, c) for l, d, c in zip(labels, data, colors) if d > 0]
+                        if non_zero:
+                            labels, data, colors = zip(*non_zero)
+                            ax1.pie(data, labels=labels, autopct='%1.1f%%', colors=colors, startangle=90)
+                    ax1.set_title('STIG Compliance', fontweight='bold')
+                else:
+                    ax1.text(0.5, 0.5, 'No STIG Data Loaded', ha='center', va='center', fontsize=12)
+                    ax1.set_title('STIG Compliance', fontweight='bold')
+
+                # STIG by Category
+                ax2 = axes[0, 1]
+                if has_stig and 'severity' in self.stig_df.columns:
+                    stig_df = self.stig_df
+                    open_stig = stig_df[stig_df['status'] == 'Open'] if 'status' in stig_df.columns else stig_df
+                    if not open_stig.empty:
+                        cat_counts = open_stig['severity'].value_counts()
+                        # CAT I = Critical, CAT II = Medium, CAT III = Low
+                        colors = {'high': '#dc3545', 'medium': '#ffc107', 'low': '#28a745'}
+                        bar_colors = [colors.get(str(c).lower(), '#6c757d') for c in cat_counts.index]
+                        ax2.bar(cat_counts.index, cat_counts.values, color=bar_colors)
+                        ax2.set_ylabel('Count')
+                        ax2.set_title('Open STIG Findings by Category', fontweight='bold')
+                else:
+                    ax2.text(0.5, 0.5, 'No STIG Category Data', ha='center', va='center')
+                    ax2.set_title('STIG by Category', fontweight='bold')
+
+                # POAM Status (if available)
+                ax3 = axes[1, 0]
+                if has_poam:
+                    poam_df = self.poam_df
+                    if 'status' in poam_df.columns:
+                        poam_status = poam_df['status'].value_counts()
+                        colors = {'Open': '#dc3545', 'Closed': '#28a745', 'In Progress': '#ffc107'}
+                        bar_colors = [colors.get(s, '#6c757d') for s in poam_status.index]
+                        ax3.bar(poam_status.index, poam_status.values, color=bar_colors)
+                        ax3.set_ylabel('Count')
+                        ax3.set_title('POAM Status', fontweight='bold')
+                    else:
+                        ax3.text(0.5, 0.5, f'POAM Items: {len(poam_df)}', ha='center', va='center', fontsize=14)
+                        ax3.set_title('POAM Status', fontweight='bold')
+                else:
+                    ax3.text(0.5, 0.5, 'No POAM Data Loaded', ha='center', va='center', fontsize=12)
+                    ax3.set_title('POAM Status', fontweight='bold')
+
+                # Summary Statistics
+                ax4 = axes[1, 1]
+                ax4.axis('off')
+
+                summary_text = "COMPLIANCE SUMMARY\n" + "─" * 25 + "\n\n"
+
+                if has_stig:
+                    stig_df = self.stig_df
+                    total_checks = len(stig_df)
+                    if 'status' in stig_df.columns:
+                        compliant = len(stig_df[stig_df['status'].isin(['NotAFinding', 'Not_Applicable'])])
+                        compliance_rate = (compliant / total_checks * 100) if total_checks > 0 else 0
+                        summary_text += f"STIG CHECKS\n"
+                        summary_text += f"  Total: {total_checks:,}\n"
+                        summary_text += f"  Compliant: {compliant:,}\n"
+                        summary_text += f"  Rate: {compliance_rate:.1f}%\n\n"
+
+                if has_poam:
+                    poam_df = self.poam_df
+                    summary_text += f"POAM ITEMS\n"
+                    summary_text += f"  Total: {len(poam_df):,}\n"
+                    if 'status' in poam_df.columns:
+                        open_poam = len(poam_df[poam_df['status'] == 'Open'])
+                        summary_text += f"  Open: {open_poam:,}\n"
+
+                if not has_stig and not has_poam:
+                    # Use vulnerability data
+                    df = self.lifecycle_df if not self.lifecycle_df.empty else self.historical_df
+                    total = len(df)
+                    active = len(df[df['status'] == 'Active']) if 'status' in df.columns else total
+                    summary_text += f"VULNERABILITY DATA\n"
+                    summary_text += f"  Total: {total:,}\n"
+                    summary_text += f"  Active: {active:,}\n"
+
+                ax4.text(0.1, 0.9, summary_text, transform=ax4.transAxes, fontsize=10,
+                        verticalalignment='top', fontfamily='monospace',
+                        bbox=dict(boxstyle='round', facecolor='#2a2a2a', alpha=0.8))
+
+                plt.tight_layout(rect=[0, 0, 1, 0.95])
+                pdf.savefig(fig)
+                plt.close(fig)
+
+                # === PAGE 2: STIG Details (if available) ===
+                if has_stig:
+                    stig_df = self.stig_df
+                    open_stig = stig_df[stig_df['status'] == 'Open'] if 'status' in stig_df.columns else stig_df
+
+                    if not open_stig.empty:
+                        fig, ax = plt.subplots(figsize=(11, 8.5))
+                        ax.axis('off')
+                        ax.set_title('Open STIG Findings', fontweight='bold', fontsize=12, pad=20)
+
+                        table_data = [['Severity', 'Rule ID', 'Title', 'Host']]
+                        for _, row in open_stig.head(25).iterrows():
+                            table_data.append([
+                                str(row.get('severity', 'Unknown'))[:6],
+                                str(row.get('rule_id', 'Unknown'))[:15],
+                                str(row.get('rule_title', row.get('title', 'Unknown')))[:45],
+                                str(row.get('hostname', row.get('target_host', 'Unknown')))[:20]
+                            ])
+
+                        table = ax.table(cellText=table_data, loc='center', cellLoc='left',
+                                        colWidths=[0.1, 0.18, 0.5, 0.2])
+                        table.auto_set_font_size(False)
+                        table.set_fontsize(8)
+                        table.scale(1, 1.5)
+
+                        for j in range(len(table_data[0])):
+                            table[(0, j)].set_facecolor('#3a3a3a')
+                            table[(0, j)].set_text_props(fontweight='bold')
+
+                        pdf.savefig(fig)
+                        plt.close(fig)
+
+            messagebox.showinfo("Export Complete", f"Compliance Status report exported to:\n{filepath}")
+            self._log(f"Exported Compliance Status PDF")
+
+        except Exception as e:
+            self._log(f"Error exporting Compliance Status: {e}")
+            messagebox.showerror("Export Error", f"Failed to export: {e}")
 
     # Processing methods
     def _process_archives(self):
