@@ -254,6 +254,7 @@ class NessusHistoryTrackerApp:
         self._build_host_tracking_tab()
         self._build_advanced_tab()
         self._build_stig_tab()  # STIG checklist findings
+        self._build_reporting_tab()  # Weekly resolution reports
         self._build_logging_tab()  # Moved to last
 
     def _build_file_selection(self, parent):
@@ -1500,6 +1501,85 @@ class NessusHistoryTrackerApp:
         else:
             ttk.Label(stig_frame, text="Install matplotlib for STIG visualizations").pack(pady=50)
 
+    def _build_reporting_tab(self):
+        """Build the Reporting tab for weekly resolution reports."""
+        reporting_frame = ttk.Frame(self.notebook)
+        self.notebook.add(reporting_frame, text="Reporting")
+        self.reporting_frame = reporting_frame
+
+        # Top controls frame
+        controls_frame = ttk.Frame(reporting_frame)
+        controls_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        # Date range selection
+        ttk.Label(controls_frame, text="Report Period:").pack(side=tk.LEFT, padx=(0, 5))
+
+        # Start date dropdown
+        ttk.Label(controls_frame, text="From:").pack(side=tk.LEFT, padx=(10, 2))
+        self.report_start_date = ttk.Combobox(controls_frame, width=12, state='readonly')
+        self.report_start_date.pack(side=tk.LEFT, padx=(0, 10))
+
+        # End date dropdown
+        ttk.Label(controls_frame, text="To:").pack(side=tk.LEFT, padx=(0, 2))
+        self.report_end_date = ttk.Combobox(controls_frame, width=12, state='readonly')
+        self.report_end_date.pack(side=tk.LEFT, padx=(0, 20))
+
+        # Generate report button
+        ttk.Button(controls_frame, text="Generate Weekly Report",
+                  command=self._generate_weekly_resolution_report).pack(side=tk.LEFT, padx=5)
+
+        # Export button
+        ttk.Button(controls_frame, text="Export to Excel",
+                  command=self._export_resolution_report).pack(side=tk.LEFT, padx=5)
+
+        # Environment filter
+        ttk.Label(controls_frame, text="Environment:").pack(side=tk.LEFT, padx=(20, 5))
+        self.report_env_filter = ttk.Combobox(controls_frame, width=15, state='readonly',
+                                              values=["All Combined", "All Separate"])
+        self.report_env_filter.set("All Combined")
+        self.report_env_filter.pack(side=tk.LEFT)
+
+        # Main content area with scrollable text/table
+        content_frame = ttk.Frame(reporting_frame)
+        content_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        # Create scrollable text widget for report output
+        self.report_text = tk.Text(content_frame, wrap=tk.WORD, font=('Consolas', 10),
+                                   bg=GUI_DARK_THEME['entry_bg'], fg=GUI_DARK_THEME['fg'],
+                                   insertbackground=GUI_DARK_THEME['fg'])
+        report_scroll = ttk.Scrollbar(content_frame, orient=tk.VERTICAL, command=self.report_text.yview)
+        self.report_text.configure(yscrollcommand=report_scroll.set)
+
+        report_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.report_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Configure text tags for formatting
+        self.report_text.tag_configure('header', font=('Consolas', 12, 'bold'), foreground='#17a2b8')
+        self.report_text.tag_configure('subheader', font=('Consolas', 11, 'bold'), foreground='#ffc107')
+        self.report_text.tag_configure('section', font=('Consolas', 10, 'bold'), foreground='#28a745')
+        self.report_text.tag_configure('warning', foreground='#fd7e14')
+        self.report_text.tag_configure('critical', foreground='#dc3545')
+        self.report_text.tag_configure('success', foreground='#28a745')
+        self.report_text.tag_configure('divider', foreground='#6c757d')
+
+        # Initial message
+        self.report_text.insert(tk.END, "Weekly Resolution Report\n", 'header')
+        self.report_text.insert(tk.END, "=" * 60 + "\n\n", 'divider')
+        self.report_text.insert(tk.END, "Load scan data and click 'Generate Weekly Report' to analyze\n")
+        self.report_text.insert(tk.END, "finding resolution trends week-over-week.\n\n")
+        self.report_text.insert(tk.END, "Report sections:\n")
+        self.report_text.insert(tk.END, "  • Weekly Summary - New, Closed, Unchanged findings per week\n")
+        self.report_text.insert(tk.END, "  • Resolution Progress - Ongoing remediation tracking\n")
+        self.report_text.insert(tk.END, "  • Fully Closed - Plugins with zero remaining findings\n")
+        self.report_text.insert(tk.END, "  • Reappearances - Findings that returned after resolution\n")
+        self.report_text.config(state=tk.DISABLED)
+
+        # Status bar
+        status_frame = ttk.Frame(reporting_frame)
+        status_frame.pack(fill=tk.X, padx=10, pady=2)
+        self.report_status_label = ttk.Label(status_frame, text="Ready", foreground='gray')
+        self.report_status_label.pack(side=tk.LEFT)
+
     # Helper methods
     def _get_current_date_interval(self) -> str:
         """
@@ -2157,6 +2237,372 @@ class NessusHistoryTrackerApp:
         self.stig_fig.tight_layout()
         self.stig_canvas.draw()
 
+    def _update_reporting_date_dropdowns(self):
+        """Update the reporting tab date dropdowns with available scan dates."""
+        if not hasattr(self, 'report_start_date'):
+            return
+
+        if self.historical_df.empty:
+            self.report_start_date['values'] = []
+            self.report_end_date['values'] = []
+            return
+
+        # Get unique scan dates sorted in descending order (newest first)
+        if 'scan_date' in self.historical_df.columns:
+            scan_dates = pd.to_datetime(self.historical_df['scan_date']).dt.date.unique()
+            scan_dates = sorted(scan_dates, reverse=True)
+            date_strings = [d.strftime('%Y-%m-%d') for d in scan_dates]
+
+            self.report_start_date['values'] = date_strings
+            self.report_end_date['values'] = date_strings
+
+            # Set defaults: end = most recent, start = 8 weeks prior or earliest
+            if date_strings:
+                self.report_end_date.set(date_strings[0])
+                # Find date ~8 weeks ago
+                end_date = scan_dates[0]
+                target_start = end_date - timedelta(days=56)  # 8 weeks
+                # Find closest scan date to target
+                closest_start = min(scan_dates, key=lambda d: abs((d - target_start).days))
+                self.report_start_date.set(closest_start.strftime('%Y-%m-%d'))
+
+    def _generate_weekly_resolution_report(self):
+        """Generate the weekly resolution report."""
+        if self.historical_df.empty and self.lifecycle_df.empty:
+            messagebox.showwarning("No Data", "Please load scan data first")
+            return
+
+        try:
+            self.report_status_label.config(text="Generating report...", foreground='#17a2b8')
+            self.window.update()
+
+            # Get date range
+            start_str = self.report_start_date.get()
+            end_str = self.report_end_date.get()
+
+            if not start_str or not end_str:
+                messagebox.showwarning("Date Range", "Please select start and end dates")
+                return
+
+            start_date = pd.to_datetime(start_str)
+            end_date = pd.to_datetime(end_str)
+
+            if start_date > end_date:
+                start_date, end_date = end_date, start_date
+
+            # Get environment filter
+            env_filter = self.report_env_filter.get()
+            split_by_env = env_filter == "All Separate"
+
+            # Generate report
+            report_data = self._calculate_weekly_resolution_data(start_date, end_date)
+            self._render_resolution_report(report_data, split_by_env)
+
+            self.report_status_label.config(text=f"Report generated: {start_str} to {end_str}",
+                                           foreground='#28a745')
+
+        except Exception as e:
+            self._log(f"Error generating report: {e}")
+            self.report_status_label.config(text=f"Error: {e}", foreground='#dc3545')
+
+    def _calculate_weekly_resolution_data(self, start_date, end_date) -> Dict[str, Any]:
+        """Calculate weekly resolution statistics."""
+        result = {
+            'start_date': start_date,
+            'end_date': end_date,
+            'weekly_data': [],
+            'fully_closed': [],
+            'repops': [],
+            'ongoing_summary': {},
+            'by_environment': {}
+        }
+
+        # Use lifecycle data for finding tracking
+        if self.lifecycle_df.empty:
+            return result
+
+        df = self.lifecycle_df.copy()
+
+        # Ensure dates are datetime
+        df['first_seen'] = pd.to_datetime(df['first_seen'])
+        df['last_seen'] = pd.to_datetime(df['last_seen'])
+
+        # Get all scan dates in range
+        if not self.historical_df.empty and 'scan_date' in self.historical_df.columns:
+            hist_df = self.historical_df.copy()
+            hist_df['scan_date'] = pd.to_datetime(hist_df['scan_date'])
+            scan_dates = sorted(hist_df[(hist_df['scan_date'] >= start_date) &
+                                       (hist_df['scan_date'] <= end_date)]['scan_date'].unique())
+        else:
+            # Fall back to weekly intervals
+            scan_dates = pd.date_range(start=start_date, end=end_date, freq='W').tolist()
+            if end_date not in scan_dates:
+                scan_dates.append(end_date)
+
+        # Group scan dates into weeks
+        weeks = []
+        current_week_start = start_date
+        while current_week_start <= end_date:
+            week_end = min(current_week_start + timedelta(days=6), end_date)
+            week_scans = [d for d in scan_dates if current_week_start <= d <= week_end]
+            if week_scans:
+                weeks.append({
+                    'start': current_week_start,
+                    'end': week_end,
+                    'scans': week_scans
+                })
+            current_week_start = week_end + timedelta(days=1)
+
+        # Calculate weekly statistics
+        previous_active = set()
+        for week in weeks:
+            week_start = week['start']
+            week_end = week['end']
+
+            # Findings active during this week
+            active_this_week = df[
+                (df['first_seen'] <= week_end) &
+                ((df['last_seen'] >= week_start) | (df['status'] == 'Active'))
+            ]
+
+            # Create finding keys for tracking
+            current_active = set(active_this_week['hostname'] + '|' + active_this_week['plugin_id'].astype(str))
+
+            # New findings (first seen this week)
+            new_findings = df[
+                (df['first_seen'] >= week_start) &
+                (df['first_seen'] <= week_end)
+            ]
+            new_count = len(new_findings)
+
+            # Closed findings (last seen before this week, was active last week)
+            if previous_active:
+                closed_this_week = previous_active - current_active
+                closed_count = len(closed_this_week)
+            else:
+                closed_count = 0
+
+            # Unchanged (was active, still active)
+            unchanged = previous_active & current_active if previous_active else set()
+            unchanged_count = len(unchanged)
+
+            # Get severity breakdown for new findings
+            new_by_severity = {}
+            if not new_findings.empty and 'severity_text' in new_findings.columns:
+                new_by_severity = new_findings['severity_text'].value_counts().to_dict()
+
+            week_data = {
+                'week_start': week_start.strftime('%Y-%m-%d'),
+                'week_end': week_end.strftime('%Y-%m-%d'),
+                'total_active': len(current_active),
+                'new': new_count,
+                'closed': closed_count,
+                'unchanged': unchanged_count,
+                'new_by_severity': new_by_severity,
+                'previous_total': len(previous_active)
+            }
+            result['weekly_data'].append(week_data)
+
+            previous_active = current_active
+
+        # Find fully closed plugins (plugins with 0 remaining findings)
+        plugin_status = df.groupby('plugin_id').agg({
+            'status': lambda x: (x == 'Active').sum(),
+            'plugin_name': 'first',
+            'severity_text': 'first',
+            'hostname': 'nunique'
+        }).reset_index()
+        plugin_status.columns = ['plugin_id', 'active_count', 'plugin_name', 'severity', 'total_hosts']
+
+        fully_closed = plugin_status[plugin_status['active_count'] == 0]
+        for _, row in fully_closed.iterrows():
+            # Get resolution info
+            plugin_findings = df[df['plugin_id'] == row['plugin_id']]
+            last_seen_date = plugin_findings['last_seen'].max()
+            if start_date <= last_seen_date <= end_date:
+                result['fully_closed'].append({
+                    'plugin_id': row['plugin_id'],
+                    'plugin_name': row['plugin_name'],
+                    'severity': row['severity'],
+                    'hosts_resolved': row['total_hosts'],
+                    'last_seen': last_seen_date.strftime('%Y-%m-%d')
+                })
+
+        # Find reappearances (findings with reappearance count > 0)
+        repops = df[(df['reappearances'] > 0) &
+                   (df['first_seen'] >= start_date) &
+                   (df['last_seen'] <= end_date)]
+        for _, row in repops.iterrows():
+            result['repops'].append({
+                'hostname': row['hostname'],
+                'plugin_id': row['plugin_id'],
+                'plugin_name': row['plugin_name'],
+                'severity': row.get('severity_text', 'Unknown'),
+                'reappearances': row['reappearances'],
+                'first_seen': row['first_seen'].strftime('%Y-%m-%d'),
+                'last_seen': row['last_seen'].strftime('%Y-%m-%d')
+            })
+
+        # Ongoing summary
+        final_active = df[df['status'] == 'Active']
+        final_resolved = df[df['status'] == 'Resolved']
+
+        result['ongoing_summary'] = {
+            'total_active': len(final_active),
+            'total_resolved_period': len(df[(df['status'] == 'Resolved') &
+                                           (df['last_seen'] >= start_date) &
+                                           (df['last_seen'] <= end_date)]),
+            'critical_active': len(final_active[final_active['severity_text'] == 'Critical']) if 'severity_text' in final_active.columns else 0,
+            'high_active': len(final_active[final_active['severity_text'] == 'High']) if 'severity_text' in final_active.columns else 0,
+        }
+
+        return result
+
+    def _render_resolution_report(self, data: Dict[str, Any], split_by_env: bool = False):
+        """Render the resolution report to the text widget."""
+        self.report_text.config(state=tk.NORMAL)
+        self.report_text.delete(1.0, tk.END)
+
+        # Header
+        self.report_text.insert(tk.END, "Weekly Resolution Report\n", 'header')
+        self.report_text.insert(tk.END, "=" * 70 + "\n", 'divider')
+        self.report_text.insert(tk.END, f"Period: {data['start_date'].strftime('%Y-%m-%d')} to {data['end_date'].strftime('%Y-%m-%d')}\n\n")
+
+        # Ongoing Summary
+        summary = data.get('ongoing_summary', {})
+        self.report_text.insert(tk.END, "ONGOING SUMMARY\n", 'subheader')
+        self.report_text.insert(tk.END, "-" * 40 + "\n", 'divider')
+        self.report_text.insert(tk.END, f"  Total Active Findings:      {summary.get('total_active', 0)}\n")
+        self.report_text.insert(tk.END, f"  Resolved This Period:       {summary.get('total_resolved_period', 0)}\n", 'success')
+        self.report_text.insert(tk.END, f"  Critical Active:            {summary.get('critical_active', 0)}\n", 'critical')
+        self.report_text.insert(tk.END, f"  High Active:                {summary.get('high_active', 0)}\n", 'warning')
+        self.report_text.insert(tk.END, "\n")
+
+        # Weekly Breakdown
+        self.report_text.insert(tk.END, "WEEKLY BREAKDOWN\n", 'subheader')
+        self.report_text.insert(tk.END, "-" * 70 + "\n", 'divider')
+
+        # Header row
+        header = f"{'Week':<23} {'Prev':>8} {'New':>8} {'Closed':>8} {'Unchanged':>10} {'Active':>8}\n"
+        self.report_text.insert(tk.END, header, 'section')
+        self.report_text.insert(tk.END, "-" * 70 + "\n", 'divider')
+
+        for week in data.get('weekly_data', []):
+            week_label = f"{week['week_start']} - {week['week_end'][:5]}"
+            row = f"{week_label:<23} {week['previous_total']:>8} {week['new']:>8} {week['closed']:>8} {week['unchanged']:>10} {week['total_active']:>8}\n"
+            self.report_text.insert(tk.END, row)
+
+            # Show new findings by severity if any
+            if week.get('new_by_severity'):
+                sev_parts = [f"{sev}: {count}" for sev, count in week['new_by_severity'].items()]
+                self.report_text.insert(tk.END, f"    New by severity: {', '.join(sev_parts)}\n", 'divider')
+
+        self.report_text.insert(tk.END, "\n")
+
+        # Fully Closed Plugins
+        fully_closed = data.get('fully_closed', [])
+        self.report_text.insert(tk.END, f"FULLY CLOSED PLUGINS ({len(fully_closed)})\n", 'subheader')
+        self.report_text.insert(tk.END, "-" * 70 + "\n", 'divider')
+
+        if fully_closed:
+            for item in fully_closed[:20]:  # Limit to 20
+                self.report_text.insert(tk.END,
+                    f"  [{item['severity'][:4]:>4}] {item['plugin_name'][:50]:<50}\n")
+                self.report_text.insert(tk.END,
+                    f"         Plugin {item['plugin_id']} | {item['hosts_resolved']} hosts | Last: {item['last_seen']}\n", 'divider')
+            if len(fully_closed) > 20:
+                self.report_text.insert(tk.END, f"  ... and {len(fully_closed) - 20} more\n", 'divider')
+        else:
+            self.report_text.insert(tk.END, "  No plugins fully closed in this period\n", 'divider')
+
+        self.report_text.insert(tk.END, "\n")
+
+        # Reappearances
+        repops = data.get('repops', [])
+        self.report_text.insert(tk.END, f"REAPPEARANCES ({len(repops)})\n", 'subheader')
+        self.report_text.insert(tk.END, "-" * 70 + "\n", 'divider')
+
+        if repops:
+            self.report_text.insert(tk.END, "Findings that were resolved but returned:\n\n")
+            for item in repops[:15]:  # Limit to 15
+                self.report_text.insert(tk.END,
+                    f"  {item['hostname'][:25]:<25} [{item['severity'][:4]:>4}]\n", 'warning')
+                self.report_text.insert(tk.END,
+                    f"    {item['plugin_name'][:55]}\n")
+                self.report_text.insert(tk.END,
+                    f"    Reappeared {item['reappearances']}x | First: {item['first_seen']} | Last: {item['last_seen']}\n", 'divider')
+            if len(repops) > 15:
+                self.report_text.insert(tk.END, f"\n  ... and {len(repops) - 15} more reappearances\n", 'divider')
+        else:
+            self.report_text.insert(tk.END, "  No reappearances detected in this period\n", 'success')
+
+        self.report_text.insert(tk.END, "\n" + "=" * 70 + "\n", 'divider')
+        self.report_text.insert(tk.END, "End of Report\n", 'divider')
+
+        self.report_text.config(state=tk.DISABLED)
+
+    def _export_resolution_report(self):
+        """Export the resolution report to Excel."""
+        if self.historical_df.empty:
+            messagebox.showwarning("No Data", "Please generate a report first")
+            return
+
+        # Get date range
+        start_str = self.report_start_date.get()
+        end_str = self.report_end_date.get()
+
+        if not start_str or not end_str:
+            messagebox.showwarning("Date Range", "Please select start and end dates")
+            return
+
+        filepath = filedialog.asksaveasfilename(
+            title="Export Resolution Report",
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx")],
+            initialfile=f"resolution_report_{start_str}_to_{end_str}.xlsx"
+        )
+
+        if not filepath:
+            return
+
+        try:
+            start_date = pd.to_datetime(start_str)
+            end_date = pd.to_datetime(end_str)
+            report_data = self._calculate_weekly_resolution_data(start_date, end_date)
+
+            with pd.ExcelWriter(filepath, engine='openpyxl') as writer:
+                # Weekly summary
+                if report_data['weekly_data']:
+                    weekly_df = pd.DataFrame(report_data['weekly_data'])
+                    weekly_df.to_excel(writer, sheet_name='Weekly Summary', index=False)
+
+                # Fully closed
+                if report_data['fully_closed']:
+                    closed_df = pd.DataFrame(report_data['fully_closed'])
+                    closed_df.to_excel(writer, sheet_name='Fully Closed', index=False)
+
+                # Reappearances
+                if report_data['repops']:
+                    repops_df = pd.DataFrame(report_data['repops'])
+                    repops_df.to_excel(writer, sheet_name='Reappearances', index=False)
+
+                # Summary sheet
+                summary_data = [
+                    {'Metric': 'Total Active', 'Value': report_data['ongoing_summary'].get('total_active', 0)},
+                    {'Metric': 'Resolved This Period', 'Value': report_data['ongoing_summary'].get('total_resolved_period', 0)},
+                    {'Metric': 'Critical Active', 'Value': report_data['ongoing_summary'].get('critical_active', 0)},
+                    {'Metric': 'High Active', 'Value': report_data['ongoing_summary'].get('high_active', 0)},
+                ]
+                summary_df = pd.DataFrame(summary_data)
+                summary_df.to_excel(writer, sheet_name='Summary', index=False)
+
+            messagebox.showinfo("Export Complete", f"Report exported to:\n{filepath}")
+            self._log(f"Exported resolution report to {filepath}")
+
+        except Exception as e:
+            self._log(f"Error exporting report: {e}")
+            messagebox.showerror("Export Error", f"Failed to export report: {e}")
+
     # Processing methods
     def _process_archives(self):
         """Process selected archives in a background thread."""
@@ -2240,6 +2686,8 @@ class NessusHistoryTrackerApp:
         self._is_processing = False
         if success:
             self._set_processing(False, "Processing complete")
+            # Update reporting date dropdowns
+            self._update_reporting_date_dropdowns()
             messagebox.showinfo("Success", "Data processed successfully!")
         else:
             self._set_processing(False, "Processing failed")
