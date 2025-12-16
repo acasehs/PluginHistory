@@ -5022,14 +5022,27 @@ Avg New/Month: {monthly_new.mean():.0f}
 
                 if has_stig:
                     stig_df = self.stig_df
-                    total_checks = len(stig_df)
+                    total_findings = len(stig_df)
+
+                    # Count unique checklists and hosts
+                    num_checklists = stig_df['stig_name'].nunique() if 'stig_name' in stig_df.columns else 0
+                    num_hosts = stig_df['hostname'].nunique() if 'hostname' in stig_df.columns else (
+                        stig_df['target_host'].nunique() if 'target_host' in stig_df.columns else 0)
+
+                    summary_text += f"STIG DATA\n"
+                    summary_text += f"  Checklists: {num_checklists:,}\n"
+                    summary_text += f"  Hosts: {num_hosts:,}\n"
+                    summary_text += f"  Findings: {total_findings:,}\n"
+
                     if 'status' in stig_df.columns:
                         compliant = len(stig_df[stig_df['status'].isin(['NotAFinding', 'Not_Applicable'])])
-                        compliance_rate = (compliant / total_checks * 100) if total_checks > 0 else 0
-                        summary_text += f"STIG CHECKS\n"
-                        summary_text += f"  Total: {total_checks:,}\n"
+                        open_count = len(stig_df[stig_df['status'] == 'Open'])
+                        not_reviewed = len(stig_df[stig_df['status'] == 'Not_Reviewed'])
+                        compliance_rate = (compliant / total_findings * 100) if total_findings > 0 else 0
+                        summary_text += f"  Open: {open_count:,}\n"
                         summary_text += f"  Compliant: {compliant:,}\n"
-                        summary_text += f"  Rate: {compliance_rate:.1f}%\n\n"
+                        summary_text += f"  Not Reviewed: {not_reviewed:,}\n"
+                        summary_text += f"  Compliance: {compliance_rate:.1f}%\n\n"
 
                 if has_poam:
                     poam_df = self.poam_df
