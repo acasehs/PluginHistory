@@ -2199,17 +2199,43 @@ class NessusHistoryTrackerApp:
             self._load_stig_files()
 
     def _load_stig_files(self):
-        """Load and parse selected STIG checklist files."""
+        """Load and parse selected STIG checklist files with deduplication."""
         if not self.stig_file_paths:
             return
 
         try:
             self._log("Parsing STIG checklist files...")
-            self.stig_df, checklists = parse_multiple_cklb_files(self.stig_file_paths)
+
+            # Get existing metadata for incremental import
+            existing_metadata = getattr(self, 'stig_checklist_metadata', None)
+
+            # Parse with deduplication
+            self.stig_df, checklists, import_stats = parse_multiple_cklb_files(
+                self.stig_file_paths,
+                existing_metadata=existing_metadata
+            )
+
+            # Store metadata for future imports
+            if not hasattr(self, 'stig_checklist_metadata'):
+                self.stig_checklist_metadata = {}
+
+            # Log import statistics
+            self._log(f"STIG Import Statistics:")
+            self._log(f"  Files processed: {import_stats['files_processed']}")
+            self._log(f"  New checklists: {import_stats['checklists_new']}")
+            self._log(f"  Updated checklists: {import_stats['checklists_updated']}")
+            if import_stats['files_skipped_older'] > 0:
+                self._log(f"  Skipped (older version): {import_stats['files_skipped_older']}")
+            if import_stats['files_skipped_duplicate'] > 0:
+                self._log(f"  Skipped (duplicate): {import_stats['files_skipped_duplicate']}")
+
+            # Log skipped file details
+            for filename, reason in import_stats.get('skipped_details', []):
+                self._log(f"    - {filename}: {reason}")
 
             if not self.stig_df.empty:
                 summary = get_stig_summary(self.stig_df)
-                self._log(f"Loaded {summary['total_rules']} STIG rules from {len(checklists)} checklists")
+                self._log(f"Total: {summary['total_rules']} STIG rules from {len(checklists)} checklists")
                 self._log(f"  Open findings: {summary['total_findings']}")
                 self._log(f"  Unique hosts: {summary['unique_hosts']}")
                 self._log(f"  By CAT: {summary.get('open_by_cat', {})}")
@@ -2221,10 +2247,19 @@ class NessusHistoryTrackerApp:
                 if hasattr(self, '_update_stig_tab'):
                     self.window.after(0, self._update_stig_tab)
 
-                messagebox.showinfo("STIG Loaded",
-                    f"Loaded {summary['total_rules']} rules\n"
-                    f"Open findings: {summary['total_findings']}\n"
-                    f"Hosts: {summary['unique_hosts']}")
+                # Build summary message
+                msg_parts = [f"Loaded {summary['total_rules']} rules"]
+                if import_stats['checklists_new'] > 0:
+                    msg_parts.append(f"New: {import_stats['checklists_new']}")
+                if import_stats['checklists_updated'] > 0:
+                    msg_parts.append(f"Updated: {import_stats['checklists_updated']}")
+                skipped = import_stats['files_skipped_older'] + import_stats['files_skipped_duplicate']
+                if skipped > 0:
+                    msg_parts.append(f"Skipped: {skipped}")
+                msg_parts.append(f"Open findings: {summary['total_findings']}")
+                msg_parts.append(f"Hosts: {summary['unique_hosts']}")
+
+                messagebox.showinfo("STIG Loaded", "\n".join(msg_parts))
             else:
                 self._log("No STIG findings found in selected files")
                 messagebox.showwarning("No Data", "No STIG findings found in selected files")
@@ -11541,11 +11576,18 @@ class NessusHistoryTrackerApp:
                 self.historical_df, self.lifecycle_df,
                 self.host_presence_df, self.scan_changes_df,
                 self.opdir_df, filepath,
-                iavm_df=self.iavm_df
+                iavm_df=self.iavm_df,
+                stig_df=self.stig_df,
+                poam_df=self.poam_df
             )
 
             if success:
                 self._log(f"Exported to: {filepath}")
+                # Log STIG/POAM counts if present
+                if not self.stig_df.empty:
+                    self._log(f"  Included {len(self.stig_df)} STIG findings")
+                if not self.poam_df.empty:
+                    self._log(f"  Included {len(self.poam_df)} POAM entries")
                 messagebox.showinfo("Success", f"Exported to:\n{filepath}")
 
     def _export_json(self):

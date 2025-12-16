@@ -6,6 +6,7 @@ Parses DISA STIG Viewer 3 checklist files and extracts findings.
 
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -32,6 +33,86 @@ STATUS_MAPPING = {
     'open': 'Open',
     'not_a_finding': 'Not a Finding'
 }
+
+
+@dataclass
+class ChecklistMetadata:
+    """Tracks checklist identity and version for deduplication."""
+    hostname: str  # Extended hostname (e.g., server01_PRODDB)
+    stig_id: str  # STIG benchmark ID
+    stig_version: str  # e.g., "2"
+    release_number: str  # e.g., "6"
+    benchmark_date: str  # e.g., "02 Apr 2025"
+    source_file: str  # Path to .cklb file
+    file_mtime: Optional[float] = None  # File modification time
+    checklist_id: str = ""  # UUID from checklist
+
+    @property
+    def checklist_key(self) -> str:
+        """Composite key for identifying same host+STIG combination."""
+        return f"{self.hostname}|{self.stig_id}"
+
+    def is_newer_than(self, other: 'ChecklistMetadata') -> bool:
+        """
+        Determine if this checklist is newer than another.
+
+        Comparison order:
+        1. STIG version (higher = newer)
+        2. Release number (higher = newer)
+        3. Benchmark date (later = newer)
+        4. File modification time (later = newer)
+        """
+        # Compare STIG version
+        try:
+            self_ver = int(self.stig_version) if self.stig_version else 0
+            other_ver = int(other.stig_version) if other.stig_version else 0
+            if self_ver != other_ver:
+                return self_ver > other_ver
+        except ValueError:
+            pass
+
+        # Compare release number
+        try:
+            self_rel = int(self.release_number) if self.release_number else 0
+            other_rel = int(other.release_number) if other.release_number else 0
+            if self_rel != other_rel:
+                return self_rel > other_rel
+        except ValueError:
+            pass
+
+        # Compare benchmark date
+        self_date = parse_benchmark_date(self.benchmark_date)
+        other_date = parse_benchmark_date(other.benchmark_date)
+        if self_date and other_date and self_date != other_date:
+            return self_date > other_date
+
+        # Compare file modification time
+        if self.file_mtime and other.file_mtime:
+            return self.file_mtime > other.file_mtime
+
+        return False
+
+
+def parse_benchmark_date(date_str: str) -> Optional[datetime]:
+    """Parse benchmark date string to datetime."""
+    if not date_str:
+        return None
+
+    # Common formats: "02 Apr 2025", "2025-04-02", "04/02/2025"
+    formats = [
+        "%d %b %Y",  # 02 Apr 2025
+        "%Y-%m-%d",  # 2025-04-02
+        "%m/%d/%Y",  # 04/02/2025
+        "%d-%b-%Y",  # 02-Apr-2025
+    ]
+
+    for fmt in formats:
+        try:
+            return datetime.strptime(date_str.strip(), fmt)
+        except ValueError:
+            continue
+
+    return None
 
 
 @dataclass
@@ -289,27 +370,152 @@ def parse_cklb_file(file_path: str) -> Optional[STIGChecklist]:
         return None
 
 
-def parse_multiple_cklb_files(file_paths: List[str]) -> Tuple[pd.DataFrame, List[STIGChecklist]]:
+def extract_checklist_metadata(checklist: STIGChecklist, file_path: str) -> List[ChecklistMetadata]:
     """
-    Parse multiple .cklb files and return consolidated DataFrame.
+    Extract metadata for each STIG in a checklist file.
+
+    A single .cklb file can contain multiple STIGs (e.g., Windows Server + IIS).
+    Returns one ChecklistMetadata per STIG in the file.
+    """
+    metadata_list = []
+
+    # Get file modification time
+    try:
+        file_mtime = os.path.getmtime(file_path)
+    except OSError:
+        file_mtime = None
+
+    for stig_info in checklist.stigs:
+        # Parse release info for this specific STIG
+        release_info = stig_info.get('release_info', '')
+        parsed = parse_release_info(release_info)
+
+        metadata = ChecklistMetadata(
+            hostname=checklist.hostname,
+            stig_id=stig_info.get('stig_id', ''),
+            stig_version=str(stig_info.get('version', '')),
+            release_number=parsed['release'],
+            benchmark_date=parsed['benchmark_date'],
+            source_file=file_path,
+            file_mtime=file_mtime,
+            checklist_id=checklist.checklist_id
+        )
+        metadata_list.append(metadata)
+
+    return metadata_list
+
+
+def parse_multiple_cklb_files(file_paths: List[str],
+                              existing_metadata: Dict[str, ChecklistMetadata] = None
+                              ) -> Tuple[pd.DataFrame, List[STIGChecklist], Dict[str, Any]]:
+    """
+    Parse multiple .cklb files and return consolidated DataFrame with deduplication.
+
+    Handles duplicate checklists by keeping only the newest version based on:
+    1. STIG version
+    2. Release number
+    3. Benchmark date
+    4. File modification time
 
     Args:
         file_paths: List of paths to .cklb files
+        existing_metadata: Optional dict of existing checklist metadata (key -> metadata)
+                          for incremental imports
 
     Returns:
-        Tuple of (DataFrame with all findings, list of STIGChecklist objects)
+        Tuple of:
+        - DataFrame with all findings (deduplicated)
+        - List of STIGChecklist objects (deduplicated)
+        - Dict with import statistics (skipped, updated, new counts)
     """
-    all_checklists = []
-    all_rules = []
+    # Track metadata by checklist key (hostname|stig_id)
+    metadata_tracker: Dict[str, ChecklistMetadata] = existing_metadata.copy() if existing_metadata else {}
+    checklist_tracker: Dict[str, STIGChecklist] = {}
+    rules_tracker: Dict[str, List[STIGRule]] = {}
+
+    # Statistics
+    stats = {
+        'files_processed': 0,
+        'files_skipped_older': 0,
+        'files_skipped_duplicate': 0,
+        'checklists_new': 0,
+        'checklists_updated': 0,
+        'skipped_details': []  # List of (file, reason) tuples
+    }
 
     for file_path in file_paths:
         checklist = parse_cklb_file(file_path)
-        if checklist:
-            all_checklists.append(checklist)
-            all_rules.extend(checklist.rules)
+        if not checklist:
+            continue
+
+        stats['files_processed'] += 1
+
+        # Extract metadata for each STIG in this checklist
+        meta_list = extract_checklist_metadata(checklist, file_path)
+
+        # Group rules by STIG ID for this checklist
+        rules_by_stig: Dict[str, List[STIGRule]] = {}
+        for rule in checklist.rules:
+            if rule.stig_id not in rules_by_stig:
+                rules_by_stig[rule.stig_id] = []
+            rules_by_stig[rule.stig_id].append(rule)
+
+        # Check each STIG in this file
+        for meta in meta_list:
+            key = meta.checklist_key
+
+            if key in metadata_tracker:
+                existing_meta = metadata_tracker[key]
+
+                # Check if this is the exact same file (duplicate import)
+                if meta.source_file == existing_meta.source_file:
+                    stats['files_skipped_duplicate'] += 1
+                    stats['skipped_details'].append((
+                        os.path.basename(file_path),
+                        f"Duplicate: already loaded"
+                    ))
+                    continue
+
+                # Compare versions to see if new file is newer
+                if meta.is_newer_than(existing_meta):
+                    # New file is newer - update
+                    logger.info(
+                        f"Updating {key}: V{existing_meta.stig_version}R{existing_meta.release_number} "
+                        f"-> V{meta.stig_version}R{meta.release_number}"
+                    )
+                    metadata_tracker[key] = meta
+                    rules_tracker[key] = rules_by_stig.get(meta.stig_id, [])
+                    stats['checklists_updated'] += 1
+                else:
+                    # Existing is newer or same - skip
+                    stats['files_skipped_older'] += 1
+                    stats['skipped_details'].append((
+                        os.path.basename(file_path),
+                        f"Older version: V{meta.stig_version}R{meta.release_number} "
+                        f"(have V{existing_meta.stig_version}R{existing_meta.release_number})"
+                    ))
+                    logger.info(
+                        f"Skipping older checklist for {key}: "
+                        f"V{meta.stig_version}R{meta.release_number} "
+                        f"(have V{existing_meta.stig_version}R{existing_meta.release_number})"
+                    )
+                    continue
+            else:
+                # New checklist
+                metadata_tracker[key] = meta
+                rules_tracker[key] = rules_by_stig.get(meta.stig_id, [])
+                stats['checklists_new'] += 1
+
+        # Track the checklist object (may contain multiple STIGs)
+        checklist_tracker[file_path] = checklist
+
+    # Collect all rules from tracked checklists
+    all_rules = []
+    for rules in rules_tracker.values():
+        all_rules.extend(rules)
 
     if not all_rules:
-        return pd.DataFrame(), all_checklists
+        return pd.DataFrame(), list(checklist_tracker.values()), stats
 
     # Convert to DataFrame
     data = []
@@ -346,9 +552,17 @@ def parse_multiple_cklb_files(file_paths: List[str]) -> Tuple[pd.DataFrame, List
         })
 
     df = pd.DataFrame(data)
-    logger.info(f"Parsed {len(df)} total STIG findings from {len(file_paths)} files")
 
-    return df, all_checklists
+    # Log summary
+    logger.info(
+        f"STIG Import: {stats['files_processed']} files processed, "
+        f"{stats['checklists_new']} new, {stats['checklists_updated']} updated, "
+        f"{stats['files_skipped_older']} skipped (older), "
+        f"{stats['files_skipped_duplicate']} skipped (duplicate)"
+    )
+    logger.info(f"Total: {len(df)} STIG findings from {len(checklist_tracker)} checklists")
+
+    return df, list(checklist_tracker.values()), stats
 
 
 def get_stig_summary(df: pd.DataFrame) -> Dict[str, Any]:
