@@ -343,6 +343,20 @@ def create_sqlite_database(filepath: str) -> sqlite3.Connection:
         )
     ''')
 
+    # Plugin severity overrides - user-defined severity remapping
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS plugin_severity_overrides (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            plugin_id TEXT UNIQUE NOT NULL,
+            plugin_name TEXT,
+            original_severity TEXT,
+            override_severity TEXT NOT NULL,
+            reason TEXT,
+            created_date TEXT,
+            modified_date TEXT
+        )
+    ''')
+
     conn.commit()
     return conn
 
