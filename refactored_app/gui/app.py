@@ -453,8 +453,12 @@ class NessusHistoryTrackerApp:
             # Add to main notebook with pin indicator
             self.notebook.add(tab_frame, text=f"📌 {tab_text}")
 
-            # Select the newly pinned tab
+            # Select the newly pinned tab and refresh UI
             self.notebook.select(tab_frame)
+            self.window.update_idletasks()
+
+            # Save pinned tabs to database for persistence
+            self._save_pinned_tabs()
 
             self._log(f"Pinned '{tab_text}' to top-level tabs")
 
@@ -471,6 +475,7 @@ class NessusHistoryTrackerApp:
             tab_text = pin_info['tab_text']
             source_notebook = pin_info['source_notebook']
             original_index = pin_info['original_index']
+            group_name = pin_info['group_name']
 
             # Find the tab in main notebook
             for tab_id in self.notebook.tabs():
@@ -485,14 +490,115 @@ class NessusHistoryTrackerApp:
                     insert_index = min(original_index, current_count)
                     source_notebook.insert(insert_index, tab_frame, text=tab_text)
 
-                    # Clean up
+                    # Clean up and refresh UI
                     del self.pinned_tabs[pin_key]
+                    self.window.update_idletasks()
 
-                    self._log(f"Unpinned '{tab_text}' back to {pin_info['group_name']}")
+                    # Save updated pinned tabs
+                    self._save_pinned_tabs()
+
+                    self._log(f"Unpinned '{tab_text}' back to {group_name}")
                     return
 
         except Exception as e:
             self._log(f"Error unpinning tab: {e}")
+
+    def _save_pinned_tabs(self):
+        """Save pinned tab preferences to database."""
+        if not self.existing_db_path or not os.path.exists(self.existing_db_path):
+            return
+
+        try:
+            import sqlite3
+            import json
+
+            conn = sqlite3.connect(self.existing_db_path)
+            cursor = conn.cursor()
+
+            # Create preferences table if not exists
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS user_preferences (
+                    key TEXT PRIMARY KEY,
+                    value TEXT,
+                    modified_date TEXT
+                )
+            ''')
+
+            # Save pinned tabs as JSON (only serializable data)
+            pinned_data = {}
+            for pin_key, pin_info in self.pinned_tabs.items():
+                pinned_data[pin_key] = {
+                    'tab_text': pin_info['tab_text'],
+                    'group_name': pin_info['group_name'],
+                    'original_index': pin_info['original_index']
+                }
+
+            from datetime import datetime
+            now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+            cursor.execute('''
+                INSERT OR REPLACE INTO user_preferences (key, value, modified_date)
+                VALUES (?, ?, ?)
+            ''', ('pinned_tabs', json.dumps(pinned_data), now))
+
+            conn.commit()
+            conn.close()
+
+        except Exception as e:
+            self._log(f"Error saving pinned tabs: {e}")
+
+    def _load_pinned_tabs(self):
+        """Load and restore pinned tabs from database."""
+        if not self.existing_db_path or not os.path.exists(self.existing_db_path):
+            return
+
+        try:
+            import sqlite3
+            import json
+
+            conn = sqlite3.connect(self.existing_db_path)
+            cursor = conn.cursor()
+
+            # Check if preferences table exists
+            cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='user_preferences'"
+            )
+            if not cursor.fetchone():
+                conn.close()
+                return
+
+            cursor.execute("SELECT value FROM user_preferences WHERE key = 'pinned_tabs'")
+            row = cursor.fetchone()
+            conn.close()
+
+            if not row:
+                return
+
+            pinned_data = json.loads(row[0])
+
+            # Restore each pinned tab
+            for pin_key, pin_info in pinned_data.items():
+                group_name = pin_info['group_name']
+                tab_text = pin_info['tab_text']
+                original_index = pin_info['original_index']
+
+                # Find the source notebook
+                if group_name not in self.subtab_notebooks:
+                    continue
+
+                source_notebook = self.subtab_notebooks[group_name]
+
+                # Find the tab by name in the source notebook
+                for idx, tab_id in enumerate(source_notebook.tabs()):
+                    if source_notebook.tab(tab_id, 'text') == tab_text:
+                        # Pin this tab
+                        self._pin_tab(source_notebook, idx, group_name)
+                        break
+
+            self._log(f"Restored {len(pinned_data)} pinned tabs")
+
+        except Exception as e:
+            self._log(f"Error loading pinned tabs: {e}")
 
     def _build_file_selection(self, parent):
         """Build file selection section with compact layout."""
@@ -708,9 +814,10 @@ class NessusHistoryTrackerApp:
         cvss_label = tk.Label(cvss_row, text="CVSS:", width=8, bg=self.filter_label_default_bg, fg='white', anchor='w')
         cvss_label.pack(side=tk.LEFT)
         self.filter_labels['cvss'] = cvss_label
-        ttk.Entry(cvss_row, textvariable=self.filter_cvss_min, width=5).pack(side=tk.LEFT, padx=1)
+        # Min box: larger (accommodates values like 0.0-9.9), Max box: smaller but fits 10.0
+        ttk.Entry(cvss_row, textvariable=self.filter_cvss_min, width=5).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
         ttk.Label(cvss_row, text="-").pack(side=tk.LEFT)
-        ttk.Entry(cvss_row, textvariable=self.filter_cvss_max, width=5).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
+        ttk.Entry(cvss_row, textvariable=self.filter_cvss_max, width=6).pack(side=tk.LEFT, padx=1)
 
         # Left Column Row 4: OPDIR Status
         opdir_row = ttk.Frame(left_col)
@@ -2400,6 +2507,13 @@ class NessusHistoryTrackerApp:
                 'can_drop': 'Caution',
                 'dedup_key': ['plugin_id'],
                 'description': 'User-defined plugin severity remappings. Applied on all imports.',
+                'regenerable': False
+            },
+            'user_preferences': {
+                'type': 'User Data',
+                'can_drop': 'Caution',
+                'dedup_key': ['key'],
+                'description': 'User preferences including pinned tabs. Dropping will reset UI customizations.',
                 'regenerable': False
             }
         }
@@ -7146,6 +7260,9 @@ Avg New/Month: {monthly_new.mean():.0f}
 
         finally:
             conn.close()
+
+        # Restore pinned tabs from database preferences
+        self.window.after(0, self._load_pinned_tabs)
 
         # Run analysis refresh on main thread
         self.window.after(0, self._refresh_analysis_internal)
@@ -12338,14 +12455,18 @@ Avg New/Month: {monthly_new.mean():.0f}
 
         def on_double_click(event):
             quadrant = get_click_quadrant(event)
-            chart_info = [
-                ('Top Most Common Plugins', self._draw_top_plugins_popout),
-                ('Plugin Severity Distribution', self._draw_plugin_severity_popout),
-                ('Plugins Affecting Most Hosts', self._draw_plugins_by_hosts_popout),
-                ('Plugin Average Age', self._draw_plugin_age_popout),
-            ]
-            title, redraw_func = chart_info[quadrant]
-            ChartPopoutModal(self.window, title, redraw_func)
+            if quadrant == 1:  # Plugin Severity Distribution - use custom popup with list
+                self._show_plugin_severity_popup()
+            else:
+                chart_info = [
+                    ('Top Most Common Plugins', self._draw_top_plugins_popout),
+                    None,  # Placeholder for quadrant 1
+                    ('Plugins Affecting Most Hosts', self._draw_plugins_by_hosts_popout),
+                    ('Plugin Average Age', self._draw_plugin_age_popout),
+                ]
+                if chart_info[quadrant]:
+                    title, redraw_func = chart_info[quadrant]
+                    ChartPopoutModal(self.window, title, redraw_func)
 
         self.plugin_canvas.get_tk_widget().bind('<Double-Button-1>', on_double_click)
 
@@ -12384,8 +12505,8 @@ Avg New/Month: {monthly_new.mean():.0f}
         counts = [p['count'] for p in all_plugins]
         colors = [env_colors.get(p['env'], '#6c757d') for p in all_plugins]
 
-        # Use plugin name if available, otherwise ID
-        labels = [str(plugin_names.get(p['plugin_id'], p['plugin_id']))[:30] for p in all_plugins]
+        # Use plugin ID + name for labels
+        labels = [f"{p['plugin_id']}: {str(plugin_names.get(p['plugin_id'], ''))[:25]}" for p in all_plugins]
 
         bars = ax.barh(range(len(all_plugins)), counts, color=colors)
         ax.set_yticks(range(len(all_plugins)))
@@ -12411,36 +12532,165 @@ Avg New/Month: {monthly_new.mean():.0f}
         """Draw plugin severity distribution for pop-out."""
         df = self._get_chart_data('lifecycle')
 
-        if df.empty or 'plugin_id' not in df.columns or 'severity' not in df.columns:
+        # Check for severity column (prefer severity_text)
+        sev_col = 'severity_text' if 'severity_text' in df.columns else 'severity' if 'severity' in df.columns else None
+
+        if df.empty or 'plugin_id' not in df.columns or sev_col is None:
             ax.text(0.5, 0.5, 'No plugin severity data available', ha='center', va='center',
                    color='white', fontsize=12)
             return
 
-        # Count unique plugins per severity
-        plugin_sev = df.groupby('severity')['plugin_id'].nunique()
         severity_order = ['Critical', 'High', 'Medium', 'Low', 'Info']
-        plugin_sev = plugin_sev.reindex([s for s in severity_order if s in plugin_sev.index])
+        severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#B8860B',
+                          'Low': '#007bff', 'Info': '#6c757d'}
 
-        if len(plugin_sev) == 0:
+        # Count findings per severity (not unique plugins)
+        severity_counts = df.groupby(sev_col).size()
+        severity_counts = severity_counts.reindex([s for s in severity_order if s in severity_counts.index])
+
+        if len(severity_counts) == 0:
             ax.text(0.5, 0.5, 'No severity data', ha='center', va='center', color='white', fontsize=12)
             return
 
-        severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#B8860B',
-                          'Low': '#007bff', 'Info': '#6c757d'}
-        colors = [severity_colors.get(s, '#6c757d') for s in plugin_sev.index]
+        colors = [severity_colors.get(s, '#6c757d') for s in severity_counts.index]
 
-        bars = ax.bar(range(len(plugin_sev)), plugin_sev.values, color=colors)
-        ax.set_xticks(range(len(plugin_sev)))
-        ax.set_xticklabels(plugin_sev.index, fontsize=10)
+        bars = ax.bar(range(len(severity_counts)), severity_counts.values, color=colors)
+        ax.set_xticks(range(len(severity_counts)))
+        ax.set_xticklabels(severity_counts.index, fontsize=10)
 
         if show_labels:
-            for bar, val in zip(bars, plugin_sev.values):
+            for bar, val in zip(bars, severity_counts.values):
                 ax.annotate(f'{int(val)}', xy=(bar.get_x() + bar.get_width()/2, val),
                            xytext=(0, 3), textcoords='offset points',
                            ha='center', va='bottom', fontsize=9, color='white')
 
-        ax.set_title('Unique Plugins by Severity')
-        ax.set_ylabel('Plugin Count')
+        ax.set_title('Findings by Severity')
+        ax.set_ylabel('Finding Count')
+
+    def _show_plugin_severity_popup(self):
+        """Show custom popup for plugin severity with plugin list on left."""
+        df = self._get_chart_data('lifecycle')
+
+        # Check for severity column
+        sev_col = 'severity_text' if 'severity_text' in df.columns else 'severity' if 'severity' in df.columns else None
+
+        if df.empty or 'plugin_id' not in df.columns or sev_col is None:
+            messagebox.showwarning("No Data", "No plugin severity data available")
+            return
+
+        # Create popup window
+        popup = tk.Toplevel(self.window)
+        popup.title("Plugin Severity Distribution")
+        popup.geometry("1100x600")
+        popup.configure(bg='#1e1e1e')
+        popup.transient(self.window)
+
+        # Main container with two panels
+        main_frame = ttk.Frame(popup)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Left panel - Plugin list (40% width)
+        left_frame = ttk.LabelFrame(main_frame, text="Plugins by Affected Assets", padding=5)
+        left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=False, padx=(0, 5))
+        left_frame.configure(width=400)
+
+        # Treeview for plugin list
+        columns = ('plugin_id', 'plugin_name', 'severity', 'assets')
+        plugin_tree = ttk.Treeview(left_frame, columns=columns, show='headings', height=25)
+
+        plugin_tree.heading('plugin_id', text='ID')
+        plugin_tree.heading('plugin_name', text='Plugin Name')
+        plugin_tree.heading('severity', text='Severity')
+        plugin_tree.heading('assets', text='Assets')
+
+        plugin_tree.column('plugin_id', width=60, anchor='center')
+        plugin_tree.column('plugin_name', width=200)
+        plugin_tree.column('severity', width=70, anchor='center')
+        plugin_tree.column('assets', width=50, anchor='center')
+
+        # Scrollbar
+        scroll = ttk.Scrollbar(left_frame, orient=tk.VERTICAL, command=plugin_tree.yview)
+        plugin_tree.configure(yscrollcommand=scroll.set)
+
+        plugin_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Get plugin data with asset counts, grouped by severity descending
+        severity_order = {'Critical': 0, 'High': 1, 'Medium': 2, 'Low': 3, 'Info': 4}
+        severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#B8860B',
+                          'Low': '#007bff', 'Info': '#6c757d'}
+
+        # Group by plugin and count unique hostnames
+        plugin_data = df.groupby(['plugin_id', sev_col]).agg({
+            'hostname': 'nunique'
+        }).reset_index()
+
+        # Get plugin names
+        if 'plugin_name' in df.columns:
+            plugin_names = df.groupby('plugin_id')['plugin_name'].first().to_dict()
+        else:
+            plugin_names = {}
+
+        plugin_data['plugin_name'] = plugin_data['plugin_id'].map(lambda x: plugin_names.get(x, '')[:40])
+        plugin_data['sort_key'] = plugin_data[sev_col].map(lambda x: severity_order.get(x, 5))
+        plugin_data = plugin_data.sort_values(['sort_key', 'hostname'], ascending=[True, False])
+
+        # Configure tag colors for severity
+        plugin_tree.tag_configure('Critical', foreground='#dc3545')
+        plugin_tree.tag_configure('High', foreground='#fd7e14')
+        plugin_tree.tag_configure('Medium', foreground='#B8860B')
+        plugin_tree.tag_configure('Low', foreground='#007bff')
+        plugin_tree.tag_configure('Info', foreground='#6c757d')
+
+        # Insert data
+        for _, row in plugin_data.iterrows():
+            sev = row[sev_col]
+            plugin_tree.insert('', tk.END, values=(
+                row['plugin_id'],
+                row['plugin_name'],
+                sev,
+                row['hostname']
+            ), tags=(sev,))
+
+        # Right panel - Chart (60% width)
+        right_frame = ttk.LabelFrame(main_frame, text="Findings by Severity", padding=5)
+        right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(5, 0))
+
+        # Create matplotlib figure
+        if HAS_MATPLOTLIB:
+            fig, ax = plt.subplots(figsize=(6, 5), facecolor='#1e1e1e')
+            ax.set_facecolor('#1e1e1e')
+
+            # Draw the chart
+            self._draw_plugin_severity_popout(fig, ax, enlarged=True, show_labels=True)
+
+            # Style the axes
+            ax.tick_params(colors='white')
+            ax.xaxis.label.set_color('white')
+            ax.yaxis.label.set_color('white')
+            ax.title.set_color('white')
+            for spine in ax.spines.values():
+                spine.set_color('white')
+
+            # Embed in tkinter
+            from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+            canvas = FigureCanvasTkAgg(fig, right_frame)
+            canvas.draw()
+            canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        # Summary stats at bottom
+        summary_frame = ttk.Frame(popup)
+        summary_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        total_plugins = df['plugin_id'].nunique()
+        total_findings = len(df)
+        total_hosts = df['hostname'].nunique() if 'hostname' in df.columns else 0
+
+        ttk.Label(summary_frame,
+                 text=f"Total: {total_plugins} unique plugins | {total_findings} findings | {total_hosts} hosts affected",
+                 font=('Arial', 10)).pack(side=tk.LEFT)
+
+        ttk.Button(summary_frame, text="Close", command=popup.destroy).pack(side=tk.RIGHT)
 
     def _draw_plugins_by_hosts_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw plugins affecting most hosts for pop-out."""
@@ -12461,13 +12711,40 @@ Avg New/Month: {monthly_new.mean():.0f}
         bars = ax.barh(range(len(hosts_per_plugin)), hosts_per_plugin.values, color='#fd7e14')
         ax.set_yticks(range(len(hosts_per_plugin)))
 
+        # Get full plugin names (no truncation)
         if 'plugin_name' in df.columns:
             plugin_names = df.groupby('plugin_id')['plugin_name'].first()
-            labels = [str(plugin_names.get(pid, pid))[:25] for pid in hosts_per_plugin.index]
         else:
-            labels = [str(pid) for pid in hosts_per_plugin.index]
+            plugin_names = pd.Series(dtype=str)
 
+        # Labels show "plugin_id - full_name"
+        labels = [f"{pid} - {plugin_names.get(pid, '')}" for pid in hosts_per_plugin.index]
         ax.set_yticklabels(labels, fontsize=7)
+
+        # Store hover data for tooltip
+        hover_texts = [f"{pid} - {plugin_names.get(pid, 'Unknown')}\nHosts: {hosts_per_plugin[pid]}"
+                      for pid in hosts_per_plugin.index]
+
+        # Add interactive hover annotation
+        annot = ax.annotate("", xy=(0, 0), xytext=(10, 10),
+                           textcoords="offset points",
+                           bbox=dict(boxstyle="round,pad=0.5", facecolor='#2d2d2d', edgecolor='white', alpha=0.9),
+                           color='white', fontsize=9, zorder=100)
+        annot.set_visible(False)
+
+        def on_hover(event):
+            if event.inaxes == ax:
+                for i, bar in enumerate(bars):
+                    if bar.contains(event)[0]:
+                        annot.xy = (bar.get_width(), bar.get_y() + bar.get_height() / 2)
+                        annot.set_text(hover_texts[i])
+                        annot.set_visible(True)
+                        fig.canvas.draw_idle()
+                        return
+                annot.set_visible(False)
+                fig.canvas.draw_idle()
+
+        fig.canvas.mpl_connect('motion_notify_event', on_hover)
 
         if show_labels:
             for bar, val in zip(bars, hosts_per_plugin.values):
@@ -12503,13 +12780,40 @@ Avg New/Month: {monthly_new.mean():.0f}
         bars = ax.barh(range(len(avg_age)), avg_age.values, color=colors)
         ax.set_yticks(range(len(avg_age)))
 
+        # Get full plugin names (no truncation)
         if 'plugin_name' in df.columns:
             plugin_names = df.groupby('plugin_id')['plugin_name'].first()
-            labels = [str(plugin_names.get(pid, pid))[:25] for pid in avg_age.index]
         else:
-            labels = [str(pid) for pid in avg_age.index]
+            plugin_names = pd.Series(dtype=str)
 
+        # Labels show "plugin_id - full_name"
+        labels = [f"{pid} - {plugin_names.get(pid, '')}" for pid in avg_age.index]
         ax.set_yticklabels(labels, fontsize=7)
+
+        # Store hover data for tooltip
+        hover_texts = [f"{pid} - {plugin_names.get(pid, 'Unknown')}\nAvg Age: {int(avg_age[pid])} days"
+                      for pid in avg_age.index]
+
+        # Add interactive hover annotation
+        annot = ax.annotate("", xy=(0, 0), xytext=(10, 10),
+                           textcoords="offset points",
+                           bbox=dict(boxstyle="round,pad=0.5", facecolor='#2d2d2d', edgecolor='white', alpha=0.9),
+                           color='white', fontsize=9, zorder=100)
+        annot.set_visible(False)
+
+        def on_hover(event):
+            if event.inaxes == ax:
+                for i, bar in enumerate(bars):
+                    if bar.contains(event)[0]:
+                        annot.xy = (bar.get_width(), bar.get_y() + bar.get_height() / 2)
+                        annot.set_text(hover_texts[i])
+                        annot.set_visible(True)
+                        fig.canvas.draw_idle()
+                        return
+                annot.set_visible(False)
+                fig.canvas.draw_idle()
+
+        fig.canvas.mpl_connect('motion_notify_event', on_hover)
 
         if show_labels:
             for bar, val in zip(bars, avg_age.values):
