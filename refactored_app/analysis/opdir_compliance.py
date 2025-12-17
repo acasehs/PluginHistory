@@ -567,11 +567,17 @@ def match_finding_to_opdir(iavx_refs: List[Dict], lookup: Dict[str, Any],
 
                 # Multiple entries - prefer year match if available
                 if ref.get('year'):
+                    ref_year = ref['year']
+                    # First try to match against iavab_year (from IAVA/B column)
                     for entry in entries:
-                        if entry.get('iavab_year') == ref['year']:
+                        if entry.get('iavab_year') == ref_year:
+                            return entry
+                    # Also try to match against opdir_year (from OPDIR NUMBER like 0001-24)
+                    for entry in entries:
+                        if entry.get('opdir_year') == ref_year:
                             return entry
 
-                # Otherwise return most recent year
+                # Otherwise return most recent year (using opdir_year from OPDIR NUMBER)
                 entries_with_year = [e for e in entries if pd.notna(e.get('opdir_year'))]
                 if entries_with_year:
                     entries_with_year.sort(key=lambda e: e.get('opdir_year', 0), reverse=True)
