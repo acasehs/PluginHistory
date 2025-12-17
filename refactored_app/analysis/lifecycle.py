@@ -119,12 +119,17 @@ def analyze_finding_lifecycle(historical_df: pd.DataFrame) -> pd.DataFrame:
         # Get original hostname (first observed) for reference
         original_hostname = group.iloc[0].get('hostname', effective_hostname)
 
+        # Build port_full for display
+        protocol_val = latest.get('protocol', 'tcp')
+        port_full = f"{port}/{protocol_val}" if port and port != '0' else ''
+
         lifecycle_records.append({
             'hostname': original_hostname,
             'canonical_hostname': effective_hostname,
             'ip_address': latest.get('ip_address', ''),
             'port': port,
-            'protocol': latest.get('protocol', 'tcp'),
+            'protocol': protocol_val,
+            'port_full': port_full,
             'plugin_id': plugin_id,
             'plugin_name': latest.get('name', 'Unknown'),
             'severity_text': latest.get('severity_text', 'Unknown'),
