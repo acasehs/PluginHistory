@@ -496,12 +496,12 @@ def save_informational_findings_by_year(historical_df: pd.DataFrame, base_dir: s
 
             save_df.to_sql('info_findings', conn, if_exists='append', index=False)
 
-            # Remove duplicates by keeping unique combinations
+            # Remove duplicates by keeping unique combinations (including port and protocol)
             conn.execute('''
                 DELETE FROM info_findings
                 WHERE rowid NOT IN (
                     SELECT MIN(rowid) FROM info_findings
-                    GROUP BY plugin_id, hostname, ip_address, scan_date
+                    GROUP BY plugin_id, hostname, ip_address, scan_date, port, protocol
                 )
             ''')
 
@@ -610,8 +610,8 @@ def load_informational_findings(filepaths: List[str]) -> pd.DataFrame:
 
     if all_dfs:
         combined = pd.concat(all_dfs, ignore_index=True)
-        # Remove duplicates
-        combined = combined.drop_duplicates(subset=['plugin_id', 'hostname', 'ip_address', 'scan_date'])
+        # Remove duplicates (including port and protocol to preserve multi-port findings)
+        combined = combined.drop_duplicates(subset=['plugin_id', 'hostname', 'ip_address', 'scan_date', 'port', 'protocol'])
         return combined
 
     return pd.DataFrame()

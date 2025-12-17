@@ -2190,7 +2190,7 @@ class NessusHistoryTrackerApp:
             'historical_findings': {
                 'type': 'Primary Data',
                 'can_drop': 'CRITICAL',
-                'dedup_key': ['plugin_id', 'hostname', 'scan_date', 'ip_address'],
+                'dedup_key': ['plugin_id', 'hostname', 'scan_date', 'ip_address', 'port', 'protocol'],
                 'description': 'Raw scan data from Nessus exports. Dropping requires re-importing all scan files.',
                 'regenerable': False
             },
@@ -6806,8 +6806,8 @@ Avg New/Month: {monthly_new.mean():.0f}
 
             # Check for duplicates before appending
             if not self.historical_df.empty:
-                # Identify key columns for deduplication
-                key_cols = ['hostname', 'plugin_id', 'scan_date']
+                # Identify key columns for deduplication (including port/protocol to preserve multi-port findings)
+                key_cols = ['hostname', 'plugin_id', 'scan_date', 'port', 'protocol']
                 available_keys = [col for col in key_cols if col in self.historical_df.columns and col in new_findings_df.columns]
 
                 if available_keys:
@@ -7292,10 +7292,10 @@ Avg New/Month: {monthly_new.mean():.0f}
 
             # Merge with existing data
             if not self.historical_df.empty:
-                # Append and remove duplicates
+                # Append and remove duplicates (including port/protocol to preserve multi-port findings)
                 combined = pd.concat([self.historical_df, info_df], ignore_index=True)
                 combined = combined.drop_duplicates(
-                    subset=['plugin_id', 'hostname', 'ip_address', 'scan_date'],
+                    subset=['plugin_id', 'hostname', 'ip_address', 'scan_date', 'port', 'protocol'],
                     keep='first'
                 )
                 new_count = len(combined) - len(self.historical_df)
