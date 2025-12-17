@@ -971,8 +971,8 @@ def apply_hostname_normalization(df: pd.DataFrame, alias_map: Dict[str, str] = N
     """
     Apply hostname normalization to a DataFrame.
 
-    Adds a canonical_hostname column based on alias mappings and
-    normalization rules.
+    Adds a canonical_hostname column based on alias mappings ONLY.
+    Does NOT strip suffixes unless the hostname is a known alias (same IP).
 
     Args:
         df: DataFrame with hostname column
@@ -981,8 +981,6 @@ def apply_hostname_normalization(df: pd.DataFrame, alias_map: Dict[str, str] = N
     Returns:
         DataFrame with canonical_hostname column added
     """
-    from ..models.hostname_structure import normalize_hostname_for_matching
-
     if df.empty or 'hostname' not in df.columns:
         return df
 
@@ -994,12 +992,13 @@ def apply_hostname_normalization(df: pd.DataFrame, alias_map: Dict[str, str] = N
 
         hostname_lower = hostname.lower()
 
-        # Check alias map first
+        # ONLY use alias map - don't strip suffixes for hosts with different IPs
+        # If not in alias map, keep original hostname as canonical
         if alias_map and hostname_lower in alias_map:
             return alias_map[hostname_lower]
 
-        # Fall back to normalization
-        return normalize_hostname_for_matching(hostname_lower)
+        # Keep original hostname - it's not a known alias
+        return hostname_lower
 
     df['canonical_hostname'] = df['hostname'].apply(get_canonical)
 
