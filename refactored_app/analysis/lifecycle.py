@@ -83,6 +83,11 @@ def analyze_finding_lifecycle(historical_df: pd.DataFrame) -> pd.DataFrame:
         else:
             days_to_remediation = None
 
+        # Collect source files for auditability (all files where this finding was observed)
+        source_files = []
+        if 'source_file' in group.columns:
+            source_files = sorted(group['source_file'].dropna().unique().tolist())
+
         lifecycle_records.append({
             'hostname': hostname,
             'ip_address': latest.get('ip_address', ''),
@@ -100,7 +105,8 @@ def analyze_finding_lifecycle(historical_df: pd.DataFrame) -> pd.DataFrame:
             'cvss3_base_score': latest.get('cvss3_base_score'),
             'cves': latest.get('cves', ''),
             'iavx': latest.get('iavx', ''),
-            'gap_details': json.dumps(gap_details) if gap_details else ''
+            'gap_details': json.dumps(gap_details) if gap_details else '',
+            'source_files': ', '.join(source_files) if source_files else ''
         })
 
     lifecycle_df = pd.DataFrame(lifecycle_records)

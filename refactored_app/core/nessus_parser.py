@@ -189,7 +189,7 @@ def parse_credentialed_scan_info(plugin_output: str) -> Dict[str, str]:
 
 def extract_finding_data(item: ET.Element, host_name: str, hostname: str,
                          scan_date: str = None, scan_time: str = None,
-                         plugins_dict: Dict = None) -> Dict[str, Any]:
+                         plugins_dict: Dict = None, source_file: str = None) -> Dict[str, Any]:
     """
     Extract finding data from a single ReportItem element.
 
@@ -200,6 +200,7 @@ def extract_finding_data(item: ET.Element, host_name: str, hostname: str,
         scan_date: Scan date string (YYYY-MM-DD) from HOST_START
         scan_time: Scan time string (HH:MM:SS) from HOST_START
         plugins_dict: Optional plugins database for enrichment
+        source_file: Source .nessus filename for auditability
 
     Returns:
         Dictionary containing finding information
@@ -248,7 +249,8 @@ def extract_finding_data(item: ET.Element, host_name: str, hostname: str,
         'hostname': hostname,
         'svc_name': svc_name,
         'scan_date': scan_date,
-        'scan_time': scan_time
+        'scan_time': scan_time,
+        'source_file': source_file or ''
     }
 
     # Extract plugin output
@@ -420,7 +422,8 @@ def parse_nessus_file(nessus_file: str, plugins_dict: Dict = None) -> Tuple[pd.D
 
                 finding = extract_finding_data(item, host_name, hostname,
                                                scan_date=scan_date, scan_time=scan_time,
-                                               plugins_dict=plugins_dict)
+                                               plugins_dict=plugins_dict,
+                                               source_file=original_filename)
                 all_findings.append(finding)
 
             host_summary = {
