@@ -11,13 +11,31 @@ import json
 from ..config import CVSS_THRESHOLDS, SEVERITY_ORDER
 
 
-def calculate_severity_from_cvss(cvss3_score: Optional[float], cvss2_score: Optional[float] = None) -> Tuple[str, int]:
+# Nessus severity value to text mapping
+NESSUS_SEVERITY_MAP = {
+    '0': ('Info', 0),
+    '1': ('Low', 1),
+    '2': ('Medium', 2),
+    '3': ('High', 3),
+    '4': ('Critical', 4),
+    0: ('Info', 0),
+    1: ('Low', 1),
+    2: ('Medium', 2),
+    3: ('High', 3),
+    4: ('Critical', 4),
+}
+
+
+def calculate_severity_from_cvss(cvss3_score: Optional[float], cvss2_score: Optional[float] = None,
+                                  nessus_severity: Optional[str] = None) -> Tuple[str, int]:
     """
     Calculate severity text and numeric value from CVSS scores.
+    Falls back to original Nessus severity if no CVSS scores available.
 
     Args:
         cvss3_score: CVSS v3 base score (preferred)
         cvss2_score: CVSS v2 base score (fallback)
+        nessus_severity: Original Nessus severity value (0-4) as final fallback
 
     Returns:
         Tuple of (severity_text, severity_value)
@@ -25,6 +43,9 @@ def calculate_severity_from_cvss(cvss3_score: Optional[float], cvss2_score: Opti
     score = cvss3_score if cvss3_score is not None else cvss2_score
 
     if score is None:
+        # Fall back to Nessus severity if no CVSS score
+        if nessus_severity is not None:
+            return NESSUS_SEVERITY_MAP.get(nessus_severity, ('Info', 0))
         return "Info", 0
 
     try:
@@ -39,17 +60,30 @@ def calculate_severity_from_cvss(cvss3_score: Optional[float], cvss2_score: Opti
         elif 0.1 <= score < 4.0:
             return "Low", 1
         else:
+            # Even with score of 0, fall back to Nessus severity
+            if nessus_severity is not None:
+                return NESSUS_SEVERITY_MAP.get(nessus_severity, ('Info', 0))
             return "Info", 0
     except (ValueError, TypeError):
+        # Fall back to Nessus severity on error
+        if nessus_severity is not None:
+            return NESSUS_SEVERITY_MAP.get(nessus_severity, ('Info', 0))
         return "Info", 0
 
 
-def enrich_findings_with_severity(df: pd.DataFrame) -> pd.DataFrame:
+def enrich_findings_with_severity(df: pd.DataFrame, severity_overrides: Optional[Dict[str, str]] = None) -> pd.DataFrame:
     """
     Add severity calculations to findings DataFrame.
 
+    Priority order:
+    1. Plugin severity overrides (user-defined remapping)
+    2. CVSS v3 score
+    3. CVSS v2 score
+    4. Original Nessus severity
+
     Args:
         df: Findings DataFrame
+        severity_overrides: Optional dict mapping plugin_id to severity_text
 
     Returns:
         DataFrame with added severity columns
@@ -60,20 +94,36 @@ def enrich_findings_with_severity(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
     # Convert CVSS scores to numeric
-    df['cvss3_base_score_numeric'] = pd.to_numeric(df['cvss3_base_score'], errors='coerce')
-    df['cvss2_base_score_numeric'] = pd.to_numeric(df['cvss2_base_score'], errors='coerce')
+    df['cvss3_base_score_numeric'] = pd.to_numeric(df.get('cvss3_base_score'), errors='coerce')
+    df['cvss2_base_score_numeric'] = pd.to_numeric(df.get('cvss2_base_score'), errors='coerce')
 
-    # Calculate severity
-    severity_results = df.apply(
-        lambda row: calculate_severity_from_cvss(
+    # Get original Nessus severity column if present
+    has_nessus_severity = 'severity' in df.columns
+
+    # Calculate severity with fallback to Nessus severity
+    def get_severity(row):
+        nessus_sev = row.get('severity') if has_nessus_severity else None
+        return calculate_severity_from_cvss(
             row['cvss3_base_score_numeric'],
-            row['cvss2_base_score_numeric']
-        ),
-        axis=1
-    )
+            row['cvss2_base_score_numeric'],
+            nessus_sev
+        )
+
+    severity_results = df.apply(get_severity, axis=1)
 
     df['severity_text'] = [result[0] for result in severity_results]
     df['severity_value'] = [result[1] for result in severity_results]
+
+    # Apply plugin severity overrides (highest priority)
+    if severity_overrides and 'plugin_id' in df.columns:
+        severity_text_map = {
+            'Critical': 4, 'High': 3, 'Medium': 2, 'Low': 1, 'Info': 0
+        }
+        for plugin_id, override_severity in severity_overrides.items():
+            mask = df['plugin_id'].astype(str) == str(plugin_id)
+            if mask.any():
+                df.loc[mask, 'severity_text'] = override_severity
+                df.loc[mask, 'severity_value'] = severity_text_map.get(override_severity, 0)
 
     return df
 

@@ -300,6 +300,10 @@ class NessusHistoryTrackerApp:
 
     def _build_organized_tabs(self):
         """Build the main tab structure with logical groupings."""
+        # Track subtab notebooks for pinning feature
+        self.subtab_notebooks = {}
+        self.pinned_tabs = {}  # Maps tab_id -> (original_notebook, original_index, tab_text)
+
         # 1. Dashboard (standalone)
         self._build_dashboard_tab()
 
@@ -308,56 +312,187 @@ class NessusHistoryTrackerApp:
         self.notebook.add(findings_container, text="Findings")
         self.findings_notebook = ttk.Notebook(findings_container)
         self.findings_notebook.pack(fill=tk.BOTH, expand=True)
+        self.subtab_notebooks['findings'] = self.findings_notebook
 
         self._build_lifecycle_tab(self.findings_notebook)
         self._build_plugin_tab(self.findings_notebook)
         self._build_priority_tab(self.findings_notebook)
         self._build_stig_tab(self.findings_notebook)
 
-        # 3. Analysis group (Timeline, 8 Week Rolling, Risk, Efficiency, Metrics, Advanced)
+        # 3. Core Analysis group (Timeline, 8 Week Rolling, Risk, Efficiency, Metrics)
         analysis_container = ttk.Frame(self.notebook)
-        self.notebook.add(analysis_container, text="Analysis")
+        self.notebook.add(analysis_container, text="Core Analysis")
         self.analysis_notebook = ttk.Notebook(analysis_container)
         self.analysis_notebook.pack(fill=tk.BOTH, expand=True)
+        self.subtab_notebooks['analysis'] = self.analysis_notebook
 
         self._build_timeline_tab(self.analysis_notebook)
         self._build_rolling_tab(self.analysis_notebook)
         self._build_risk_tab(self.analysis_notebook)
         self._build_efficiency_tab(self.analysis_notebook)
         self._build_metrics_tab(self.analysis_notebook)
-        self._build_advanced_tab(self.analysis_notebook)
 
-        # 4. Infrastructure group (Hosts, Host Track, Network)
+        # 4. Advanced Analysis (top-level for advanced visualizations)
+        self._build_advanced_tab()
+
+        # 5. Infrastructure group (Hosts, Host Track, Network)
         infra_container = ttk.Frame(self.notebook)
         self.notebook.add(infra_container, text="Infrastructure")
         self.infra_notebook = ttk.Notebook(infra_container)
         self.infra_notebook.pack(fill=tk.BOTH, expand=True)
+        self.subtab_notebooks['infrastructure'] = self.infra_notebook
 
         self._build_host_tab(self.infra_notebook)
         self._build_host_tracking_tab(self.infra_notebook)
         self._build_network_tab(self.infra_notebook)
 
-        # 5. Compliance group (OPDIR, POA&M, SLA)
+        # 6. Compliance group (OPDIR, POA&M, SLA)
         compliance_container = ttk.Frame(self.notebook)
         self.notebook.add(compliance_container, text="Compliance")
         self.compliance_notebook = ttk.Notebook(compliance_container)
         self.compliance_notebook.pack(fill=tk.BOTH, expand=True)
+        self.subtab_notebooks['compliance'] = self.compliance_notebook
 
         self._build_opdir_tab(self.compliance_notebook)
         self._build_poam_tab(self.compliance_notebook)
         self._build_sla_tab(self.compliance_notebook)
 
-        # 6. Reporting (will be enhanced with report subtabs)
+        # 7. Reporting (with report subtabs)
         self._build_reporting_tab()
 
-        # 7. Management group (Database, Logging)
+        # 8. Management group (Database, Logging)
         mgmt_container = ttk.Frame(self.notebook)
         self.notebook.add(mgmt_container, text="Management")
         self.mgmt_notebook = ttk.Notebook(mgmt_container)
         self.mgmt_notebook.pack(fill=tk.BOTH, expand=True)
+        self.subtab_notebooks['management'] = self.mgmt_notebook
 
         self._build_database_browser_tab(self.mgmt_notebook)
         self._build_logging_tab(self.mgmt_notebook)
+
+        # Add right-click context menu for pinning subtabs
+        self._setup_subtab_pinning()
+
+    def _setup_subtab_pinning(self):
+        """Setup right-click context menus for subtab pinning."""
+        for group_name, notebook in self.subtab_notebooks.items():
+            notebook.bind('<Button-3>', lambda e, nb=notebook, gn=group_name: self._show_pin_context_menu(e, nb, gn))
+
+        # Add right-click on main notebook for unpinning
+        self.notebook.bind('<Button-3>', self._show_unpin_context_menu)
+
+    def _show_unpin_context_menu(self, event):
+        """Show unpin context menu for pinned tabs in main notebook."""
+        try:
+            tab_index = self.notebook.index(f"@{event.x},{event.y}")
+            tab_id = self.notebook.tabs()[tab_index]
+            tab_text = self.notebook.tab(tab_id, 'text')
+
+            # Check if this is a pinned tab
+            if tab_text.startswith("📌 "):
+                original_text = tab_text[2:]  # Remove pin emoji
+                # Find the pin key
+                for pin_key, pin_info in self.pinned_tabs.items():
+                    if pin_info['tab_text'] == original_text:
+                        menu = tk.Menu(self.window, tearoff=0)
+                        menu.add_command(
+                            label=f"Unpin '{original_text}'",
+                            command=lambda pk=pin_key: self._unpin_tab(pk)
+                        )
+                        menu.post(event.x_root, event.y_root)
+                        return
+        except:
+            pass
+
+    def _show_pin_context_menu(self, event, notebook, group_name):
+        """Show context menu for pin/unpin options."""
+        # Identify which tab was clicked
+        try:
+            clicked_tab = notebook.identify(event.x, event.y)
+            if clicked_tab != 'label':
+                # Try to get tab index from coordinates
+                tab_index = notebook.index(f"@{event.x},{event.y}")
+            else:
+                tab_index = notebook.index(f"@{event.x},{event.y}")
+        except:
+            return
+
+        if tab_index is None:
+            return
+
+        tab_id = notebook.tabs()[tab_index]
+        tab_text = notebook.tab(tab_id, 'text')
+
+        # Create context menu
+        menu = tk.Menu(self.window, tearoff=0)
+        menu.add_command(
+            label=f"📌 Pin '{tab_text}' to Top",
+            command=lambda: self._pin_tab(notebook, tab_index, group_name)
+        )
+        menu.post(event.x_root, event.y_root)
+
+    def _pin_tab(self, source_notebook, tab_index, group_name):
+        """Pin a subtab to the main notebook."""
+        try:
+            tab_id = source_notebook.tabs()[tab_index]
+            tab_text = source_notebook.tab(tab_id, 'text')
+            tab_frame = self.window.nametowidget(tab_id)
+
+            # Store original location for unpinning
+            pin_key = f"{group_name}:{tab_text}"
+            self.pinned_tabs[pin_key] = {
+                'source_notebook': source_notebook,
+                'original_index': tab_index,
+                'tab_text': tab_text,
+                'group_name': group_name
+            }
+
+            # Remove from source notebook
+            source_notebook.forget(tab_index)
+
+            # Add to main notebook with pin indicator
+            self.notebook.add(tab_frame, text=f"📌 {tab_text}")
+
+            # Select the newly pinned tab
+            self.notebook.select(tab_frame)
+
+            self._log(f"Pinned '{tab_text}' to top-level tabs")
+
+        except Exception as e:
+            self._log(f"Error pinning tab: {e}")
+
+    def _unpin_tab(self, pin_key):
+        """Unpin a tab and return it to its original location."""
+        if pin_key not in self.pinned_tabs:
+            return
+
+        try:
+            pin_info = self.pinned_tabs[pin_key]
+            tab_text = pin_info['tab_text']
+            source_notebook = pin_info['source_notebook']
+            original_index = pin_info['original_index']
+
+            # Find the tab in main notebook
+            for tab_id in self.notebook.tabs():
+                if self.notebook.tab(tab_id, 'text') == f"📌 {tab_text}":
+                    tab_frame = self.window.nametowidget(tab_id)
+
+                    # Remove from main notebook
+                    self.notebook.forget(tab_id)
+
+                    # Re-add to original notebook at appropriate position
+                    current_count = len(source_notebook.tabs())
+                    insert_index = min(original_index, current_count)
+                    source_notebook.insert(insert_index, tab_frame, text=tab_text)
+
+                    # Clean up
+                    del self.pinned_tabs[pin_key]
+
+                    self._log(f"Unpinned '{tab_text}' back to {pin_info['group_name']}")
+                    return
+
+        except Exception as e:
+            self._log(f"Error unpinning tab: {e}")
 
     def _build_file_selection(self, parent):
         """Build file selection section with compact layout."""
@@ -1511,7 +1646,7 @@ class NessusHistoryTrackerApp:
         """Build advanced analytics visualization tab with 8 advanced charts."""
         target_notebook = parent if parent else self.notebook
         advanced_frame = ttk.Frame(target_notebook)
-        target_notebook.add(advanced_frame, text="Advanced")
+        target_notebook.add(advanced_frame, text="Advanced Analysis")
         self.advanced_frame = advanced_frame
 
         if HAS_MATPLOTLIB:
@@ -2159,6 +2294,9 @@ class NessusHistoryTrackerApp:
         ttk.Button(btn_frame, text="Restore from Backup",
                   command=self._restore_table_from_backup).pack(side=tk.LEFT, padx=5)
 
+        ttk.Button(btn_frame, text="Plugin Severity Remap",
+                  command=self._show_severity_remap_dialog).pack(side=tk.LEFT, padx=5)
+
         # Info panel
         info_frame = ttk.LabelFrame(db_frame, text="Table Information", padding=5)
         info_frame.pack(fill=tk.X, padx=10, pady=5)
@@ -2256,6 +2394,13 @@ class NessusHistoryTrackerApp:
                 'dedup_key': [],
                 'description': 'Export metadata. Auto-regenerated on next export.',
                 'regenerable': True
+            },
+            'plugin_severity_overrides': {
+                'type': 'User Data',
+                'can_drop': 'Caution',
+                'dedup_key': ['plugin_id'],
+                'description': 'User-defined plugin severity remappings. Applied on all imports.',
+                'regenerable': False
             }
         }
 
@@ -2677,6 +2822,279 @@ class NessusHistoryTrackerApp:
         except Exception as e:
             self._log(f"Restore error: {e}")
             messagebox.showerror("Restore Error", f"Failed to restore: {e}")
+
+    def _load_severity_overrides(self) -> Dict[str, str]:
+        """Load plugin severity overrides from database."""
+        overrides = {}
+        if not self.existing_db_path or not os.path.exists(self.existing_db_path):
+            return overrides
+
+        try:
+            import sqlite3
+            conn = sqlite3.connect(self.existing_db_path)
+            cursor = conn.cursor()
+
+            # Check if table exists
+            cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='plugin_severity_overrides'"
+            )
+            if not cursor.fetchone():
+                conn.close()
+                return overrides
+
+            cursor.execute("SELECT plugin_id, override_severity FROM plugin_severity_overrides")
+            for row in cursor.fetchall():
+                overrides[str(row[0])] = row[1]
+
+            conn.close()
+        except Exception as e:
+            self._log(f"Error loading severity overrides: {e}")
+
+        return overrides
+
+    def _save_severity_override(self, plugin_id: str, plugin_name: str, original_severity: str,
+                                 override_severity: str, reason: str = "") -> bool:
+        """Save a plugin severity override to database."""
+        if not self.existing_db_path or not os.path.exists(self.existing_db_path):
+            messagebox.showerror("Error", "No database loaded")
+            return False
+
+        try:
+            import sqlite3
+            from datetime import datetime
+
+            conn = sqlite3.connect(self.existing_db_path)
+            cursor = conn.cursor()
+
+            # Create table if it doesn't exist
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS plugin_severity_overrides (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    plugin_id TEXT UNIQUE NOT NULL,
+                    plugin_name TEXT,
+                    original_severity TEXT,
+                    override_severity TEXT NOT NULL,
+                    reason TEXT,
+                    created_date TEXT,
+                    modified_date TEXT
+                )
+            ''')
+
+            now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+            # Insert or update
+            cursor.execute('''
+                INSERT INTO plugin_severity_overrides
+                (plugin_id, plugin_name, original_severity, override_severity, reason, created_date, modified_date)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(plugin_id) DO UPDATE SET
+                    plugin_name = excluded.plugin_name,
+                    override_severity = excluded.override_severity,
+                    reason = excluded.reason,
+                    modified_date = excluded.modified_date
+            ''', (plugin_id, plugin_name, original_severity, override_severity, reason, now, now))
+
+            conn.commit()
+            conn.close()
+
+            self._log(f"Saved severity override: Plugin {plugin_id} -> {override_severity}")
+            return True
+
+        except Exception as e:
+            self._log(f"Error saving severity override: {e}")
+            messagebox.showerror("Error", f"Failed to save override: {e}")
+            return False
+
+    def _delete_severity_override(self, plugin_id: str) -> bool:
+        """Delete a plugin severity override from database."""
+        if not self.existing_db_path or not os.path.exists(self.existing_db_path):
+            return False
+
+        try:
+            import sqlite3
+            conn = sqlite3.connect(self.existing_db_path)
+            cursor = conn.cursor()
+
+            cursor.execute("DELETE FROM plugin_severity_overrides WHERE plugin_id = ?", (plugin_id,))
+            conn.commit()
+            conn.close()
+
+            self._log(f"Deleted severity override for plugin {plugin_id}")
+            return True
+
+        except Exception as e:
+            self._log(f"Error deleting severity override: {e}")
+            return False
+
+    def _show_severity_remap_dialog(self):
+        """Show dialog to manage plugin severity remappings."""
+        if not self.existing_db_path or not os.path.exists(self.existing_db_path):
+            messagebox.showwarning("No Database", "Please load a database first.")
+            return
+
+        dialog = tk.Toplevel(self.window)
+        dialog.title("Plugin Severity Remapping")
+        dialog.geometry("800x500")
+        dialog.transient(self.window)
+
+        # Header
+        header = ttk.Label(dialog, text="Plugin Severity Overrides",
+                          font=('Arial', 12, 'bold'))
+        header.pack(pady=10)
+
+        ttk.Label(dialog, text="Override plugin severities. Remapped severities take priority on all imports.",
+                 foreground='gray').pack()
+
+        # Current overrides list
+        list_frame = ttk.LabelFrame(dialog, text="Current Overrides", padding=10)
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        columns = ('plugin_id', 'plugin_name', 'original', 'override', 'reason')
+        override_tree = ttk.Treeview(list_frame, columns=columns, show='headings', height=10)
+
+        override_tree.heading('plugin_id', text='Plugin ID')
+        override_tree.heading('plugin_name', text='Plugin Name')
+        override_tree.heading('original', text='Original')
+        override_tree.heading('override', text='Override To')
+        override_tree.heading('reason', text='Reason')
+
+        override_tree.column('plugin_id', width=80)
+        override_tree.column('plugin_name', width=250)
+        override_tree.column('original', width=80)
+        override_tree.column('override', width=80)
+        override_tree.column('reason', width=200)
+
+        scroll = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=override_tree.yview)
+        override_tree.configure(yscrollcommand=scroll.set)
+
+        override_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        def refresh_override_list():
+            for item in override_tree.get_children():
+                override_tree.delete(item)
+
+            try:
+                import sqlite3
+                conn = sqlite3.connect(self.existing_db_path)
+                cursor = conn.cursor()
+
+                cursor.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='plugin_severity_overrides'"
+                )
+                if cursor.fetchone():
+                    cursor.execute(
+                        "SELECT plugin_id, plugin_name, original_severity, override_severity, reason "
+                        "FROM plugin_severity_overrides ORDER BY plugin_id"
+                    )
+                    for row in cursor.fetchall():
+                        override_tree.insert('', tk.END, values=row)
+
+                conn.close()
+            except Exception as e:
+                self._log(f"Error loading overrides: {e}")
+
+        refresh_override_list()
+
+        # Add new override section
+        add_frame = ttk.LabelFrame(dialog, text="Add/Edit Override", padding=10)
+        add_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        input_row = ttk.Frame(add_frame)
+        input_row.pack(fill=tk.X)
+
+        ttk.Label(input_row, text="Plugin ID:").pack(side=tk.LEFT, padx=2)
+        plugin_id_var = tk.StringVar()
+        plugin_id_entry = ttk.Entry(input_row, textvariable=plugin_id_var, width=12)
+        plugin_id_entry.pack(side=tk.LEFT, padx=2)
+
+        ttk.Label(input_row, text="New Severity:").pack(side=tk.LEFT, padx=(10, 2))
+        severity_var = tk.StringVar(value="Info")
+        severity_combo = ttk.Combobox(input_row, textvariable=severity_var, width=10,
+                                      values=['Critical', 'High', 'Medium', 'Low', 'Info'],
+                                      state='readonly')
+        severity_combo.pack(side=tk.LEFT, padx=2)
+
+        ttk.Label(input_row, text="Reason:").pack(side=tk.LEFT, padx=(10, 2))
+        reason_var = tk.StringVar()
+        reason_entry = ttk.Entry(input_row, textvariable=reason_var, width=30)
+        reason_entry.pack(side=tk.LEFT, padx=2)
+
+        def add_override():
+            plugin_id = plugin_id_var.get().strip()
+            new_severity = severity_var.get()
+            reason = reason_var.get().strip()
+
+            if not plugin_id:
+                messagebox.showwarning("Missing Input", "Please enter a Plugin ID")
+                return
+
+            # Try to get plugin info from historical data
+            plugin_name = ""
+            original_severity = ""
+            if not self.historical_df.empty and 'plugin_id' in self.historical_df.columns:
+                match = self.historical_df[self.historical_df['plugin_id'].astype(str) == plugin_id]
+                if not match.empty:
+                    plugin_name = match.iloc[0].get('name', '')
+                    original_severity = match.iloc[0].get('severity_text', '')
+
+            if self._save_severity_override(plugin_id, plugin_name, original_severity, new_severity, reason):
+                refresh_override_list()
+                plugin_id_var.set("")
+                reason_var.set("")
+                messagebox.showinfo("Success", f"Override saved for plugin {plugin_id}")
+
+        def delete_selected():
+            selection = override_tree.selection()
+            if not selection:
+                messagebox.showwarning("No Selection", "Please select an override to delete")
+                return
+
+            item = override_tree.item(selection[0])
+            plugin_id = item['values'][0]
+
+            if messagebox.askyesno("Confirm Delete", f"Delete override for plugin {plugin_id}?"):
+                if self._delete_severity_override(str(plugin_id)):
+                    refresh_override_list()
+
+        def apply_to_loaded_data():
+            """Apply overrides to currently loaded data."""
+            if self.historical_df.empty:
+                messagebox.showwarning("No Data", "No findings data loaded")
+                return
+
+            overrides = self._load_severity_overrides()
+            if not overrides:
+                messagebox.showinfo("No Overrides", "No severity overrides defined")
+                return
+
+            count = 0
+            severity_map = {'Critical': 4, 'High': 3, 'Medium': 2, 'Low': 1, 'Info': 0}
+
+            for plugin_id, new_severity in overrides.items():
+                mask = self.historical_df['plugin_id'].astype(str) == str(plugin_id)
+                if mask.any():
+                    self.historical_df.loc[mask, 'severity_text'] = new_severity
+                    self.historical_df.loc[mask, 'severity_value'] = severity_map.get(new_severity, 0)
+                    count += mask.sum()
+
+            if count > 0:
+                self._log(f"Applied severity overrides to {count} findings")
+                messagebox.showinfo("Applied",
+                                  f"Applied severity overrides to {count} findings.\n\n"
+                                  f"Refresh analysis to see changes.")
+            else:
+                messagebox.showinfo("No Changes", "No matching findings found for the defined overrides")
+
+        btn_row = ttk.Frame(add_frame)
+        btn_row.pack(fill=tk.X, pady=(10, 0))
+
+        ttk.Button(btn_row, text="Add/Update Override", command=add_override).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_row, text="Delete Selected", command=delete_selected).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_row, text="Apply to Loaded Data", command=apply_to_loaded_data).pack(side=tk.LEFT, padx=5)
+
+        # Close button
+        ttk.Button(dialog, text="Close", command=dialog.destroy).pack(pady=10)
 
     # Helper methods
     def _get_current_date_interval(self) -> str:
@@ -6755,7 +7173,9 @@ Avg New/Month: {monthly_new.mean():.0f}
             if nessus_files:
                 findings_df, _ = parse_multiple_nessus_files(nessus_files, self.plugins_dict)
                 if not findings_df.empty:
-                    findings_df = enrich_findings_with_severity(findings_df)
+                    # Apply severity overrides from database
+                    severity_overrides = self._load_severity_overrides()
+                    findings_df = enrich_findings_with_severity(findings_df, severity_overrides)
                     all_findings.append(findings_df)
 
         # Cleanup temp directories
@@ -6792,7 +7212,9 @@ Avg New/Month: {monthly_new.mean():.0f}
             if nessus_files:
                 findings_df, _ = parse_multiple_nessus_files(nessus_files, self.plugins_dict)
                 if not findings_df.empty:
-                    findings_df = enrich_findings_with_severity(findings_df)
+                    # Apply severity overrides from database
+                    severity_overrides = self._load_severity_overrides()
+                    findings_df = enrich_findings_with_severity(findings_df, severity_overrides)
                     all_findings.append(findings_df)
 
         # Cleanup temp directories
@@ -6943,7 +7365,9 @@ Avg New/Month: {monthly_new.mean():.0f}
             if nessus_files:
                 findings_df, _ = parse_multiple_nessus_files(nessus_files, self.plugins_dict)
                 if not findings_df.empty:
-                    findings_df = enrich_findings_with_severity(findings_df)
+                    # Apply severity overrides from database
+                    severity_overrides = self._load_severity_overrides()
+                    findings_df = enrich_findings_with_severity(findings_df, severity_overrides)
                     all_findings.append(findings_df)
 
         # Cleanup temp directories
