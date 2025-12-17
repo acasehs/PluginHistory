@@ -297,6 +297,15 @@ def load_opdir_mapping(opdir_file: str) -> pd.DataFrame:
             'release date': 'release_date',
             'release_date': 'release_date',
             'released': 'release_date',
+            # CVE column mappings for CVE-based OPDIR matching
+            'cve': 'cves',
+            'cves': 'cves',
+            'cve id': 'cves',
+            'cve_id': 'cves',
+            'cve ids': 'cves',
+            'cve_ids': 'cves',
+            'associated cves': 'cves',
+            'associated_cves': 'cves',
         }
 
         opdir_df.columns = opdir_df.columns.str.lower().str.strip()
@@ -343,6 +352,22 @@ def load_opdir_mapping(opdir_file: str) -> pd.DataFrame:
             opdir_df['iavab_year'] = None
             opdir_df['iavab_type'] = ''
 
+        # Parse CVE column for CVE-based matching
+        if 'cves' in opdir_df.columns:
+            def parse_cves(cve_str):
+                """Parse and normalize CVE references from a string."""
+                if not cve_str or pd.isna(cve_str):
+                    return []
+                cve_pattern = r'CVE-\d{4}-\d{4,}'
+                cves = re.findall(cve_pattern, str(cve_str).upper())
+                return sorted(set(cves))
+
+            opdir_df['cve_list'] = opdir_df['cves'].apply(parse_cves)
+            cve_count = opdir_df['cve_list'].apply(len).sum()
+            print(f"Parsed {cve_count} CVE references from OPDIR entries")
+        else:
+            opdir_df['cve_list'] = opdir_df.apply(lambda x: [], axis=1)
+
         print(f"Loaded {len(opdir_df)} OPDIR entries")
         if 'opdir_year' in opdir_df.columns:
             years = opdir_df['opdir_year'].dropna().unique()
@@ -377,9 +402,10 @@ def create_opdir_lookup(opdir_df: pd.DataFrame) -> Dict[str, Any]:
     """
     Create optimized lookup dictionaries for OPDIR matching.
 
-    Two-strategy lookup:
+    Three-strategy lookup:
     1. by_full: Full match 'YYYY-X-NNNN' -> OPDIR data
     2. by_suffix: Suffix match 'X-NNNN' -> list of OPDIR data (may have multiple years)
+    3. by_cve: CVE match 'CVE-YYYY-NNNNN' -> list of OPDIR data (for CVE-based matching)
 
     Handles both new format (from file) and legacy format (from existing database).
 
@@ -387,11 +413,12 @@ def create_opdir_lookup(opdir_df: pd.DataFrame) -> Dict[str, Any]:
         opdir_df: OPDIR mapping DataFrame
 
     Returns:
-        Dictionary with 'by_full' and 'by_suffix' lookups
+        Dictionary with 'by_full', 'by_suffix', and 'by_cve' lookups
     """
     lookup = {
         'by_full': {},      # '2024-B-0201' -> row
         'by_suffix': {},    # 'B-0201' -> [row1, row2] (possibly multiple years)
+        'by_cve': {},       # 'CVE-2024-12345' -> [row1, row2] (for CVE-based matching)
     }
 
     if opdir_df.empty:
@@ -456,7 +483,18 @@ def create_opdir_lookup(opdir_df: pd.DataFrame) -> Dict[str, Any]:
             iavab_full = row.get('iavab_full', '')
             iavab_suffix = row.get('iavab_suffix', '')
 
-        if not iavab_suffix:
+        # Get CVE list for this row (may exist even if no IAVX)
+        cve_list = row.get('cve_list', [])
+        if isinstance(cve_list, str):
+            # Handle case where cve_list was loaded from database as string
+            try:
+                import ast
+                cve_list = ast.literal_eval(cve_list) if cve_list else []
+            except:
+                cve_list = []
+
+        # Skip if no IAVX and no CVEs
+        if not iavab_suffix and not cve_list:
             continue
 
         row_dict = row.to_dict()
@@ -464,81 +502,112 @@ def create_opdir_lookup(opdir_df: pd.DataFrame) -> Dict[str, Any]:
         row_dict['iavab_full'] = iavab_full
         row_dict['iavab_suffix'] = iavab_suffix
 
-        # Full lookup (year-specific)
+        # Full lookup (year-specific) - only if has IAVX
         if iavab_full and iavab_full != iavab_suffix:  # Has year component
             key_full = iavab_full.upper()
             lookup['by_full'][key_full] = row_dict
 
-        # Suffix lookup (for fallback matching)
-        key_suffix = iavab_suffix.upper()
-        if key_suffix not in lookup['by_suffix']:
-            lookup['by_suffix'][key_suffix] = []
-        lookup['by_suffix'][key_suffix].append(row_dict)
+        # Suffix lookup (for fallback matching) - only if has IAVX
+        if iavab_suffix:
+            key_suffix = iavab_suffix.upper()
+            if key_suffix not in lookup['by_suffix']:
+                lookup['by_suffix'][key_suffix] = []
+            lookup['by_suffix'][key_suffix].append(row_dict)
+
+        # CVE lookup (for CVE-based matching)
+        for cve in cve_list:
+            cve_key = cve.upper()
+            if cve_key not in lookup['by_cve']:
+                lookup['by_cve'][cve_key] = []
+            lookup['by_cve'][cve_key].append(row_dict)
 
     if needs_parsing:
         print(f"OPDIR parsing: {rows_processed} rows processed, {rows_skipped} rows skipped (no IAVA/B data)")
 
-    print(f"Created lookup: {len(lookup['by_full'])} full entries, {len(lookup['by_suffix'])} suffix entries")
+    print(f"Created lookup: {len(lookup['by_full'])} full entries, {len(lookup['by_suffix'])} suffix entries, {len(lookup['by_cve'])} CVE entries")
 
     return lookup
 
 
-def match_finding_to_opdir(iavx_refs: List[Dict], lookup: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def match_finding_to_opdir(iavx_refs: List[Dict], lookup: Dict[str, Any],
+                          cves: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
     """
-    Match finding's IAVX references to OPDIR using two-strategy lookup.
+    Match finding's IAVX references or CVEs to OPDIR using three-strategy lookup.
 
     Strategy:
-    1. Try full match (YYYY-X-NNNN) first - most precise
-    2. Fall back to suffix match (X-NNNN) if no full match
-    3. For suffix matches with multiple years, prefer most recent
+    1. Try full IAVX match (YYYY-X-NNNN) first - most precise
+    2. Fall back to IAVX suffix match (X-NNNN) if no full match
+    3. For IAVX suffix matches with multiple years, prefer most recent
+    4. If no IAVX match, try CVE-based matching as final fallback
 
     Args:
         iavx_refs: List of parsed IAVX references from normalize_iavx_from_scan
         lookup: Lookup dict from create_opdir_lookup
+        cves: Optional list of CVE IDs to try for matching
 
     Returns:
         Matching OPDIR row dict or None
     """
-    if not iavx_refs:
-        return None
+    # Try IAVX-based matching first
+    if iavx_refs:
+        for ref in iavx_refs:
+            # Strategy 1: Full match (with year)
+            if ref.get('year'):
+                full_key = ref['full'].upper()
+                if full_key in lookup['by_full']:
+                    return lookup['by_full'][full_key]
 
-    # Try each reference
-    for ref in iavx_refs:
-        # Strategy 1: Full match (with year)
-        if ref.get('year'):
-            full_key = ref['full'].upper()
-            if full_key in lookup['by_full']:
-                return lookup['by_full'][full_key]
+            # Strategy 2: Suffix fallback
+            suffix_key = ref['suffix'].upper()
+            if suffix_key in lookup['by_suffix']:
+                entries = lookup['by_suffix'][suffix_key]
 
-        # Strategy 2: Suffix fallback
-        suffix_key = ref['suffix'].upper()
-        if suffix_key in lookup['by_suffix']:
-            entries = lookup['by_suffix'][suffix_key]
+                if len(entries) == 1:
+                    return entries[0]
 
-            if len(entries) == 1:
+                # Multiple entries - prefer year match if available
+                if ref.get('year'):
+                    for entry in entries:
+                        if entry.get('iavab_year') == ref['year']:
+                            return entry
+
+                # Otherwise return most recent year
+                entries_with_year = [e for e in entries if pd.notna(e.get('opdir_year'))]
+                if entries_with_year:
+                    entries_with_year.sort(key=lambda e: e.get('opdir_year', 0), reverse=True)
+                    return entries_with_year[0]
+
+                # Last resort: first entry
                 return entries[0]
 
-            # Multiple entries - prefer year match if available
-            if ref.get('year'):
-                for entry in entries:
-                    if entry.get('iavab_year') == ref['year']:
-                        return entry
+    # Strategy 3: CVE-based matching (fallback when no IAVX match)
+    if cves and 'by_cve' in lookup:
+        for cve in cves:
+            cve_key = cve.upper()
+            if cve_key in lookup['by_cve']:
+                entries = lookup['by_cve'][cve_key]
+                if len(entries) == 1:
+                    return entries[0]
 
-            # Otherwise return most recent year
-            entries_with_year = [e for e in entries if pd.notna(e.get('opdir_year'))]
-            if entries_with_year:
-                entries_with_year.sort(key=lambda e: e.get('opdir_year', 0), reverse=True)
-                return entries_with_year[0]
+                # Multiple entries - prefer most recent year
+                entries_with_year = [e for e in entries if pd.notna(e.get('opdir_year'))]
+                if entries_with_year:
+                    entries_with_year.sort(key=lambda e: e.get('opdir_year', 0), reverse=True)
+                    return entries_with_year[0]
 
-            # Last resort: first entry
-            return entries[0]
+                return entries[0]
 
     return None
 
 
 def enrich_with_opdir(lifecycle_df: pd.DataFrame, opdir_df: pd.DataFrame) -> pd.DataFrame:
     """
-    Enrich finding lifecycle data with OPDIR information using two-strategy matching.
+    Enrich finding lifecycle data with OPDIR information using three-strategy matching.
+
+    Matching strategies (in order of priority):
+    1. IAVX full match (YYYY-X-NNNN)
+    2. IAVX suffix match (X-NNNN)
+    3. CVE-based match (CVE-YYYY-NNNNN)
 
     Args:
         lifecycle_df: DataFrame from analyze_finding_lifecycle
@@ -562,6 +631,7 @@ def enrich_with_opdir(lifecycle_df: pd.DataFrame, opdir_df: pd.DataFrame) -> pd.
         'opdir_status': '',
         'opdir_days_until_due': np.nan,
         'iavx_matched': '',
+        'cve_matched': '',  # New column for CVE-based matches
     }
 
     for col, default in opdir_columns.items():
@@ -574,11 +644,11 @@ def enrich_with_opdir(lifecycle_df: pd.DataFrame, opdir_df: pd.DataFrame) -> pd.
     # Create lookup
     lookup = create_opdir_lookup(opdir_df)
 
-    match_count = 0
-    no_iavx_count = 0
+    iavx_match_count = 0
+    cve_match_count = 0
     no_match_count = 0
 
-    # Debug: Check if iavx column exists and has data
+    # Debug: Check if iavx and cves columns exist and have data
     if 'iavx' in lifecycle_df.columns:
         iavx_non_empty = lifecycle_df['iavx'].notna() & (lifecycle_df['iavx'] != '')
         print(f"Lifecycle has iavx column: {iavx_non_empty.sum()} findings with IAVX data out of {len(lifecycle_df)}")
@@ -586,40 +656,79 @@ def enrich_with_opdir(lifecycle_df: pd.DataFrame, opdir_df: pd.DataFrame) -> pd.
         print("WARNING: Lifecycle data does not have 'iavx' column!")
         print(f"Available columns: {list(lifecycle_df.columns)}")
 
+    if 'cves' in lifecycle_df.columns:
+        cves_non_empty = lifecycle_df['cves'].notna() & (lifecycle_df['cves'] != '')
+        print(f"Lifecycle has cves column: {cves_non_empty.sum()} findings with CVE data out of {len(lifecycle_df)}")
+
+    # Check if we have CVE lookup available
+    has_cve_lookup = 'by_cve' in lookup and len(lookup['by_cve']) > 0
+    if has_cve_lookup:
+        print(f"CVE-based matching available: {len(lookup['by_cve'])} CVE entries in OPDIR lookup")
+
     # Process each finding
     for idx, row in lifecycle_df.iterrows():
         iavx = row.get('iavx')
-        if not pd.notna(iavx) or not iavx:
-            no_iavx_count += 1
+        cves_str = row.get('cves', '')
+
+        # Parse IAVX references
+        iavx_refs = []
+        if pd.notna(iavx) and iavx:
+            iavx_refs = normalize_iavx_from_scan(iavx)
+            if iavx_refs:
+                lifecycle_df.at[idx, 'iavx_matched'] = ', '.join([r['full'] for r in iavx_refs])
+
+        # Parse CVEs from finding
+        cves_list = []
+        if pd.notna(cves_str) and cves_str:
+            cve_pattern = r'CVE-\d{4}-\d{4,}'
+            cves_list = re.findall(cve_pattern, str(cves_str).upper())
+
+        # Skip if no IAVX and no CVEs
+        if not iavx_refs and not cves_list:
+            no_match_count += 1
             continue
 
-        # Extract IAVX references from scan data
-        iavx_refs = normalize_iavx_from_scan(iavx)
-
-        if not iavx_refs:
-            no_iavx_count += 1
-            continue
-
-        # Store extracted references for debugging
-        lifecycle_df.at[idx, 'iavx_matched'] = ', '.join([r['full'] for r in iavx_refs])
-
-        # Match against OPDIR
-        matched = match_finding_to_opdir(iavx_refs, lookup)
+        # Match against OPDIR (with CVE fallback)
+        matched = match_finding_to_opdir(iavx_refs, lookup, cves_list)
 
         if matched:
-            match_count += 1
             lifecycle_df.at[idx, 'opdir_number'] = matched.get('opdir_number_raw', '')
             lifecycle_df.at[idx, 'opdir_year'] = matched.get('opdir_year')
             lifecycle_df.at[idx, 'opdir_title'] = matched.get('subject', '')
             lifecycle_df.at[idx, 'opdir_poam_due_date'] = matched.get('poam_due_date')
             lifecycle_df.at[idx, 'opdir_due_date'] = matched.get('final_due_date')
+
+            # Track which method matched
+            if iavx_refs:
+                # Check if it was IAVX match or CVE match
+                iavx_matched = False
+                for ref in iavx_refs:
+                    if ref.get('year'):
+                        if ref['full'].upper() in lookup.get('by_full', {}):
+                            iavx_matched = True
+                            break
+                    if ref['suffix'].upper() in lookup.get('by_suffix', {}):
+                        iavx_matched = True
+                        break
+
+                if iavx_matched:
+                    iavx_match_count += 1
+                else:
+                    # Must have been CVE match
+                    cve_match_count += 1
+                    lifecycle_df.at[idx, 'cve_matched'] = ', '.join(cves_list[:3])  # First 3 CVEs
+            else:
+                # No IAVX, must be CVE match
+                cve_match_count += 1
+                lifecycle_df.at[idx, 'cve_matched'] = ', '.join(cves_list[:3])
         else:
             no_match_count += 1
             # Store the IAVX reference even without OPDIR match
             if iavx_refs:
                 lifecycle_df.at[idx, 'opdir_number'] = iavx_refs[0].get('full', '')
 
-    print(f"OPDIR enrichment: {match_count} matched, {no_match_count} unmatched, {no_iavx_count} no IAVX")
+    total_matched = iavx_match_count + cve_match_count
+    print(f"OPDIR enrichment: {total_matched} matched ({iavx_match_count} via IAVX, {cve_match_count} via CVE), {no_match_count} no match")
 
     # Debug: Check how many matched entries have valid due dates
     has_due_date = lifecycle_df['opdir_due_date'].notna()
