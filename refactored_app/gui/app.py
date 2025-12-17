@@ -12711,13 +12711,40 @@ Avg New/Month: {monthly_new.mean():.0f}
         bars = ax.barh(range(len(hosts_per_plugin)), hosts_per_plugin.values, color='#fd7e14')
         ax.set_yticks(range(len(hosts_per_plugin)))
 
+        # Get full plugin names (no truncation)
         if 'plugin_name' in df.columns:
             plugin_names = df.groupby('plugin_id')['plugin_name'].first()
-            labels = [str(plugin_names.get(pid, pid))[:25] for pid in hosts_per_plugin.index]
         else:
-            labels = [str(pid) for pid in hosts_per_plugin.index]
+            plugin_names = pd.Series(dtype=str)
 
+        # Labels show "plugin_id - full_name"
+        labels = [f"{pid} - {plugin_names.get(pid, '')}" for pid in hosts_per_plugin.index]
         ax.set_yticklabels(labels, fontsize=7)
+
+        # Store hover data for tooltip
+        hover_texts = [f"{pid} - {plugin_names.get(pid, 'Unknown')}\nHosts: {hosts_per_plugin[pid]}"
+                      for pid in hosts_per_plugin.index]
+
+        # Add interactive hover annotation
+        annot = ax.annotate("", xy=(0, 0), xytext=(10, 10),
+                           textcoords="offset points",
+                           bbox=dict(boxstyle="round,pad=0.5", facecolor='#2d2d2d', edgecolor='white', alpha=0.9),
+                           color='white', fontsize=9, zorder=100)
+        annot.set_visible(False)
+
+        def on_hover(event):
+            if event.inaxes == ax:
+                for i, bar in enumerate(bars):
+                    if bar.contains(event)[0]:
+                        annot.xy = (bar.get_width(), bar.get_y() + bar.get_height() / 2)
+                        annot.set_text(hover_texts[i])
+                        annot.set_visible(True)
+                        fig.canvas.draw_idle()
+                        return
+                annot.set_visible(False)
+                fig.canvas.draw_idle()
+
+        fig.canvas.mpl_connect('motion_notify_event', on_hover)
 
         if show_labels:
             for bar, val in zip(bars, hosts_per_plugin.values):
@@ -12753,13 +12780,40 @@ Avg New/Month: {monthly_new.mean():.0f}
         bars = ax.barh(range(len(avg_age)), avg_age.values, color=colors)
         ax.set_yticks(range(len(avg_age)))
 
+        # Get full plugin names (no truncation)
         if 'plugin_name' in df.columns:
             plugin_names = df.groupby('plugin_id')['plugin_name'].first()
-            labels = [str(plugin_names.get(pid, pid))[:25] for pid in avg_age.index]
         else:
-            labels = [str(pid) for pid in avg_age.index]
+            plugin_names = pd.Series(dtype=str)
 
+        # Labels show "plugin_id - full_name"
+        labels = [f"{pid} - {plugin_names.get(pid, '')}" for pid in avg_age.index]
         ax.set_yticklabels(labels, fontsize=7)
+
+        # Store hover data for tooltip
+        hover_texts = [f"{pid} - {plugin_names.get(pid, 'Unknown')}\nAvg Age: {int(avg_age[pid])} days"
+                      for pid in avg_age.index]
+
+        # Add interactive hover annotation
+        annot = ax.annotate("", xy=(0, 0), xytext=(10, 10),
+                           textcoords="offset points",
+                           bbox=dict(boxstyle="round,pad=0.5", facecolor='#2d2d2d', edgecolor='white', alpha=0.9),
+                           color='white', fontsize=9, zorder=100)
+        annot.set_visible(False)
+
+        def on_hover(event):
+            if event.inaxes == ax:
+                for i, bar in enumerate(bars):
+                    if bar.contains(event)[0]:
+                        annot.xy = (bar.get_width(), bar.get_y() + bar.get_height() / 2)
+                        annot.set_text(hover_texts[i])
+                        annot.set_visible(True)
+                        fig.canvas.draw_idle()
+                        return
+                annot.set_visible(False)
+                fig.canvas.draw_idle()
+
+        fig.canvas.mpl_connect('motion_notify_event', on_hover)
 
         if show_labels:
             for bar, val in zip(bars, avg_age.values):
