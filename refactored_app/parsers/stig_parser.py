@@ -541,16 +541,30 @@ def parse_multiple_cklb_files(file_paths: List[str],
         stats['files_processed'] += 1
         all_checklists.append(checklist)
 
-        # Check for duplicates by version key
-        for rule in checklist.rules:
-            ver_key = f"{rule.hostname}|{rule.stig_id}|V{rule.stig_version}R{rule.release_number}"
+        # Check for duplicate CHECKLISTS (not rules) by version key
+        # Build checklist-level keys from the first rule or STIG info
+        checklist_is_duplicate = False
+        checklist_ver_keys = set()
+
+        # Get version keys for each STIG in this checklist
+        for stig_info in checklist.stigs:
+            parsed = parse_release_info(stig_info.get('release_info', ''))
+            ver_key = f"{checklist.hostname}|{stig_info.get('stig_id', '')}|V{stig_info.get('version', '')}R{parsed['release']}"
+            checklist_ver_keys.add(ver_key)
 
             if ver_key in seen_version_keys:
-                # Skip exact duplicate (same host, same STIG, same version)
-                stats['files_skipped_duplicate'] += 1
-                continue
+                checklist_is_duplicate = True
 
-            seen_version_keys.add(ver_key)
+        if checklist_is_duplicate:
+            stats['files_skipped_duplicate'] += 1
+            stats['skipped_details'].append(f"Duplicate: {file_path}")
+            continue
+
+        # Add all version keys for this checklist
+        seen_version_keys.update(checklist_ver_keys)
+
+        # Add ALL rules from this non-duplicate checklist
+        for rule in checklist.rules:
             all_rules.append(rule)
 
             # Track if this is a new checklist or historical
