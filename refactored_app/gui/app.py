@@ -12634,8 +12634,9 @@ Avg New/Month: {monthly_new.mean():.0f}
             plugin_names = {}
 
         plugin_data['plugin_name'] = plugin_data['plugin_id'].map(lambda x: plugin_names.get(x, '')[:40])
-        plugin_data['sort_key'] = plugin_data[sev_col].map(lambda x: severity_order.get(x, 5))
-        plugin_data = plugin_data.sort_values(['sort_key', 'hostname'], ascending=[True, False])
+        # Sort numerically by plugin_id (convert to int for proper numeric sort)
+        plugin_data['plugin_id_int'] = pd.to_numeric(plugin_data['plugin_id'], errors='coerce').fillna(0).astype(int)
+        plugin_data = plugin_data.sort_values('plugin_id_int', ascending=True)
 
         # Configure tag colors for severity
         plugin_tree.tag_configure('Critical', foreground='#dc3545')
