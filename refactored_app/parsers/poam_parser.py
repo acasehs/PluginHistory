@@ -260,15 +260,20 @@ def extract_rule_id_info(rule_id: str) -> Dict[str, Any]:
     return result
 
 
-def parse_poam_excel(file_path: str) -> Tuple[pd.DataFrame, List[POAMEntry]]:
+def parse_poam_excel(file_path: str, return_mapping_info: bool = False) -> Tuple[pd.DataFrame, List[POAMEntry], Optional[Dict]]:
     """
     Parse a POAM Excel file.
 
     Args:
         file_path: Path to the Excel file
+        return_mapping_info: If True, returns column mapping details as third element
 
     Returns:
-        Tuple of (DataFrame with all data, List of POAMEntry objects)
+        Tuple of (DataFrame with all data, List of POAMEntry objects, Optional mapping_info dict)
+        mapping_info contains:
+            - mapped_columns: dict of {original_col: internal_name}
+            - unmapped_columns: list of column names not recognized
+            - missing_required: list of required columns not found
     """
     logger.info(f"Parsing POAM file: {file_path}")
 
@@ -354,13 +359,33 @@ def parse_poam_excel(file_path: str) -> Tuple[pd.DataFrame, List[POAMEntry]]:
         'Consolidated Row Count': 'consolidated_row_count',
     }
 
-    # Rename columns that match
+    # Rename columns that match and track mapping info
     rename_cols = {}
+    mapped_columns = {}
+    unmapped_columns = []
+
     for orig_col in df.columns:
         if orig_col in column_mapping:
             rename_cols[orig_col] = column_mapping[orig_col]
+            mapped_columns[orig_col] = column_mapping[orig_col]
+        else:
+            unmapped_columns.append(orig_col)
 
     df = df.rename(columns=rename_cols)
+
+    # Check for required columns
+    required_columns = ['gpm_uid']  # GPM UID is the key for matching
+    missing_required = [col for col in required_columns if col not in df.columns]
+
+    mapping_info = {
+        'mapped_columns': mapped_columns,
+        'unmapped_columns': unmapped_columns,
+        'missing_required': missing_required,
+        'original_columns': list(df.columns)
+    }
+
+    if unmapped_columns:
+        logger.warning(f"Unmapped columns in POAM file: {unmapped_columns}")
 
     # Parse into POAMEntry objects
     entries = []
@@ -456,7 +481,9 @@ def parse_poam_excel(file_path: str) -> Tuple[pd.DataFrame, List[POAMEntry]]:
 
     logger.info(f"Parsed {len(entries)} POAM entries")
 
-    return df, entries
+    if return_mapping_info:
+        return df, entries, mapping_info
+    return df, entries, None
 
 
 def entries_to_dataframe(entries: List[POAMEntry]) -> pd.DataFrame:

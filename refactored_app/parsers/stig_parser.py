@@ -563,16 +563,34 @@ def parse_multiple_cklb_files(file_paths: List[str],
         # Add all version keys for this checklist
         seen_version_keys.update(checklist_ver_keys)
 
+        # Determine if this CHECKLIST is new or updating existing data
+        # Check at checklist level, not per-rule
+        checklist_has_existing = False
+        for stig_info in checklist.stigs:
+            checklist_key = f"{checklist.hostname}|{stig_info.get('stig_id', '')}"
+            # Check if any rules from this host+stig combo exist
+            for rule in checklist.rules:
+                if rule.stig_id == stig_info.get('stig_id', ''):
+                    rule_key = f"{rule.hostname}|{rule.stig_id}|{rule.sv_id_base}"
+                    if rule_key in existing_rules_by_key:
+                        checklist_has_existing = True
+                        break
+            if checklist_has_existing:
+                break
+
+        # Count at CHECKLIST level (once per file), not per rule
+        if checklist_has_existing:
+            stats['checklists_historical'] += 1
+        else:
+            stats['checklists_new'] += 1
+
         # Add ALL rules from this non-duplicate checklist
         for rule in checklist.rules:
             all_rules.append(rule)
 
-            # Track if this is a new checklist or historical
+            # Impact analysis - check for status changes (per-rule is correct here)
             rule_key = f"{rule.hostname}|{rule.stig_id}|{rule.sv_id_base}"
             if rule_key in existing_rules_by_key:
-                stats['checklists_historical'] += 1
-
-                # Impact analysis - check for status changes
                 existing = existing_rules_by_key[rule_key]
                 # Find the most recent existing entry for this rule
                 latest_existing = max(existing, key=lambda r: (
@@ -603,7 +621,6 @@ def parse_multiple_cklb_files(file_paths: List[str],
                 else:
                     stats['impact_analysis']['unchanged'] += 1
             else:
-                stats['checklists_new'] += 1
                 stats['impact_analysis']['new_findings'] += 1
 
     if not all_rules:
