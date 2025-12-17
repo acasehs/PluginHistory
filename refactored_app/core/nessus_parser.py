@@ -364,17 +364,37 @@ def extract_finding_data(item: ET.Element, host_name: str, hostname: str,
     return finding
 
 
-def parse_nessus_file(nessus_file: str, plugins_dict: Dict = None) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def parse_nessus_file(nessus_file: str, plugins_dict: Dict = None,
+                      import_report: Dict = None) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Parse a .nessus file and return findings as a pandas DataFrame.
 
     Args:
         nessus_file: Path to the .nessus file
         plugins_dict: Optional plugins database for enrichment
+        import_report: Optional dict to collect import statistics and issues
 
     Returns:
         Tuple of (findings_df, host_summary_df)
     """
+    # Initialize import report tracking
+    if import_report is None:
+        import_report = {}
+    if 'files_processed' not in import_report:
+        import_report['files_processed'] = []
+    if 'files_failed' not in import_report:
+        import_report['files_failed'] = []
+    if 'hosts_processed' not in import_report:
+        import_report['hosts_processed'] = 0
+    if 'hosts_skipped' not in import_report:
+        import_report['hosts_skipped'] = []
+    if 'findings_processed' not in import_report:
+        import_report['findings_processed'] = 0
+    if 'findings_skipped' not in import_report:
+        import_report['findings_skipped'] = []
+    if 'parsing_warnings' not in import_report:
+        import_report['parsing_warnings'] = []
+
     try:
         print(f"Parsing {os.path.basename(nessus_file)}...")
         start_time = time.time()
@@ -397,48 +417,75 @@ def parse_nessus_file(nessus_file: str, plugins_dict: Dict = None) -> Tuple[pd.D
         for host_idx, host in enumerate(hosts, 1):
             host_name = host.attrib.get('name', 'Unknown')
 
-            hostname = extract_hostname_from_plugins(host)
-            if not hostname:
-                hostname = resolve_hostname(host_name, host)
+            try:
+                hostname = extract_hostname_from_plugins(host)
+                if not hostname:
+                    hostname = resolve_hostname(host_name, host)
 
-            # Extract scan date and time from HOST_START tag
-            scan_datetime, scan_date, scan_time = extract_host_scan_time(host)
+                # Extract scan date and time from HOST_START tag
+                scan_datetime, scan_date, scan_time = extract_host_scan_time(host)
 
-            cred_info = {
-                'proper_scan': 'No',
-                'cred_checks_value': 'N/A',
-                'cred_scan_value': 'N/A',
-                'auth_method': 'None'
-            }
+                if not scan_date:
+                    import_report['parsing_warnings'].append(
+                        f"{original_filename}: Host '{hostname}' has no scan date"
+                    )
 
-            items = host.findall(".//ReportItem")
-            for item in items:
-                plugin_id = item.attrib.get('pluginID', '')
+                cred_info = {
+                    'proper_scan': 'No',
+                    'cred_checks_value': 'N/A',
+                    'cred_scan_value': 'N/A',
+                    'auth_method': 'None'
+                }
 
-                if plugin_id == '19506':
-                    plugin_output = item.find("plugin_output")
-                    if plugin_output is not None and plugin_output.text:
-                        cred_info = parse_credentialed_scan_info(plugin_output.text)
+                items = host.findall(".//ReportItem")
+                host_findings_count = 0
 
-                finding = extract_finding_data(item, host_name, hostname,
-                                               scan_date=scan_date, scan_time=scan_time,
-                                               plugins_dict=plugins_dict,
-                                               source_file=original_filename)
-                all_findings.append(finding)
+                for item in items:
+                    plugin_id = item.attrib.get('pluginID', '')
 
-            host_summary = {
-                'report_name': report_name,
-                'original_filename': original_filename,
-                'host_name': host_name,
-                'hostname': hostname,
-                'safe_hostname': sanitize_hostname_for_excel(hostname),
-                'total_reportitems': len(items),
-                'scan_date': scan_date,
-                'scan_time': scan_time,
-                **cred_info
-            }
+                    if plugin_id == '19506':
+                        plugin_output = item.find("plugin_output")
+                        if plugin_output is not None and plugin_output.text:
+                            cred_info = parse_credentialed_scan_info(plugin_output.text)
 
-            host_summaries.append(host_summary)
+                    try:
+                        finding = extract_finding_data(item, host_name, hostname,
+                                                       scan_date=scan_date, scan_time=scan_time,
+                                                       plugins_dict=plugins_dict,
+                                                       source_file=original_filename)
+                        all_findings.append(finding)
+                        host_findings_count += 1
+                        import_report['findings_processed'] += 1
+                    except Exception as e:
+                        import_report['findings_skipped'].append({
+                            'file': original_filename,
+                            'host': hostname,
+                            'plugin_id': plugin_id,
+                            'error': str(e)
+                        })
+
+                host_summary = {
+                    'report_name': report_name,
+                    'original_filename': original_filename,
+                    'host_name': host_name,
+                    'hostname': hostname,
+                    'safe_hostname': sanitize_hostname_for_excel(hostname),
+                    'total_reportitems': len(items),
+                    'findings_extracted': host_findings_count,
+                    'scan_date': scan_date,
+                    'scan_time': scan_time,
+                    **cred_info
+                }
+
+                host_summaries.append(host_summary)
+                import_report['hosts_processed'] += 1
+
+            except Exception as e:
+                import_report['hosts_skipped'].append({
+                    'file': original_filename,
+                    'host': host_name,
+                    'error': str(e)
+                })
 
         findings_df = pd.DataFrame(all_findings)
         host_summary_df = pd.DataFrame(host_summaries)
@@ -447,33 +494,60 @@ def parse_nessus_file(nessus_file: str, plugins_dict: Dict = None) -> Tuple[pd.D
         print(f"Completed parsing {nessus_file} in {elapsed:.1f} seconds")
         print(f"Extracted {len(all_findings)} findings from {len(hosts)} hosts")
 
+        import_report['files_processed'].append({
+            'file': original_filename,
+            'hosts': len(hosts),
+            'findings': len(all_findings),
+            'elapsed': elapsed
+        })
+
         return findings_df, host_summary_df
 
     except Exception as e:
         print(f"Error parsing {nessus_file}: {e}")
         import traceback
         traceback.print_exc()
+
+        import_report['files_failed'].append({
+            'file': os.path.basename(nessus_file),
+            'error': str(e)
+        })
+
         return pd.DataFrame(), pd.DataFrame()
 
 
-def parse_multiple_nessus_files(nessus_files: List[str], plugins_dict: Dict = None) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def parse_multiple_nessus_files(nessus_files: List[str], plugins_dict: Dict = None,
+                                return_import_report: bool = False) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Parse multiple .nessus files and combine results.
 
     Args:
         nessus_files: List of .nessus file paths
         plugins_dict: Optional plugins database for enrichment
+        return_import_report: If True, returns import report as third element
 
     Returns:
-        Tuple of (combined_findings_df, combined_host_summary_df)
+        Tuple of (combined_findings_df, combined_host_summary_df) or
+        Tuple of (combined_findings_df, combined_host_summary_df, import_report) if return_import_report=True
     """
     all_findings = []
     all_host_summaries = []
 
+    # Initialize import report
+    import_report = {
+        'files_processed': [],
+        'files_failed': [],
+        'hosts_processed': 0,
+        'hosts_skipped': [],
+        'findings_processed': 0,
+        'findings_skipped': [],
+        'parsing_warnings': []
+    }
+
     for i, nessus_file in enumerate(nessus_files, 1):
         print(f"Processing file {i}/{len(nessus_files)}: {os.path.basename(nessus_file)}")
 
-        findings_df, host_summary_df = parse_nessus_file(nessus_file, plugins_dict)
+        findings_df, host_summary_df = parse_nessus_file(nessus_file, plugins_dict, import_report)
 
         if not findings_df.empty:
             all_findings.append(findings_df)
@@ -486,4 +560,57 @@ def parse_multiple_nessus_files(nessus_files: List[str], plugins_dict: Dict = No
     print(f"Total findings across all files: {len(combined_findings)}")
     print(f"Total hosts across all files: {len(combined_summaries)}")
 
+    # Print import report summary
+    print_import_report_summary(import_report)
+
+    if return_import_report:
+        return combined_findings, combined_summaries, import_report
+
     return combined_findings, combined_summaries
+
+
+def print_import_report_summary(import_report: Dict) -> None:
+    """Print a summary of the import report."""
+    print("\n" + "=" * 60)
+    print("IMPORT REPORT SUMMARY")
+    print("=" * 60)
+
+    print(f"\nFiles Processed: {len(import_report.get('files_processed', []))}")
+    print(f"Files Failed: {len(import_report.get('files_failed', []))}")
+    print(f"Hosts Processed: {import_report.get('hosts_processed', 0)}")
+    print(f"Hosts Skipped: {len(import_report.get('hosts_skipped', []))}")
+    print(f"Findings Processed: {import_report.get('findings_processed', 0)}")
+    print(f"Findings Skipped: {len(import_report.get('findings_skipped', []))}")
+    print(f"Parsing Warnings: {len(import_report.get('parsing_warnings', []))}")
+
+    # Show failed files
+    if import_report.get('files_failed'):
+        print("\n--- FAILED FILES ---")
+        for item in import_report['files_failed']:
+            print(f"  {item['file']}: {item['error']}")
+
+    # Show skipped hosts
+    if import_report.get('hosts_skipped'):
+        print("\n--- SKIPPED HOSTS ---")
+        for item in import_report['hosts_skipped'][:10]:  # Show first 10
+            print(f"  {item['file']} - {item['host']}: {item['error']}")
+        if len(import_report['hosts_skipped']) > 10:
+            print(f"  ... and {len(import_report['hosts_skipped']) - 10} more")
+
+    # Show skipped findings
+    if import_report.get('findings_skipped'):
+        print("\n--- SKIPPED FINDINGS ---")
+        for item in import_report['findings_skipped'][:10]:  # Show first 10
+            print(f"  {item['file']} - {item['host']} - Plugin {item['plugin_id']}: {item['error']}")
+        if len(import_report['findings_skipped']) > 10:
+            print(f"  ... and {len(import_report['findings_skipped']) - 10} more")
+
+    # Show parsing warnings
+    if import_report.get('parsing_warnings'):
+        print("\n--- PARSING WARNINGS ---")
+        for warning in import_report['parsing_warnings'][:10]:  # Show first 10
+            print(f"  {warning}")
+        if len(import_report['parsing_warnings']) > 10:
+            print(f"  ... and {len(import_report['parsing_warnings']) - 10} more")
+
+    print("\n" + "=" * 60)

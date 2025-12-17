@@ -176,7 +176,7 @@ GUI_DARK_THEME = {
 # Export settings
 EXCEL_MAX_COLUMN_WIDTH = 50
 SQLITE_INDEXES = {
-    'historical_findings': ['hostname', 'plugin_id', 'scan_date', 'ip_address'],
+    'historical_findings': ['hostname', 'plugin_id', 'scan_date', 'ip_address', 'port', 'protocol'],
     'finding_lifecycle': ['hostname', 'plugin_id', 'status', 'opdir_number', 'opdir_status'],
     'host_presence': ['hostname', 'status'],
     'scan_changes': ['scan_date'],
