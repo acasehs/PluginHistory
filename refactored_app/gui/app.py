@@ -814,10 +814,10 @@ class NessusHistoryTrackerApp:
         cvss_label = tk.Label(cvss_row, text="CVSS:", width=8, bg=self.filter_label_default_bg, fg='white', anchor='w')
         cvss_label.pack(side=tk.LEFT)
         self.filter_labels['cvss'] = cvss_label
-        # Min box: larger (accommodates values like 0.0-9.9), Max box: smaller but fits 10.0
-        ttk.Entry(cvss_row, textvariable=self.filter_cvss_min, width=5).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
+        # Min box: smaller (0.0-9.9), Max box: larger (needs to fit 10.0)
+        ttk.Entry(cvss_row, textvariable=self.filter_cvss_min, width=4).pack(side=tk.LEFT, padx=1)
         ttk.Label(cvss_row, text="-").pack(side=tk.LEFT)
-        ttk.Entry(cvss_row, textvariable=self.filter_cvss_max, width=6).pack(side=tk.LEFT, padx=1)
+        ttk.Entry(cvss_row, textvariable=self.filter_cvss_max, width=5).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
 
         # Left Column Row 4: OPDIR Status
         opdir_row = ttk.Frame(left_col)
@@ -7622,6 +7622,11 @@ Avg New/Month: {monthly_new.mean():.0f}
             new_count = len(new_findings_df)
             self._log_safe(f"New findings from archives: {new_count}")
 
+            # Log scan date info for diagnostics
+            if 'scan_date' in new_findings_df.columns:
+                scan_dates = pd.to_datetime(new_findings_df['scan_date']).dt.date.unique()
+                self._log_safe(f"Archive scan dates: {sorted([str(d) for d in scan_dates])}")
+
             # Apply hostname normalization to new findings
             from ..export.sqlite_export import apply_hostname_normalization, load_host_aliases, detect_hostname_aliases
             alias_map = {}
@@ -7674,19 +7679,35 @@ Avg New/Month: {monthly_new.mean():.0f}
                         self.historical_df = pd.concat([self.historical_df, unique_new_findings], ignore_index=True)
                         self._log_safe(f"Appended {len(unique_new_findings)} new findings")
                         self._log_safe(f"Total findings now: {len(self.historical_df)}")
+                        # Store count for prompting user to save
+                        self._pending_new_findings_count = len(unique_new_findings)
+
+                        # Summary breakdown for diagnostics
+                        self._log_safe("--- Archive Import Summary ---")
+                        self._log_safe(f"  Raw findings in archive: {new_count}")
+                        if total_info_excluded > 0:
+                            self._log_safe(f"  Filtered (Info disabled): {total_info_excluded}")
+                        self._log_safe(f"  Duplicates (already in DB): {duplicate_count}")
+                        self._log_safe(f"  New unique findings added: {len(unique_new_findings)}")
                     else:
                         self._log_safe("No new unique findings to append")
+                        self._log_safe(f"All {new_count} findings were duplicates of existing data")
+                        self._pending_new_findings_count = 0
                 else:
                     # No key columns available, just append all
                     self.historical_df = pd.concat([self.historical_df, new_findings_df], ignore_index=True)
                     self._log_safe(f"Appended {new_count} findings (no dedup possible)")
+                    self._pending_new_findings_count = new_count
             else:
                 # No existing data, just set
                 self.historical_df = new_findings_df
                 self._log_safe(f"Set {new_count} findings as initial data")
+                self._pending_new_findings_count = new_count
+        else:
+            self._pending_new_findings_count = 0
 
-        # Run analysis refresh on main thread
-        self.window.after(0, self._refresh_analysis_internal)
+        # Run analysis refresh on main thread, then prompt to save if new findings
+        self.window.after(0, self._refresh_and_prompt_save)
 
     def _load_existing_database(self):
         """Load data from existing database."""
@@ -7970,6 +7991,63 @@ Avg New/Month: {monthly_new.mean():.0f}
             f"• CVEs added to {cve_added} findings\n"
             f"• IAVX added to {iavx_added} findings\n\n"
             f"Analysis has been refreshed.")
+
+    def _refresh_and_prompt_save(self):
+        """Refresh analysis and prompt to save if new findings were added."""
+        # First refresh the analysis
+        self._refresh_analysis_internal()
+
+        # Check if there are pending new findings to save
+        pending_count = getattr(self, '_pending_new_findings_count', 0)
+        if pending_count > 0 and self.existing_db_path:
+            # Prompt user to update the database
+            response = messagebox.askyesno(
+                "New Findings Detected",
+                f"{pending_count} new findings were added from the archive.\n\n"
+                f"Would you like to update the database file with these new findings?"
+            )
+            if response:
+                self._save_database_update()
+
+            # Clear the pending count
+            self._pending_new_findings_count = 0
+
+    def _save_database_update(self):
+        """Save the updated database with new findings."""
+        if not self.existing_db_path:
+            return
+
+        try:
+            from ..export.sqlite_export import export_to_sqlite
+
+            self._log("Updating database with new findings...")
+
+            # Export to the same database file
+            success = export_to_sqlite(
+                filepath=self.existing_db_path,
+                historical_df=self.historical_df,
+                lifecycle_df=self.lifecycle_df,
+                host_presence_df=self.host_presence_df,
+                scan_changes_df=self.scan_changes_df,
+                opdir_df=self.opdir_df,
+                iavm_df=self.iavm_df if hasattr(self, 'iavm_df') else None,
+                stig_df=self.stig_df if hasattr(self, 'stig_df') else None,
+                poam_df=pd.DataFrame(self.poam_entries) if self.poam_entries else None,
+                host_overrides=self.host_overrides if hasattr(self, 'host_overrides') else None,
+            )
+
+            if success:
+                self._log(f"Database updated successfully: {self.existing_db_path}")
+                messagebox.showinfo("Database Updated",
+                                   f"Database has been updated with new findings.\n\n"
+                                   f"File: {os.path.basename(self.existing_db_path)}")
+            else:
+                self._log("Failed to update database")
+                messagebox.showerror("Update Failed", "Failed to update the database file.")
+
+        except Exception as e:
+            self._log(f"Error updating database: {e}")
+            messagebox.showerror("Update Error", f"Error updating database:\n{e}")
 
     def _refresh_analysis_internal(self):
         """Internal analysis refresh."""
