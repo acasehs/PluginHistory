@@ -11,6 +11,58 @@ from typing import Dict, List, Optional, Any
 from ..config import SQLITE_INDEXES
 
 
+def migrate_database_schema(conn: sqlite3.Connection) -> List[str]:
+    """
+    Migrate database schema to add new columns if they don't exist.
+
+    Args:
+        conn: SQLite connection object
+
+    Returns:
+        List of migration messages
+    """
+    migrations = []
+    cursor = conn.cursor()
+
+    # Define columns to add to each table
+    schema_updates = {
+        'historical_findings': [
+            ('source_file', 'TEXT'),
+        ],
+        'finding_lifecycle': [
+            ('source_files', 'TEXT'),
+        ],
+        'info_findings': [
+            ('source_file', 'TEXT'),
+        ],
+    }
+
+    for table_name, columns in schema_updates.items():
+        # Check if table exists
+        cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+            (table_name,)
+        )
+        if not cursor.fetchone():
+            continue  # Table doesn't exist, will be created with proper schema
+
+        # Get existing columns
+        cursor.execute(f"PRAGMA table_info({table_name})")
+        existing_cols = {row[1] for row in cursor.fetchall()}
+
+        # Add missing columns
+        for col_name, col_type in columns:
+            if col_name not in existing_cols:
+                try:
+                    cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}")
+                    migrations.append(f"Added column '{col_name}' to table '{table_name}'")
+                except sqlite3.OperationalError as e:
+                    migrations.append(f"Failed to add '{col_name}' to '{table_name}': {e}")
+
+    conn.commit()
+    return migrations
+
+
 def export_to_sqlite(historical_df: pd.DataFrame,
                     lifecycle_df: pd.DataFrame,
                     host_presence_df: pd.DataFrame,
@@ -168,6 +220,12 @@ def create_sqlite_database(filepath: str) -> sqlite3.Connection:
     conn = sqlite3.connect(filepath)
     cursor = conn.cursor()
 
+    # Migrate existing database schema to add new columns
+    migrations = migrate_database_schema(conn)
+    if migrations:
+        for msg in migrations:
+            print(f"Schema migration: {msg}")
+
     # Create tables with proper schema
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS historical_findings (
@@ -177,6 +235,7 @@ def create_sqlite_database(filepath: str) -> sqlite3.Connection:
             ip_address TEXT,
             scan_date TEXT,
             scan_file TEXT,
+            source_file TEXT,
             name TEXT,
             family TEXT,
             severity_text TEXT,
@@ -211,7 +270,8 @@ def create_sqlite_database(filepath: str) -> sqlite3.Connection:
             iavx TEXT,
             opdir_number TEXT,
             opdir_status TEXT,
-            opdir_days_until_due INTEGER
+            opdir_days_until_due INTEGER,
+            source_files TEXT
         )
     ''')
 
@@ -413,6 +473,12 @@ def save_informational_findings_by_year(historical_df: pd.DataFrame, base_dir: s
 
         try:
             conn = sqlite3.connect(db_path)
+
+            # Migrate schema to add any new columns
+            migrations = migrate_database_schema(conn)
+            if migrations:
+                for msg in migrations:
+                    print(f"Schema migration: {msg}")
 
             # Prepare DataFrame for SQLite
             save_df = year_df.drop(columns=['year']).copy()
