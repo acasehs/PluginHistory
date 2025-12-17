@@ -295,27 +295,69 @@ class NessusHistoryTrackerApp:
         self.notebook = ttk.Notebook(right_panel)
         self.notebook.pack(fill=tk.BOTH, expand=True)
 
-        # Build tabs - Logging tab last
+        # Build organized tab structure with logical groupings
+        self._build_organized_tabs()
+
+    def _build_organized_tabs(self):
+        """Build the main tab structure with logical groupings."""
+        # 1. Dashboard (standalone)
         self._build_dashboard_tab()
-        self._build_lifecycle_tab()
-        self._build_host_tab()
-        self._build_timeline_tab()
-        self._build_rolling_tab()
-        self._build_risk_tab()
-        self._build_opdir_tab()
-        self._build_efficiency_tab()
-        self._build_network_tab()
-        self._build_plugin_tab()
-        self._build_priority_tab()
-        self._build_sla_tab()
-        self._build_metrics_tab()
-        self._build_host_tracking_tab()
-        self._build_advanced_tab()
-        self._build_stig_tab()  # STIG checklist findings
-        self._build_poam_tab()  # POA&M tracking
-        self._build_reporting_tab()  # Weekly resolution reports
-        self._build_database_browser_tab()  # Database management
-        self._build_logging_tab()  # Moved to last
+
+        # 2. Findings group (Lifecycle, Plugins, Priority, STIG Findings)
+        findings_container = ttk.Frame(self.notebook)
+        self.notebook.add(findings_container, text="Findings")
+        self.findings_notebook = ttk.Notebook(findings_container)
+        self.findings_notebook.pack(fill=tk.BOTH, expand=True)
+
+        self._build_lifecycle_tab(self.findings_notebook)
+        self._build_plugin_tab(self.findings_notebook)
+        self._build_priority_tab(self.findings_notebook)
+        self._build_stig_tab(self.findings_notebook)
+
+        # 3. Analysis group (Timeline, 8 Week Rolling, Risk, Efficiency, Metrics, Advanced)
+        analysis_container = ttk.Frame(self.notebook)
+        self.notebook.add(analysis_container, text="Analysis")
+        self.analysis_notebook = ttk.Notebook(analysis_container)
+        self.analysis_notebook.pack(fill=tk.BOTH, expand=True)
+
+        self._build_timeline_tab(self.analysis_notebook)
+        self._build_rolling_tab(self.analysis_notebook)
+        self._build_risk_tab(self.analysis_notebook)
+        self._build_efficiency_tab(self.analysis_notebook)
+        self._build_metrics_tab(self.analysis_notebook)
+        self._build_advanced_tab(self.analysis_notebook)
+
+        # 4. Infrastructure group (Hosts, Host Track, Network)
+        infra_container = ttk.Frame(self.notebook)
+        self.notebook.add(infra_container, text="Infrastructure")
+        self.infra_notebook = ttk.Notebook(infra_container)
+        self.infra_notebook.pack(fill=tk.BOTH, expand=True)
+
+        self._build_host_tab(self.infra_notebook)
+        self._build_host_tracking_tab(self.infra_notebook)
+        self._build_network_tab(self.infra_notebook)
+
+        # 5. Compliance group (OPDIR, POA&M, SLA)
+        compliance_container = ttk.Frame(self.notebook)
+        self.notebook.add(compliance_container, text="Compliance")
+        self.compliance_notebook = ttk.Notebook(compliance_container)
+        self.compliance_notebook.pack(fill=tk.BOTH, expand=True)
+
+        self._build_opdir_tab(self.compliance_notebook)
+        self._build_poam_tab(self.compliance_notebook)
+        self._build_sla_tab(self.compliance_notebook)
+
+        # 6. Reporting (will be enhanced with report subtabs)
+        self._build_reporting_tab()
+
+        # 7. Management group (Database, Logging)
+        mgmt_container = ttk.Frame(self.notebook)
+        self.notebook.add(mgmt_container, text="Management")
+        self.mgmt_notebook = ttk.Notebook(mgmt_container)
+        self.mgmt_notebook.pack(fill=tk.BOTH, expand=True)
+
+        self._build_database_browser_tab(self.mgmt_notebook)
+        self._build_logging_tab(self.mgmt_notebook)
 
     def _build_file_selection(self, parent):
         """Build file selection section with compact layout."""
@@ -333,7 +375,8 @@ class NessusHistoryTrackerApp:
         ttk.Label(db_row, text="1. Existing:", width=11).pack(side=tk.LEFT)
         self.existing_db_label = ttk.Label(db_row, text="None", foreground="gray", width=16, anchor=tk.W)
         self.existing_db_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Button(db_row, text="...", command=self._select_existing_db, width=3).pack(side=tk.RIGHT)
+        ttk.Button(db_row, text="...", command=self._select_existing_db, width=3).pack(side=tk.RIGHT, padx=(2, 0))
+        ttk.Button(db_row, text="✕", command=self._clear_existing_db, width=2).pack(side=tk.RIGHT)
 
         # Archives row
         archive_row = ttk.Frame(file_frame)
@@ -341,7 +384,8 @@ class NessusHistoryTrackerApp:
         ttk.Label(archive_row, text="2. Archives:", width=11).pack(side=tk.LEFT)
         self.archives_label = ttk.Label(archive_row, text="None", foreground="gray", width=16, anchor=tk.W)
         self.archives_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Button(archive_row, text="...", command=self._select_archives, width=3).pack(side=tk.RIGHT)
+        ttk.Button(archive_row, text="...", command=self._select_archives, width=3).pack(side=tk.RIGHT, padx=(2, 0))
+        ttk.Button(archive_row, text="✕", command=self._clear_archives, width=2).pack(side=tk.RIGHT)
 
         # Plugins DB row
         plugins_row = ttk.Frame(file_frame)
@@ -349,7 +393,8 @@ class NessusHistoryTrackerApp:
         ttk.Label(plugins_row, text="3. Plugins:", width=11).pack(side=tk.LEFT)
         self.plugins_label = ttk.Label(plugins_row, text="None", foreground="gray", width=16, anchor=tk.W)
         self.plugins_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Button(plugins_row, text="...", command=self._select_plugins_db, width=3).pack(side=tk.RIGHT)
+        ttk.Button(plugins_row, text="...", command=self._select_plugins_db, width=3).pack(side=tk.RIGHT, padx=(2, 0))
+        ttk.Button(plugins_row, text="✕", command=self._clear_plugins_db, width=2).pack(side=tk.RIGHT)
 
         # OPDIR row
         opdir_row = ttk.Frame(file_frame)
@@ -357,7 +402,8 @@ class NessusHistoryTrackerApp:
         ttk.Label(opdir_row, text="4. OPDIR:", width=11).pack(side=tk.LEFT)
         self.opdir_label = ttk.Label(opdir_row, text="None", foreground="gray", width=16, anchor=tk.W)
         self.opdir_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Button(opdir_row, text="...", command=self._select_opdir_file, width=3).pack(side=tk.RIGHT)
+        ttk.Button(opdir_row, text="...", command=self._select_opdir_file, width=3).pack(side=tk.RIGHT, padx=(2, 0))
+        ttk.Button(opdir_row, text="✕", command=self._clear_opdir_file, width=2).pack(side=tk.RIGHT)
 
         # IAVM Notices row
         iavm_row = ttk.Frame(file_frame)
@@ -365,7 +411,8 @@ class NessusHistoryTrackerApp:
         ttk.Label(iavm_row, text="5. IAVM:", width=11).pack(side=tk.LEFT)
         self.iavm_label = ttk.Label(iavm_row, text="None", foreground="gray", width=16, anchor=tk.W)
         self.iavm_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Button(iavm_row, text="...", command=self._select_iavm_file, width=3).pack(side=tk.RIGHT)
+        ttk.Button(iavm_row, text="...", command=self._select_iavm_file, width=3).pack(side=tk.RIGHT, padx=(2, 0))
+        ttk.Button(iavm_row, text="✕", command=self._clear_iavm_file, width=2).pack(side=tk.RIGHT)
 
         # STIG Checklists row
         stig_row = ttk.Frame(file_frame)
@@ -373,7 +420,8 @@ class NessusHistoryTrackerApp:
         ttk.Label(stig_row, text="6. STIGs:", width=11).pack(side=tk.LEFT)
         self.stig_label = ttk.Label(stig_row, text="None", foreground="gray", width=16, anchor=tk.W)
         self.stig_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Button(stig_row, text="...", command=self._select_stig_files, width=3).pack(side=tk.RIGHT)
+        ttk.Button(stig_row, text="...", command=self._select_stig_files, width=3).pack(side=tk.RIGHT, padx=(2, 0))
+        ttk.Button(stig_row, text="✕", command=self._clear_stig_files, width=2).pack(side=tk.RIGHT)
 
         # POAM row
         poam_row = ttk.Frame(file_frame)
@@ -381,7 +429,8 @@ class NessusHistoryTrackerApp:
         ttk.Label(poam_row, text="7. POAM:", width=11).pack(side=tk.LEFT)
         self.poam_label = ttk.Label(poam_row, text="None", foreground="gray", width=16, anchor=tk.W)
         self.poam_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Button(poam_row, text="...", command=self._select_poam_file, width=3).pack(side=tk.RIGHT)
+        ttk.Button(poam_row, text="...", command=self._select_poam_file, width=3).pack(side=tk.RIGHT, padx=(2, 0))
+        ttk.Button(poam_row, text="✕", command=self._clear_poam_file, width=2).pack(side=tk.RIGHT)
 
     def _build_filter_panel(self, parent):
         """Build filter controls section with 2-column layout."""
@@ -624,10 +673,11 @@ class NessusHistoryTrackerApp:
         ttk.Button(ai_row2, text="Threat Feeds", command=self._show_threat_intel_dialog).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
         ttk.Button(ai_row2, text="Sync Intel", command=self._quick_sync_threat_intel).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
 
-    def _build_logging_tab(self):
+    def _build_logging_tab(self, parent=None):
         """Build logging tab (formerly Status tab)."""
-        logging_frame = ttk.Frame(self.notebook)
-        self.notebook.add(logging_frame, text="Logging")
+        target_notebook = parent if parent else self.notebook
+        logging_frame = ttk.Frame(target_notebook)
+        target_notebook.add(logging_frame, text="Logging")
 
         self.status_text = tk.Text(logging_frame, wrap=tk.WORD,
                                    bg=GUI_DARK_THEME['text_bg'],
@@ -650,10 +700,11 @@ class NessusHistoryTrackerApp:
         for child in widget.winfo_children():
             self._bind_mousewheel_to_children(child)
 
-    def _build_dashboard_tab(self):
+    def _build_dashboard_tab(self, parent=None):
         """Build dashboard tab with summary statistics."""
-        dashboard_frame = ttk.Frame(self.notebook)
-        self.notebook.add(dashboard_frame, text="Dashboard")
+        target_notebook = parent if parent else self.notebook
+        dashboard_frame = ttk.Frame(target_notebook)
+        target_notebook.add(dashboard_frame, text="Dashboard")
         self.dashboard_frame = dashboard_frame
 
         # Summary statistics frame
@@ -745,10 +796,11 @@ class NessusHistoryTrackerApp:
         else:
             ttk.Label(chart_frame, text="Install matplotlib for trend charts: pip install matplotlib").pack(pady=20)
 
-    def _build_lifecycle_tab(self):
+    def _build_lifecycle_tab(self, parent=None):
         """Build lifecycle analysis tab with treeview."""
-        lifecycle_frame = ttk.Frame(self.notebook)
-        self.notebook.add(lifecycle_frame, text="Lifecycle")
+        target_notebook = parent if parent else self.notebook
+        lifecycle_frame = ttk.Frame(target_notebook)
+        target_notebook.add(lifecycle_frame, text="Lifecycle")
         self.lifecycle_frame = lifecycle_frame
 
         # Navigation controls frame
@@ -848,10 +900,11 @@ class NessusHistoryTrackerApp:
                        background=GUI_DARK_THEME['button_bg'],
                        foreground=GUI_DARK_THEME['fg'])
 
-    def _build_host_tab(self):
+    def _build_host_tab(self, parent=None):
         """Build host analysis tab with treeview."""
-        host_frame = ttk.Frame(self.notebook)
-        self.notebook.add(host_frame, text="Hosts")
+        target_notebook = parent if parent else self.notebook
+        host_frame = ttk.Frame(target_notebook)
+        target_notebook.add(host_frame, text="Hosts")
         self.host_frame = host_frame
 
         # Info and toggle frame
@@ -912,10 +965,11 @@ class NessusHistoryTrackerApp:
                         font=('Arial', 8), foreground='gray')
         hint.pack(anchor=tk.SE, padx=5)
 
-    def _build_timeline_tab(self):
+    def _build_timeline_tab(self, parent=None):
         """Build timeline analysis visualization tab."""
-        timeline_frame = ttk.Frame(self.notebook)
-        self.notebook.add(timeline_frame, text="Timeline")
+        target_notebook = parent if parent else self.notebook
+        timeline_frame = ttk.Frame(target_notebook)
+        target_notebook.add(timeline_frame, text="Timeline")
         self.timeline_frame = timeline_frame
 
         if HAS_MATPLOTLIB:
@@ -955,10 +1009,11 @@ class NessusHistoryTrackerApp:
         else:
             ttk.Label(timeline_frame, text="Install matplotlib for visualizations").pack(pady=50)
 
-    def _build_rolling_tab(self):
+    def _build_rolling_tab(self, parent=None):
         """Build 8-week rolling progress visualization tab."""
-        rolling_frame = ttk.Frame(self.notebook)
-        self.notebook.add(rolling_frame, text="8 Week Rolling")
+        target_notebook = parent if parent else self.notebook
+        rolling_frame = ttk.Frame(target_notebook)
+        target_notebook.add(rolling_frame, text="8 Week Rolling")
         self.rolling_frame = rolling_frame
 
         if HAS_MATPLOTLIB:
@@ -998,10 +1053,11 @@ class NessusHistoryTrackerApp:
         else:
             ttk.Label(rolling_frame, text="Install matplotlib for visualizations").pack(pady=50)
 
-    def _build_risk_tab(self):
+    def _build_risk_tab(self, parent=None):
         """Build risk analysis visualization tab."""
-        risk_frame = ttk.Frame(self.notebook)
-        self.notebook.add(risk_frame, text="Risk")
+        target_notebook = parent if parent else self.notebook
+        risk_frame = ttk.Frame(target_notebook)
+        target_notebook.add(risk_frame, text="Risk")
         self.risk_frame = risk_frame
 
         if HAS_MATPLOTLIB:
@@ -1040,10 +1096,11 @@ class NessusHistoryTrackerApp:
         else:
             ttk.Label(risk_frame, text="Install matplotlib for visualizations").pack(pady=50)
 
-    def _build_opdir_tab(self):
+    def _build_opdir_tab(self, parent=None):
         """Build OPDIR compliance visualization tab."""
-        opdir_frame = ttk.Frame(self.notebook)
-        self.notebook.add(opdir_frame, text="OPDIR")
+        target_notebook = parent if parent else self.notebook
+        opdir_frame = ttk.Frame(target_notebook)
+        target_notebook.add(opdir_frame, text="OPDIR")
         self.opdir_frame = opdir_frame
 
         if HAS_MATPLOTLIB:
@@ -1082,10 +1139,11 @@ class NessusHistoryTrackerApp:
         else:
             ttk.Label(opdir_frame, text="Install matplotlib for visualizations").pack(pady=50)
 
-    def _build_efficiency_tab(self):
+    def _build_efficiency_tab(self, parent=None):
         """Build operational efficiency visualization tab."""
-        efficiency_frame = ttk.Frame(self.notebook)
-        self.notebook.add(efficiency_frame, text="Efficiency")
+        target_notebook = parent if parent else self.notebook
+        efficiency_frame = ttk.Frame(target_notebook)
+        target_notebook.add(efficiency_frame, text="Efficiency")
         self.efficiency_frame = efficiency_frame
 
         if HAS_MATPLOTLIB:
@@ -1124,10 +1182,11 @@ class NessusHistoryTrackerApp:
         else:
             ttk.Label(efficiency_frame, text="Install matplotlib for visualizations").pack(pady=50)
 
-    def _build_network_tab(self):
+    def _build_network_tab(self, parent=None):
         """Build network analysis visualization tab."""
-        network_frame = ttk.Frame(self.notebook)
-        self.notebook.add(network_frame, text="Network")
+        target_notebook = parent if parent else self.notebook
+        network_frame = ttk.Frame(target_notebook)
+        target_notebook.add(network_frame, text="Network")
         self.network_frame = network_frame
 
         if HAS_MATPLOTLIB:
@@ -1166,10 +1225,11 @@ class NessusHistoryTrackerApp:
         else:
             ttk.Label(network_frame, text="Install matplotlib for visualizations").pack(pady=50)
 
-    def _build_plugin_tab(self):
+    def _build_plugin_tab(self, parent=None):
         """Build plugin analysis visualization tab."""
-        plugin_frame = ttk.Frame(self.notebook)
-        self.notebook.add(plugin_frame, text="Plugins")
+        target_notebook = parent if parent else self.notebook
+        plugin_frame = ttk.Frame(target_notebook)
+        target_notebook.add(plugin_frame, text="Plugins")
         self.plugin_frame = plugin_frame
 
         if HAS_MATPLOTLIB:
@@ -1234,10 +1294,11 @@ class NessusHistoryTrackerApp:
         else:
             ttk.Label(plugin_frame, text="Install matplotlib for visualizations").pack(pady=50)
 
-    def _build_priority_tab(self):
+    def _build_priority_tab(self, parent=None):
         """Build remediation priority visualization tab (CVSS vs Age quadrant)."""
-        priority_frame = ttk.Frame(self.notebook)
-        self.notebook.add(priority_frame, text="Priority")
+        target_notebook = parent if parent else self.notebook
+        priority_frame = ttk.Frame(target_notebook)
+        target_notebook.add(priority_frame, text="Priority")
         self.priority_frame = priority_frame
 
         if HAS_MATPLOTLIB:
@@ -1276,10 +1337,11 @@ class NessusHistoryTrackerApp:
         else:
             ttk.Label(priority_frame, text="Install matplotlib for visualizations").pack(pady=50)
 
-    def _build_sla_tab(self):
+    def _build_sla_tab(self, parent=None):
         """Build SLA compliance visualization tab."""
-        sla_frame = ttk.Frame(self.notebook)
-        self.notebook.add(sla_frame, text="SLA")
+        target_notebook = parent if parent else self.notebook
+        sla_frame = ttk.Frame(target_notebook)
+        target_notebook.add(sla_frame, text="SLA")
         self.sla_frame = sla_frame
 
         # SLA Targets info at top
@@ -1332,10 +1394,11 @@ class NessusHistoryTrackerApp:
         else:
             ttk.Label(sla_frame, text="Install matplotlib for visualizations").pack(pady=50)
 
-    def _build_metrics_tab(self):
+    def _build_metrics_tab(self, parent=None):
         """Build advanced metrics visualization tab with industry best practices."""
-        metrics_frame = ttk.Frame(self.notebook)
-        self.notebook.add(metrics_frame, text="Metrics")
+        target_notebook = parent if parent else self.notebook
+        metrics_frame = ttk.Frame(target_notebook)
+        target_notebook.add(metrics_frame, text="Metrics")
         self.metrics_frame = metrics_frame
 
         # Summary stats panel at top
@@ -1401,10 +1464,11 @@ class NessusHistoryTrackerApp:
         else:
             ttk.Label(metrics_frame, text="Install matplotlib for visualizations").pack(pady=50)
 
-    def _build_host_tracking_tab(self):
+    def _build_host_tracking_tab(self, parent=None):
         """Build host tracking visualization tab."""
-        host_tracking_frame = ttk.Frame(self.notebook)
-        self.notebook.add(host_tracking_frame, text="Host Track")
+        target_notebook = parent if parent else self.notebook
+        host_tracking_frame = ttk.Frame(target_notebook)
+        target_notebook.add(host_tracking_frame, text="Host Track")
         self.host_tracking_frame = host_tracking_frame
 
         if HAS_MATPLOTLIB:
@@ -1443,10 +1507,11 @@ class NessusHistoryTrackerApp:
         else:
             ttk.Label(host_tracking_frame, text="Install matplotlib for visualizations").pack(pady=50)
 
-    def _build_advanced_tab(self):
+    def _build_advanced_tab(self, parent=None):
         """Build advanced analytics visualization tab with 8 advanced charts."""
-        advanced_frame = ttk.Frame(self.notebook)
-        self.notebook.add(advanced_frame, text="Advanced")
+        target_notebook = parent if parent else self.notebook
+        advanced_frame = ttk.Frame(target_notebook)
+        target_notebook.add(advanced_frame, text="Advanced")
         self.advanced_frame = advanced_frame
 
         if HAS_MATPLOTLIB:
@@ -1548,10 +1613,11 @@ class NessusHistoryTrackerApp:
         else:
             ttk.Label(advanced_frame, text="Install matplotlib for advanced visualizations").pack(pady=50)
 
-    def _build_stig_tab(self):
+    def _build_stig_tab(self, parent=None):
         """Build STIG Findings visualization tab with CAT severity charts."""
-        stig_frame = ttk.Frame(self.notebook)
-        self.notebook.add(stig_frame, text="STIG Findings")
+        target_notebook = parent if parent else self.notebook
+        stig_frame = ttk.Frame(target_notebook)
+        target_notebook.add(stig_frame, text="STIG Findings")
         self.stig_tab_frame = stig_frame
 
         if HAS_MATPLOTLIB:
@@ -1590,10 +1656,11 @@ class NessusHistoryTrackerApp:
         else:
             ttk.Label(stig_frame, text="Install matplotlib for STIG visualizations").pack(pady=50)
 
-    def _build_poam_tab(self):
+    def _build_poam_tab(self, parent=None):
         """Build POAM (Plan of Action & Milestones) tracking tab."""
-        poam_frame = ttk.Frame(self.notebook)
-        self.notebook.add(poam_frame, text="POA&M")
+        target_notebook = parent if parent else self.notebook
+        poam_frame = ttk.Frame(target_notebook)
+        target_notebook.add(poam_frame, text="POA&M")
         self.poam_tab_frame = poam_frame
 
         if HAS_MATPLOTLIB:
@@ -1632,117 +1699,413 @@ class NessusHistoryTrackerApp:
         else:
             ttk.Label(poam_frame, text="Install matplotlib for POAM visualizations").pack(pady=50)
 
-    def _build_reporting_tab(self):
-        """Build the Reporting tab for weekly resolution reports."""
-        reporting_frame = ttk.Frame(self.notebook)
-        self.notebook.add(reporting_frame, text="Reporting")
+    def _build_reporting_tab(self, parent=None):
+        """Build the Reporting tab with subtabs for each report type."""
+        target_notebook = parent if parent else self.notebook
+        reporting_frame = ttk.Frame(target_notebook)
+        target_notebook.add(reporting_frame, text="Reporting")
         self.reporting_frame = reporting_frame
 
-        # Row 1: Date range and weekly report controls
-        row1_frame = ttk.Frame(reporting_frame)
-        row1_frame.pack(fill=tk.X, padx=10, pady=(5, 2))
+        # Initialize report preferences storage
+        self.report_preferences = self._load_report_preferences()
+
+        # Top toolbar with Quick Export All
+        toolbar = ttk.Frame(reporting_frame)
+        toolbar.pack(fill=tk.X, padx=5, pady=5)
+
+        ttk.Button(toolbar, text="Quick Export All Reports",
+                  command=self._quick_export_all_reports).pack(side=tk.LEFT, padx=5)
+        ttk.Button(toolbar, text="Save Preferences",
+                  command=self._save_report_preferences).pack(side=tk.LEFT, padx=5)
+        ttk.Button(toolbar, text="Reset Preferences",
+                  command=self._reset_report_preferences).pack(side=tk.LEFT, padx=5)
+
+        # Status label
+        self.report_status_label = ttk.Label(toolbar, text="Ready", foreground='gray')
+        self.report_status_label.pack(side=tk.RIGHT, padx=10)
+
+        # Create notebook for report types
+        self.reporting_notebook = ttk.Notebook(reporting_frame)
+        self.reporting_notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # Define report types with their sections
+        self.report_configs = {
+            'weekly': {
+                'name': 'Weekly Resolution',
+                'sections': [
+                    ('summary', 'Weekly Summary', True),
+                    ('env_breakdown', 'Environment Breakdown', True),
+                    ('new_findings', 'New Findings', True),
+                    ('closed_findings', 'Closed Findings', True),
+                    ('active_findings', 'Active Findings', True),
+                    ('reappearances', 'Reappearances', True),
+                ],
+                'generate': self._generate_weekly_resolution_report,
+                'export_pdf': self._export_resolution_pdf,
+                'export_excel': self._export_resolution_report,
+            },
+            'executive': {
+                'name': 'Executive Summary',
+                'sections': [
+                    ('overview', 'Executive Overview', True),
+                    ('risk_summary', 'Risk Summary', True),
+                    ('severity_breakdown', 'Severity Breakdown', True),
+                    ('trends', 'Trend Analysis', True),
+                    ('recommendations', 'Recommendations', True),
+                ],
+                'generate': self._generate_executive_preview,
+                'export_pdf': self._export_executive_summary_pdf,
+            },
+            'host_risk': {
+                'name': 'Host Risk Assessment',
+                'sections': [
+                    ('high_risk_hosts', 'High Risk Hosts', True),
+                    ('risk_distribution', 'Risk Distribution', True),
+                    ('host_details', 'Host Details', True),
+                    ('environment_summary', 'Environment Summary', True),
+                ],
+                'generate': self._generate_host_risk_preview,
+                'export_pdf': self._export_host_risk_pdf,
+            },
+            'aging': {
+                'name': 'Vulnerability Aging',
+                'sections': [
+                    ('age_summary', 'Aging Summary', True),
+                    ('age_distribution', 'Age Distribution', True),
+                    ('oldest_findings', 'Oldest Findings (Complete List)', True),
+                    ('sla_breaches', 'SLA Breaches', True),
+                ],
+                'generate': self._generate_aging_preview,
+                'export_pdf': self._export_aging_report_pdf,
+            },
+            'remediation': {
+                'name': 'Remediation Priority',
+                'sections': [
+                    ('priority_matrix', 'Priority Matrix', True),
+                    ('critical_items', 'Critical Priority Items', True),
+                    ('remediation_plan', 'Remediation Plan', True),
+                    ('resource_estimate', 'Resource Estimates', True),
+                ],
+                'generate': self._generate_remediation_preview,
+                'export_pdf': self._export_remediation_priority_pdf,
+            },
+            'monthly': {
+                'name': 'Monthly Metrics',
+                'sections': [
+                    ('kpi_summary', 'KPI Summary', True),
+                    ('trend_charts', 'Trend Charts', True),
+                    ('mttr_analysis', 'MTTR Analysis', True),
+                    ('month_comparison', 'Month-over-Month Comparison', True),
+                ],
+                'generate': self._generate_monthly_preview,
+                'export_pdf': self._export_monthly_metrics_pdf,
+            },
+            'compliance': {
+                'name': 'Compliance Status',
+                'sections': [
+                    ('compliance_overview', 'Compliance Overview', True),
+                    ('opdir_status', 'OPDIR Status', True),
+                    ('sla_compliance', 'SLA Compliance', True),
+                    ('findings_by_standard', 'Findings by Standard', True),
+                ],
+                'generate': self._generate_compliance_preview,
+                'export_pdf': self._export_compliance_status_pdf,
+            },
+        }
+
+        # Build each report subtab
+        self.report_widgets = {}
+        for report_key, config in self.report_configs.items():
+            self._build_report_subtab(report_key, config)
+
+    def _build_report_subtab(self, report_key, config):
+        """Build a single report subtab with options, preview, and export."""
+        frame = ttk.Frame(self.reporting_notebook)
+        self.reporting_notebook.add(frame, text=config['name'])
+
+        # Store widgets for this report
+        self.report_widgets[report_key] = {}
+
+        # Options panel (left side)
+        options_frame = ttk.LabelFrame(frame, text="Report Options", padding=10)
+        options_frame.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
 
         # Date range selection
-        ttk.Label(row1_frame, text="Report Period:").pack(side=tk.LEFT, padx=(0, 5))
+        date_frame = ttk.Frame(options_frame)
+        date_frame.pack(fill=tk.X, pady=5)
+        ttk.Label(date_frame, text="Date Range:").pack(anchor=tk.W)
 
-        # Start date dropdown
-        ttk.Label(row1_frame, text="From:").pack(side=tk.LEFT, padx=(10, 2))
-        self.report_start_date = ttk.Combobox(row1_frame, width=12, state='readonly')
-        self.report_start_date.pack(side=tk.LEFT, padx=(0, 10))
+        date_row = ttk.Frame(date_frame)
+        date_row.pack(fill=tk.X, pady=2)
+        ttk.Label(date_row, text="From:").pack(side=tk.LEFT)
+        start_combo = ttk.Combobox(date_row, width=12, state='readonly')
+        start_combo.pack(side=tk.LEFT, padx=5)
+        self.report_widgets[report_key]['start_date'] = start_combo
 
-        # End date dropdown
-        ttk.Label(row1_frame, text="To:").pack(side=tk.LEFT, padx=(0, 2))
-        self.report_end_date = ttk.Combobox(row1_frame, width=12, state='readonly')
-        self.report_end_date.pack(side=tk.LEFT, padx=(0, 20))
-
-        # Generate report button
-        ttk.Button(row1_frame, text="Generate Weekly Report",
-                  command=self._generate_weekly_resolution_report).pack(side=tk.LEFT, padx=5)
-
-        # Export button
-        ttk.Button(row1_frame, text="Export Excel",
-                  command=self._export_resolution_report).pack(side=tk.LEFT, padx=5)
-
-        # PDF Export button for weekly report
-        ttk.Button(row1_frame, text="Export PDF",
-                  command=self._export_resolution_pdf).pack(side=tk.LEFT, padx=5)
+        date_row2 = ttk.Frame(date_frame)
+        date_row2.pack(fill=tk.X, pady=2)
+        ttk.Label(date_row2, text="To:").pack(side=tk.LEFT)
+        end_combo = ttk.Combobox(date_row2, width=12, state='readonly')
+        end_combo.pack(side=tk.LEFT, padx=5)
+        self.report_widgets[report_key]['end_date'] = end_combo
 
         # Environment filter
-        ttk.Label(row1_frame, text="Env:").pack(side=tk.LEFT, padx=(20, 5))
-        self.report_env_filter = ttk.Combobox(row1_frame, width=12, state='readonly',
-                                              values=["All Combined", "All Separate"])
-        self.report_env_filter.set("All Combined")
-        self.report_env_filter.pack(side=tk.LEFT)
+        env_frame = ttk.Frame(options_frame)
+        env_frame.pack(fill=tk.X, pady=5)
+        ttk.Label(env_frame, text="Environment:").pack(anchor=tk.W)
+        env_combo = ttk.Combobox(env_frame, width=15, state='readonly',
+                                 values=["All Combined", "All Separate"])
+        env_combo.set("All Combined")
+        env_combo.pack(anchor=tk.W, pady=2)
+        self.report_widgets[report_key]['env_filter'] = env_combo
 
-        # Row 2: Additional PDF Reports
-        row2_frame = ttk.Frame(reporting_frame)
-        row2_frame.pack(fill=tk.X, padx=10, pady=(2, 5))
+        # Section checkboxes
+        sections_frame = ttk.LabelFrame(options_frame, text="Include Sections", padding=5)
+        sections_frame.pack(fill=tk.X, pady=10)
 
-        ttk.Label(row2_frame, text="PDF Reports:", font=('Arial', 9, 'bold')).pack(side=tk.LEFT, padx=(0, 10))
+        section_vars = {}
+        prefs = self.report_preferences.get(report_key, {})
+        for section_key, section_name, default in config['sections']:
+            var = tk.BooleanVar(value=prefs.get(section_key, default))
+            cb = ttk.Checkbutton(sections_frame, text=section_name, variable=var)
+            cb.pack(anchor=tk.W, pady=1)
+            section_vars[section_key] = var
+        self.report_widgets[report_key]['sections'] = section_vars
 
-        ttk.Button(row2_frame, text="Executive Summary",
-                  command=self._export_executive_summary_pdf).pack(side=tk.LEFT, padx=3)
+        # Buttons
+        btn_frame = ttk.Frame(options_frame)
+        btn_frame.pack(fill=tk.X, pady=10)
 
-        ttk.Button(row2_frame, text="Host Risk Assessment",
-                  command=self._export_host_risk_pdf).pack(side=tk.LEFT, padx=3)
+        ttk.Button(btn_frame, text="Generate Preview",
+                  command=lambda k=report_key: self._generate_report_preview(k)).pack(fill=tk.X, pady=2)
 
-        ttk.Button(row2_frame, text="Vulnerability Aging",
-                  command=self._export_aging_report_pdf).pack(side=tk.LEFT, padx=3)
+        if 'export_pdf' in config:
+            ttk.Button(btn_frame, text="Export PDF",
+                      command=lambda k=report_key: self._export_report_pdf(k)).pack(fill=tk.X, pady=2)
 
-        ttk.Button(row2_frame, text="Remediation Priority",
-                  command=self._export_remediation_priority_pdf).pack(side=tk.LEFT, padx=3)
+        if 'export_excel' in config:
+            ttk.Button(btn_frame, text="Export Excel",
+                      command=lambda k=report_key: self._export_report_excel(k)).pack(fill=tk.X, pady=2)
 
-        ttk.Button(row2_frame, text="Monthly Metrics",
-                  command=self._export_monthly_metrics_pdf).pack(side=tk.LEFT, padx=3)
+        # Preview area (right side)
+        preview_frame = ttk.LabelFrame(frame, text="Preview", padding=5)
+        preview_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        ttk.Button(row2_frame, text="Compliance Status",
-                  command=self._export_compliance_status_pdf).pack(side=tk.LEFT, padx=3)
+        # Create scrollable text widget for preview
+        text_widget = tk.Text(preview_frame, wrap=tk.WORD, font=('Consolas', 10),
+                             bg=GUI_DARK_THEME['entry_bg'], fg=GUI_DARK_THEME['fg'],
+                             insertbackground=GUI_DARK_THEME['fg'])
+        scroll = ttk.Scrollbar(preview_frame, orient=tk.VERTICAL, command=text_widget.yview)
+        text_widget.configure(yscrollcommand=scroll.set)
 
-        # Main content area with scrollable text/table
-        content_frame = ttk.Frame(reporting_frame)
-        content_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # Create scrollable text widget for report output
-        self.report_text = tk.Text(content_frame, wrap=tk.WORD, font=('Consolas', 10),
-                                   bg=GUI_DARK_THEME['entry_bg'], fg=GUI_DARK_THEME['fg'],
-                                   insertbackground=GUI_DARK_THEME['fg'])
-        report_scroll = ttk.Scrollbar(content_frame, orient=tk.VERTICAL, command=self.report_text.yview)
-        self.report_text.configure(yscrollcommand=report_scroll.set)
-
-        report_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        self.report_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        # Configure text tags for formatting
-        self.report_text.tag_configure('header', font=('Consolas', 12, 'bold'), foreground='#17a2b8')
-        self.report_text.tag_configure('subheader', font=('Consolas', 11, 'bold'), foreground='#ffc107')
-        self.report_text.tag_configure('section', font=('Consolas', 10, 'bold'), foreground='#28a745')
-        self.report_text.tag_configure('warning', foreground='#fd7e14')
-        self.report_text.tag_configure('critical', foreground='#dc3545')
-        self.report_text.tag_configure('success', foreground='#28a745')
-        self.report_text.tag_configure('divider', foreground='#6c757d')
+        # Configure text tags
+        text_widget.tag_configure('header', font=('Consolas', 12, 'bold'), foreground='#17a2b8')
+        text_widget.tag_configure('subheader', font=('Consolas', 11, 'bold'), foreground='#ffc107')
+        text_widget.tag_configure('section', font=('Consolas', 10, 'bold'), foreground='#28a745')
+        text_widget.tag_configure('warning', foreground='#fd7e14')
+        text_widget.tag_configure('critical', foreground='#dc3545')
+        text_widget.tag_configure('success', foreground='#28a745')
+        text_widget.tag_configure('divider', foreground='#6c757d')
 
         # Initial message
-        self.report_text.insert(tk.END, "Weekly Resolution Report\n", 'header')
-        self.report_text.insert(tk.END, "=" * 60 + "\n\n", 'divider')
-        self.report_text.insert(tk.END, "Load scan data and click 'Generate Weekly Report' to analyze\n")
-        self.report_text.insert(tk.END, "finding resolution trends week-over-week.\n\n")
-        self.report_text.insert(tk.END, "Report sections:\n")
-        self.report_text.insert(tk.END, "  • Weekly Summary - New, Closed, Unchanged findings per week\n")
-        self.report_text.insert(tk.END, "  • Resolution Progress - Ongoing remediation tracking\n")
-        self.report_text.insert(tk.END, "  • Fully Closed - Plugins with zero remaining findings\n")
-        self.report_text.insert(tk.END, "  • Reappearances - Findings that returned after resolution\n")
-        self.report_text.config(state=tk.DISABLED)
+        text_widget.insert(tk.END, f"{config['name']} Report\n", 'header')
+        text_widget.insert(tk.END, "=" * 50 + "\n\n", 'divider')
+        text_widget.insert(tk.END, "Configure options and click 'Generate Preview'\n")
+        text_widget.insert(tk.END, "to see a complete preview of this report.\n\n")
+        text_widget.insert(tk.END, "No data will be truncated or omitted.\n", 'success')
+        text_widget.config(state=tk.DISABLED)
 
-        # Status bar
-        status_frame = ttk.Frame(reporting_frame)
-        status_frame.pack(fill=tk.X, padx=10, pady=2)
-        self.report_status_label = ttk.Label(status_frame, text="Ready", foreground='gray')
-        self.report_status_label.pack(side=tk.LEFT)
+        self.report_widgets[report_key]['preview'] = text_widget
 
-    def _build_database_browser_tab(self):
+        # Store reference for Weekly Report compatibility
+        if report_key == 'weekly':
+            self.report_text = text_widget
+            self.report_start_date = start_combo
+            self.report_end_date = end_combo
+            self.report_env_filter = env_combo
+
+    def _generate_report_preview(self, report_key):
+        """Generate preview for specified report type."""
+        config = self.report_configs.get(report_key)
+        if not config or 'generate' not in config:
+            return
+
+        # Get enabled sections
+        enabled_sections = []
+        for section_key, var in self.report_widgets[report_key]['sections'].items():
+            if var.get():
+                enabled_sections.append(section_key)
+
+        # Store enabled sections for use by generate function
+        self._current_report_sections = enabled_sections
+
+        # Call the generate function
+        config['generate']()
+
+    def _export_report_pdf(self, report_key):
+        """Export PDF for specified report type."""
+        config = self.report_configs.get(report_key)
+        if not config or 'export_pdf' not in config:
+            return
+
+        # Get enabled sections
+        enabled_sections = []
+        for section_key, var in self.report_widgets[report_key]['sections'].items():
+            if var.get():
+                enabled_sections.append(section_key)
+
+        self._current_report_sections = enabled_sections
+        config['export_pdf']()
+
+    def _export_report_excel(self, report_key):
+        """Export Excel for specified report type."""
+        config = self.report_configs.get(report_key)
+        if not config or 'export_excel' not in config:
+            return
+
+        config['export_excel']()
+
+    def _quick_export_all_reports(self):
+        """Export all reports to PDF in a single batch."""
+        from tkinter import filedialog
+        import os
+
+        # Ask for output directory
+        output_dir = filedialog.askdirectory(title="Select Output Directory for All Reports")
+        if not output_dir:
+            return
+
+        self.report_status_label.config(text="Exporting all reports...", foreground='#ffc107')
+        self.window.update()
+
+        exported = []
+        failed = []
+
+        for report_key, config in self.report_configs.items():
+            if 'export_pdf' in config:
+                try:
+                    # Set all sections enabled for batch export
+                    for section_key, var in self.report_widgets[report_key]['sections'].items():
+                        var.set(True)
+                    self._current_report_sections = list(self.report_widgets[report_key]['sections'].keys())
+
+                    # Export (will be saved to default location, user can move)
+                    config['export_pdf']()
+                    exported.append(config['name'])
+                except Exception as e:
+                    failed.append(f"{config['name']}: {str(e)}")
+
+        if failed:
+            self.report_status_label.config(
+                text=f"Exported {len(exported)}, {len(failed)} failed",
+                foreground='#fd7e14'
+            )
+            self._log(f"Export failures: {failed}")
+        else:
+            self.report_status_label.config(
+                text=f"Exported {len(exported)} reports successfully",
+                foreground='#28a745'
+            )
+
+    def _load_report_preferences(self):
+        """Load saved report preferences from file."""
+        import json
+        prefs_file = os.path.join(os.path.dirname(__file__), 'report_preferences.json')
+        try:
+            if os.path.exists(prefs_file):
+                with open(prefs_file, 'r') as f:
+                    return json.load(f)
+        except Exception as e:
+            self._log(f"Could not load report preferences: {e}")
+        return {}
+
+    def _save_report_preferences(self):
+        """Save current report preferences to file."""
+        import json
+        prefs = {}
+        for report_key, widgets in self.report_widgets.items():
+            prefs[report_key] = {}
+            for section_key, var in widgets.get('sections', {}).items():
+                prefs[report_key][section_key] = var.get()
+
+        prefs_file = os.path.join(os.path.dirname(__file__), 'report_preferences.json')
+        try:
+            with open(prefs_file, 'w') as f:
+                json.dump(prefs, f, indent=2)
+            self.report_status_label.config(text="Preferences saved", foreground='#28a745')
+            self._log("Report preferences saved")
+        except Exception as e:
+            self.report_status_label.config(text="Failed to save preferences", foreground='#dc3545')
+            self._log(f"Error saving preferences: {e}")
+
+    def _reset_report_preferences(self):
+        """Reset all report preferences to defaults."""
+        for report_key, config in self.report_configs.items():
+            for section_key, section_name, default in config['sections']:
+                if report_key in self.report_widgets:
+                    var = self.report_widgets[report_key]['sections'].get(section_key)
+                    if var:
+                        var.set(default)
+        self.report_status_label.config(text="Preferences reset to defaults", foreground='#17a2b8')
+
+    # Placeholder preview generators for new report types
+    def _generate_executive_preview(self):
+        """Generate executive summary preview."""
+        self._generate_generic_preview('executive', 'Executive Summary')
+
+    def _generate_host_risk_preview(self):
+        """Generate host risk assessment preview."""
+        self._generate_generic_preview('host_risk', 'Host Risk Assessment')
+
+    def _generate_aging_preview(self):
+        """Generate vulnerability aging preview."""
+        self._generate_generic_preview('aging', 'Vulnerability Aging')
+
+    def _generate_remediation_preview(self):
+        """Generate remediation priority preview."""
+        self._generate_generic_preview('remediation', 'Remediation Priority')
+
+    def _generate_monthly_preview(self):
+        """Generate monthly metrics preview."""
+        self._generate_generic_preview('monthly', 'Monthly Metrics')
+
+    def _generate_compliance_preview(self):
+        """Generate compliance status preview."""
+        self._generate_generic_preview('compliance', 'Compliance Status')
+
+    def _generate_generic_preview(self, report_key, title):
+        """Generate a generic preview for reports that don't have custom preview logic yet."""
+        text_widget = self.report_widgets[report_key]['preview']
+        text_widget.config(state=tk.NORMAL)
+        text_widget.delete('1.0', tk.END)
+
+        text_widget.insert(tk.END, f"{title} Report\n", 'header')
+        text_widget.insert(tk.END, "=" * 50 + "\n\n", 'divider')
+
+        # Show enabled sections
+        enabled = [k for k, v in self.report_widgets[report_key]['sections'].items() if v.get()]
+        text_widget.insert(tk.END, "Enabled Sections:\n", 'subheader')
+        for section in enabled:
+            text_widget.insert(tk.END, f"  - {section}\n", 'success')
+
+        if self.df.empty and self.lifecycle_df.empty:
+            text_widget.insert(tk.END, "\nNo scan data loaded.\n", 'warning')
+            text_widget.insert(tk.END, "Load data and click 'Generate Preview' again.\n")
+        else:
+            text_widget.insert(tk.END, "\nPreview will be generated from current data.\n")
+            text_widget.insert(tk.END, "Click 'Export PDF' to generate the full report.\n", 'success')
+            text_widget.insert(tk.END, "\nAll data will be included - no truncation.\n", 'success')
+
+        text_widget.config(state=tk.DISABLED)
+
+    def _build_database_browser_tab(self, parent=None):
         """Build the Database Browser tab for table management."""
-        db_frame = ttk.Frame(self.notebook)
-        self.notebook.add(db_frame, text="Database")
+        target_notebook = parent if parent else self.notebook
+        db_frame = ttk.Frame(target_notebook)
+        target_notebook.add(db_frame, text="Database")
         self.db_browser_frame = db_frame
 
         # Header frame
@@ -3171,6 +3534,58 @@ class NessusHistoryTrackerApp:
 
             # Parse POAM file immediately
             self._load_poam_file()
+
+    # === Clear Data Source Methods ===
+
+    def _clear_existing_db(self):
+        """Clear the selected existing database."""
+        self.existing_db_path = None
+        self.existing_db_label.config(text="None", foreground="gray")
+        self._log("Cleared existing database selection")
+
+    def _clear_archives(self):
+        """Clear all selected archive files."""
+        self.archive_paths = []
+        self.archives_label.config(text="None", foreground="gray")
+        self._log("Cleared archive selection")
+
+    def _clear_plugins_db(self):
+        """Clear the selected plugins database."""
+        self.plugins_db_path = None
+        self.plugins_dict = {}
+        self.plugins_label.config(text="None", foreground="gray")
+        self._log("Cleared plugins database selection")
+
+    def _clear_opdir_file(self):
+        """Clear the selected OPDIR file and data."""
+        self.opdir_file_path = None
+        self.opdir_df = pd.DataFrame()
+        self.opdir_label.config(text="None", foreground="gray")
+        self._log("Cleared OPDIR file selection")
+
+    def _clear_iavm_file(self):
+        """Clear the selected IAVM file and data."""
+        self.iavm_file_path = None
+        self.iavm_df = pd.DataFrame()
+        self.iavm_label.config(text="None", foreground="gray")
+        self._log("Cleared IAVM file selection")
+
+    def _clear_stig_files(self):
+        """Clear all selected STIG files and data."""
+        self.stig_file_paths = []
+        self.stig_df = pd.DataFrame()
+        self.filtered_stig_df = pd.DataFrame()
+        self.stig_label.config(text="None", foreground="gray")
+        self._log("Cleared STIG files selection")
+
+    def _clear_poam_file(self):
+        """Clear the selected POAM file and data."""
+        self.poam_file_path = None
+        self.poam_df = pd.DataFrame()
+        self.filtered_poam_df = pd.DataFrame()
+        self.poam_entries = []
+        self.poam_label.config(text="None", foreground="gray")
+        self._log("Cleared POAM file selection")
 
     def _load_poam_file(self):
         """Load and parse selected POAM file with column mapping validation."""
