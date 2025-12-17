@@ -3647,6 +3647,7 @@ class NessusHistoryTrackerApp:
             'ongoing_by_env': {},
             'new_findings': [],          # All new findings in period
             'closed_findings': [],       # All closed findings in period
+            'active_findings': [],       # All currently active findings
             'environments': []           # List of environments found
         }
 
@@ -3931,8 +3932,20 @@ class NessusHistoryTrackerApp:
                 'environment': row.get(env_col, 'Unknown')
             })
 
-        # Ongoing summary - totals
+        # All currently active findings - NO LIMIT
         final_active = df[df['status'] == 'Active']
+        for _, row in final_active.iterrows():
+            result['active_findings'].append({
+                'hostname': row['hostname'],
+                'plugin_id': row['plugin_id'],
+                'plugin_name': row['plugin_name'],
+                'severity': fmt_sev(row.get('severity_text', 'Unknown')),
+                'first_seen': row['first_seen'].strftime('%Y-%m-%d'),
+                'last_seen': row['last_seen'].strftime('%Y-%m-%d'),
+                'environment': row.get(env_col, 'Unknown')
+            })
+
+        # Ongoing summary - totals
         result['ongoing_summary'] = {
             'total_active': len(final_active),
             'total_resolved_period': len(closed_in_period),
@@ -4194,6 +4207,44 @@ class NessusHistoryTrackerApp:
         else:
             self.report_text.insert(tk.END, "  No reappearances detected in this period\n", 'success')
 
+        self.report_text.insert(tk.END, "\n")
+
+        # === ACTIVE FINDINGS ===
+        active_findings = data.get('active_findings', [])
+        self.report_text.insert(tk.END, f"ACTIVE FINDINGS ({len(active_findings)})\n", 'subheader')
+        self.report_text.insert(tk.END, "-" * 90 + "\n", 'divider')
+
+        if active_findings:
+            # Group by last_seen date first, then environment
+            active_by_date = {}
+            for item in active_findings:
+                date = item.get('last_seen', 'Unknown')
+                if date not in active_by_date:
+                    active_by_date[date] = {}
+                env = item.get('environment', 'Unknown')
+                if env not in active_by_date[date]:
+                    active_by_date[date][env] = []
+                active_by_date[date][env].append(item)
+
+            for date in sorted(active_by_date.keys(), reverse=True):  # Most recent first
+                date_items = active_by_date[date]
+                total_for_date = sum(len(items) for items in date_items.values())
+                self.report_text.insert(tk.END, f"\n  {date} ({total_for_date} active):\n", 'subheader')
+
+                for env in sorted(date_items.keys()):
+                    items = date_items[env]
+                    # Sort by severity
+                    items.sort(key=lambda x: sev_order.get(x.get('severity', 'Unk'), 5))
+                    self.report_text.insert(tk.END, f"    [{env}] ({len(items)}):\n", 'section')
+                    for item in items:
+                        sev_label = self._format_severity_label(item['severity'])
+                        self.report_text.insert(tk.END,
+                            f"      {sev_label}{item['plugin_name']}\n", 'warning')
+                        self.report_text.insert(tk.END,
+                            f"             {item['hostname']} | First: {item['first_seen']}\n", 'divider')
+        else:
+            self.report_text.insert(tk.END, "  No active findings\n", 'success')
+
         self.report_text.insert(tk.END, "\n" + "=" * 90 + "\n", 'divider')
         self.report_text.insert(tk.END, "End of Report\n", 'divider')
 
@@ -4335,6 +4386,12 @@ class NessusHistoryTrackerApp:
                     repops_df = pd.DataFrame(report_data['repops'])
                     repops_df.to_excel(writer, sheet_name='Reappearances', index=False)
                     self._autosize_excel_columns(writer.sheets['Reappearances'])
+
+                # Active findings (all, no limit)
+                if report_data.get('active_findings'):
+                    active_df = pd.DataFrame(report_data['active_findings'])
+                    active_df.to_excel(writer, sheet_name='Active Findings', index=False)
+                    self._autosize_excel_columns(writer.sheets['Active Findings'])
 
             self._show_export_success(filepath)
             self._log(f"Exported resolution report to {filepath}")
@@ -4670,6 +4727,51 @@ Closed Findings:           {len(report_data.get('closed_findings', [])):,}
 
                         table = ax.table(cellText=table_data, loc='center', cellLoc='left',
                                         colWidths=[0.08, 0.18, 0.34, 0.08, 0.15, 0.15])
+                        table.auto_set_font_size(False)
+                        table.set_fontsize(8)
+                        table.scale(1, 1.5)
+
+                        # Style all cells with dark background
+                        for i in range(len(table_data)):
+                            for j in range(len(table_data[0])):
+                                cell = table[(i, j)]
+                                cell.set_text_props(color='white')
+                                if i == 0:
+                                    cell.set_facecolor('#3a3a3a')
+                                    cell.set_text_props(fontweight='bold', color='white')
+                                else:
+                                    cell.set_facecolor('#2d2d2d')
+
+                        pdf.savefig(fig)
+                        plt.close(fig)
+
+                # === PAGE 7: Active Findings Details ===
+                active_findings = report_data.get('active_findings', [])
+                if active_findings:
+                    items_per_page = 25
+                    for page_start in range(0, len(active_findings), items_per_page):
+                        page_items = active_findings[page_start:page_start + items_per_page]
+
+                        fig, ax = plt.subplots(figsize=(11, 8.5))
+                        ax.axis('off')
+                        page_num = page_start // items_per_page + 1
+                        total_pages = (len(active_findings) - 1) // items_per_page + 1
+                        ax.set_title(f'Active Findings ({len(active_findings)} total) - Page {page_num}/{total_pages}',
+                                    fontweight='bold', fontsize=12, pad=20)
+
+                        table_data = [['Sev', 'Hostname', 'Plugin Name', 'First', 'Last', 'Env']]
+                        for item in page_items:
+                            table_data.append([
+                                item['severity'],
+                                item['hostname'][:20] + ('...' if len(item['hostname']) > 20 else ''),
+                                item['plugin_name'][:28] + ('...' if len(item['plugin_name']) > 28 else ''),
+                                item['first_seen'],
+                                item['last_seen'],
+                                item.get('environment', 'Unknown')[:10]
+                            ])
+
+                        table = ax.table(cellText=table_data, loc='center', cellLoc='left',
+                                        colWidths=[0.08, 0.18, 0.32, 0.14, 0.14, 0.12])
                         table.auto_set_font_size(False)
                         table.set_fontsize(8)
                         table.scale(1, 1.5)
