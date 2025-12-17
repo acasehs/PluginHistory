@@ -4596,10 +4596,16 @@ Closed Findings:           {len(report_data.get('closed_findings', [])):,}
                         table.set_fontsize(8)
                         table.scale(1, 1.5)
 
-                        # Style header row
-                        for j in range(len(table_data[0])):
-                            table[(0, j)].set_facecolor('#3a3a3a')
-                            table[(0, j)].set_text_props(fontweight='bold')
+                        # Style all cells with dark background
+                        for i in range(len(table_data)):
+                            for j in range(len(table_data[0])):
+                                cell = table[(i, j)]
+                                cell.set_text_props(color='white')
+                                if i == 0:
+                                    cell.set_facecolor('#3a3a3a')
+                                    cell.set_text_props(fontweight='bold', color='white')
+                                else:
+                                    cell.set_facecolor('#2d2d2d')
 
                         pdf.savefig(fig)
                         plt.close(fig)
@@ -4635,9 +4641,16 @@ Closed Findings:           {len(report_data.get('closed_findings', [])):,}
                         table.set_fontsize(8)
                         table.scale(1, 1.5)
 
-                        for j in range(len(table_data[0])):
-                            table[(0, j)].set_facecolor('#3a3a3a')
-                            table[(0, j)].set_text_props(fontweight='bold')
+                        # Style all cells with dark background
+                        for i in range(len(table_data)):
+                            for j in range(len(table_data[0])):
+                                cell = table[(i, j)]
+                                cell.set_text_props(color='white')
+                                if i == 0:
+                                    cell.set_facecolor('#3a3a3a')
+                                    cell.set_text_props(fontweight='bold', color='white')
+                                else:
+                                    cell.set_facecolor('#2d2d2d')
 
                         pdf.savefig(fig)
                         plt.close(fig)
@@ -5285,9 +5298,16 @@ By Severity (Active):
                     table.set_fontsize(8)
                     table.scale(1, 1.5)
 
-                    for j in range(len(table_data[0])):
-                        table[(0, j)].set_facecolor('#3a3a3a')
-                        table[(0, j)].set_text_props(fontweight='bold')
+                    # Style all cells with dark background
+                    for i in range(len(table_data)):
+                        for j in range(len(table_data[0])):
+                            cell = table[(i, j)]
+                            cell.set_text_props(color='white')
+                            if i == 0:
+                                cell.set_facecolor('#3a3a3a')
+                                cell.set_text_props(fontweight='bold', color='white')
+                            else:
+                                cell.set_facecolor('#2d2d2d')
                 else:
                     ax.text(0.5, 0.5, 'No overdue findings - Great job!', ha='center', va='center',
                            fontsize=14, color='#28a745')
@@ -5498,9 +5518,16 @@ RECOMMENDATIONS
                         table.set_fontsize(8)
                         table.scale(1, 1.5)
 
-                        for j in range(len(table_data[0])):
-                            table[(0, j)].set_facecolor('#3a3a3a')
-                            table[(0, j)].set_text_props(fontweight='bold')
+                        # Style all cells with dark background
+                        for i in range(len(table_data)):
+                            for j in range(len(table_data[0])):
+                                cell = table[(i, j)]
+                                cell.set_text_props(color='white')
+                                if i == 0:
+                                    cell.set_facecolor('#3a3a3a')
+                                    cell.set_text_props(fontweight='bold', color='white')
+                                else:
+                                    cell.set_facecolor('#2d2d2d')
 
                         pdf.savefig(fig)
                         plt.close(fig)
@@ -5957,9 +5984,16 @@ Avg New/Month: {monthly_new.mean():.0f}
                         table.set_fontsize(8)
                         table.scale(1, 1.5)
 
-                        for j in range(len(table_data[0])):
-                            table[(0, j)].set_facecolor('#3a3a3a')
-                            table[(0, j)].set_text_props(fontweight='bold')
+                        # Style all cells with dark background
+                        for i in range(len(table_data)):
+                            for j in range(len(table_data[0])):
+                                cell = table[(i, j)]
+                                cell.set_text_props(color='white')
+                                if i == 0:
+                                    cell.set_facecolor('#3a3a3a')
+                                    cell.set_text_props(fontweight='bold', color='white')
+                                else:
+                                    cell.set_facecolor('#2d2d2d')
 
                         pdf.savefig(fig)
                         plt.close(fig)
