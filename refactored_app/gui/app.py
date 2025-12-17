@@ -2080,13 +2080,13 @@ class NessusHistoryTrackerApp:
         config_frame = ttk.LabelFrame(left_frame, text="OPDIR Generator Configuration", padding=10)
         config_frame.pack(fill=tk.X, padx=5, pady=5)
 
-        # OPDIR Reference File
+        # OPDIR Reference Status (uses already-loaded data)
         ref_frame = ttk.Frame(config_frame)
         ref_frame.pack(fill=tk.X, pady=2)
         ttk.Label(ref_frame, text="OPDIR Reference:").pack(side=tk.LEFT)
-        self.opdir_gen_ref_var = tk.StringVar()
-        ttk.Entry(ref_frame, textvariable=self.opdir_gen_ref_var, width=40).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
-        ttk.Button(ref_frame, text="Browse", command=self._browse_opdir_reference).pack(side=tk.LEFT)
+        self.opdir_ref_status_label = ttk.Label(ref_frame, text="Not loaded - load via Master Tracker tab",
+                                                 foreground='orange')
+        self.opdir_ref_status_label.pack(side=tk.LEFT, padx=5)
 
         # PDF Template File
         template_frame = ttk.Frame(config_frame)
@@ -2114,24 +2114,51 @@ class NessusHistoryTrackerApp:
         ttk.Button(config_buttons, text="Edit Templates",
                   command=self._edit_opdir_templates).pack(side=tk.LEFT, padx=5)
 
+        # IAVA Paste Filter Section
+        paste_frame = ttk.LabelFrame(left_frame, text="IAVA Filter (paste from Excel)", padding=10)
+        paste_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        paste_instruction = ttk.Label(paste_frame,
+                                      text="Paste IAVA/IAVB numbers (one per line) to filter the list below:",
+                                      foreground='gray')
+        paste_instruction.pack(anchor=tk.W)
+
+        paste_text_frame = ttk.Frame(paste_frame)
+        paste_text_frame.pack(fill=tk.X, pady=5)
+
+        self.opdir_iava_paste_text = tk.Text(paste_text_frame, height=4, width=40)
+        paste_scroll = ttk.Scrollbar(paste_text_frame, orient=tk.VERTICAL, command=self.opdir_iava_paste_text.yview)
+        self.opdir_iava_paste_text.configure(yscrollcommand=paste_scroll.set)
+        self.opdir_iava_paste_text.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        paste_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        paste_buttons = ttk.Frame(paste_frame)
+        paste_buttons.pack(fill=tk.X, pady=2)
+        ttk.Button(paste_buttons, text="Apply Filter",
+                  command=self._apply_iava_filter).pack(side=tk.LEFT, padx=5)
+        ttk.Button(paste_buttons, text="Clear Filter",
+                  command=self._clear_iava_filter).pack(side=tk.LEFT, padx=5)
+        self.opdir_filter_status = ttk.Label(paste_buttons, text="", foreground='gray')
+        self.opdir_filter_status.pack(side=tk.LEFT, padx=10)
+
         # IAVM Selection from current data
-        iavm_frame = ttk.LabelFrame(left_frame, text="IAVM Selection (from loaded data)", padding=10)
+        iavm_frame = ttk.LabelFrame(left_frame, text="Active IAVMs (from loaded data)", padding=10)
         iavm_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
         # IAVM list with checkboxes
         iavm_list_frame = ttk.Frame(iavm_frame)
         iavm_list_frame.pack(fill=tk.BOTH, expand=True)
 
-        self.opdir_iavm_tree = ttk.Treeview(iavm_list_frame, columns=('iavm', 'hosts', 'severity', 'status'),
+        self.opdir_iavm_tree = ttk.Treeview(iavm_list_frame, columns=('iavm', 'hosts', 'severity', 'opdir'),
                                             show='headings', selectmode='extended')
         self.opdir_iavm_tree.heading('iavm', text='IAVM')
         self.opdir_iavm_tree.heading('hosts', text='Hosts')
         self.opdir_iavm_tree.heading('severity', text='Severity')
-        self.opdir_iavm_tree.heading('status', text='Status')
+        self.opdir_iavm_tree.heading('opdir', text='OPDIR #')
         self.opdir_iavm_tree.column('iavm', width=120)
         self.opdir_iavm_tree.column('hosts', width=50)
         self.opdir_iavm_tree.column('severity', width=70)
-        self.opdir_iavm_tree.column('status', width=80)
+        self.opdir_iavm_tree.column('opdir', width=80)
 
         iavm_scroll = ttk.Scrollbar(iavm_list_frame, orient=tk.VERTICAL, command=self.opdir_iavm_tree.yview)
         self.opdir_iavm_tree.configure(yscrollcommand=iavm_scroll.set)
@@ -2147,6 +2174,8 @@ class NessusHistoryTrackerApp:
                   command=lambda: self._select_all_iavms(True)).pack(side=tk.LEFT, padx=5)
         ttk.Button(iavm_buttons, text="Clear Selection",
                   command=lambda: self._select_all_iavms(False)).pack(side=tk.LEFT, padx=5)
+        self.opdir_iavm_count_label = ttk.Label(iavm_buttons, text="", foreground='gray')
+        self.opdir_iavm_count_label.pack(side=tk.LEFT, padx=10)
 
         # Right panel - Generation and output
         right_frame = ttk.Frame(main_pane)
@@ -2179,11 +2208,19 @@ class NessusHistoryTrackerApp:
         self.opdir_gen_log.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         log_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
-        # Note about INI files location
+        # Notes section
         note_frame = ttk.Frame(right_frame)
         note_frame.pack(fill=tk.X, padx=5, pady=5)
-        note_text = "Note: Configuration INI files are stored in: refactored_app/config/"
-        ttk.Label(note_frame, text=note_text, foreground='gray').pack(anchor=tk.W)
+        notes = [
+            "• Configuration INI files: refactored_app/config/",
+            "• Evaluation logs: Home directory (configurable in Settings)",
+            "• OPDIR data: Uses reference loaded in Master Tracker tab"
+        ]
+        for note in notes:
+            ttk.Label(note_frame, text=note, foreground='gray').pack(anchor=tk.W)
+
+        # Store the IAVA filter set
+        self._opdir_iava_filter = set()
 
     def _build_report_subtab(self, report_key, config):
         """Build a single report subtab with options, preview, and export."""
@@ -7412,15 +7449,6 @@ Avg New/Month: {monthly_new.mean():.0f}
             messagebox.showerror("Export Error", f"Failed to export: {e}")
 
     # OPDIR Generator Helper Methods
-    def _browse_opdir_reference(self):
-        """Browse for OPDIR reference file."""
-        filepath = filedialog.askopenfilename(
-            title="Select OPDIR Reference File",
-            filetypes=[("Excel/CSV", "*.xlsx *.xls *.csv"), ("All files", "*.*")]
-        )
-        if filepath:
-            self.opdir_gen_ref_var.set(filepath)
-            self._opdir_log(f"Selected reference file: {os.path.basename(filepath)}")
 
     def _browse_opdir_template(self):
         """Browse for PDF template file."""
@@ -7460,54 +7488,258 @@ Avg New/Month: {monthly_new.mean():.0f}
                                "Please ensure opdir_generator.py is in the project root.")
 
     def _edit_opdir_poc_info(self):
-        """Edit POC information for OPDIR generator."""
+        """Edit POC information for OPDIR generator using dialog."""
         config_dir = os.path.join(os.path.dirname(__file__), '..', 'config')
         predefined_file = os.path.join(config_dir, 'predefined.ini')
 
+        # Load existing config
+        import configparser
+        config = configparser.ConfigParser()
         if os.path.exists(predefined_file):
-            # Open with default editor
-            import subprocess
-            import sys
-            if sys.platform == 'win32':
-                os.startfile(predefined_file)
-            elif sys.platform == 'darwin':
-                subprocess.call(['open', predefined_file])
-            else:
-                subprocess.call(['xdg-open', predefined_file])
-            self._opdir_log(f"Opened {predefined_file} for editing")
-        else:
-            messagebox.showinfo("Config Not Found",
-                               f"Configuration file not found:\n{predefined_file}\n\n"
-                               "Use the standalone generator to create initial config.")
+            config.read(predefined_file)
+
+        # Ensure POC_INFO section exists
+        if not config.has_section('POC_INFO'):
+            config.add_section('POC_INFO')
+
+        # Create dialog
+        dialog = tk.Toplevel(self.window)
+        dialog.title("POC Information")
+        dialog.geometry("550x550")
+        dialog.resizable(False, True)
+        dialog.transient(self.window)
+        dialog.grab_set()
+
+        # Center the dialog
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() - dialog.winfo_width()) // 2
+        y = (dialog.winfo_screenheight() - dialog.winfo_height()) // 2
+        dialog.geometry(f"+{x}+{y}")
+
+        # Create scrollable frame
+        canvas = tk.Canvas(dialog)
+        scrollbar = ttk.Scrollbar(dialog, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Title
+        ttk.Label(scrollable_frame, text="Point of Contact Information",
+                 font=("Arial", 12, "bold")).grid(row=0, column=0, columnspan=2, pady=(10, 20))
+
+        # Field definitions
+        fields = [
+            ("RNOSC:", "rnosc"),
+            ("Command/Unit:", "command_unit"),
+            ("Requestor:", "requestor"),
+            ("Requestor Phone:", "requestor_phone"),
+            ("Requestor Email:", "requestor_email"),
+            ("Local IAM:", "local_iam"),
+            ("Local IAM Phone:", "local_iam_phone"),
+            ("Local IAM Email:", "local_iam_email"),
+            ("Regional IAM:", "regional_iam"),
+            ("Regional IAM Phone:", "regional_iam_phone"),
+            ("Regional IAM Email:", "regional_iam_email"),
+        ]
+
+        entries = {}
+        for row, (label_text, config_key) in enumerate(fields, start=1):
+            ttk.Label(scrollable_frame, text=label_text).grid(row=row, column=0, sticky="w", padx=(10, 10), pady=5)
+            entry = ttk.Entry(scrollable_frame, width=40)
+            entry.insert(0, config.get('POC_INFO', config_key, fallback=''))
+            entry.grid(row=row, column=1, sticky="ew", padx=(0, 10), pady=5)
+            entries[config_key] = entry
+
+        scrollable_frame.columnconfigure(1, weight=1)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # Button frame
+        button_frame = ttk.Frame(dialog)
+        button_frame.pack(side="bottom", fill="x", padx=15, pady=15)
+
+        def save_poc():
+            for key, entry in entries.items():
+                config.set('POC_INFO', key, entry.get())
+            # Ensure config directory exists
+            os.makedirs(config_dir, exist_ok=True)
+            with open(predefined_file, 'w') as f:
+                config.write(f)
+            self._opdir_log("Saved POC information")
+            dialog.destroy()
+
+        ttk.Button(button_frame, text="Save", command=save_poc).pack(side="left", padx=5)
+        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side="left", padx=5)
 
     def _edit_opdir_templates(self):
-        """Edit narrative templates for OPDIR generator."""
+        """Edit narrative templates for OPDIR generator using dialog."""
         config_dir = os.path.join(os.path.dirname(__file__), '..', 'config')
         config_file = os.path.join(config_dir, 'config.ini')
 
+        # Load existing config
+        import configparser
+        config = configparser.ConfigParser()
         if os.path.exists(config_file):
-            import subprocess
-            import sys
-            if sys.platform == 'win32':
-                os.startfile(config_file)
-            elif sys.platform == 'darwin':
-                subprocess.call(['open', config_file])
-            else:
-                subprocess.call(['xdg-open', config_file])
-            self._opdir_log(f"Opened {config_file} for editing")
+            config.read(config_file)
+
+        # Ensure NARRATIVE_TEMPLATES section exists with defaults
+        if not config.has_section('NARRATIVE_TEMPLATES'):
+            config.add_section('NARRATIVE_TEMPLATES')
+
+        defaults = {
+            'reason_cannot_complete': 'Patching requires thorough testing and coordination with operational requirements to ensure system availability during critical mission periods.',
+            'operational_impact': 'Disconnecting these assets from the MCEN would significantly impact mission operations and disrupt critical business functions.',
+            'plan_of_action': '1. Coordinate with system owners to schedule maintenance window\n2. Test patches in development environment\n3. Apply patches during approved maintenance window\n4. Verify system functionality post-patching\n5. Conduct vulnerability scan to confirm remediation',
+            'timeline_milestones': 'Week 1: Coordinate maintenance scheduling\nWeek 2-3: Test patches in development environment\nWeek 4: Apply patches during maintenance window\nWeek 5: Post-patch verification and vulnerability scanning',
+            'vulnerability_detection_method': 'Continuous vulnerability scanning using Nessus and regular compliance assessments. System monitoring through HBSS and network monitoring tools for signs of compromise.',
+            'temporary_mitigations': 'Network segmentation and access controls are in place. Intrusion detection systems are monitoring for suspicious activity. Patch management process ensures timely application of security updates.'
+        }
+
+        # Create dialog
+        dialog = tk.Toplevel(self.window)
+        dialog.title("Narrative Templates")
+        dialog.geometry("750x700")
+        dialog.resizable(True, True)
+        dialog.transient(self.window)
+        dialog.grab_set()
+
+        # Center the dialog
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() - dialog.winfo_width()) // 2
+        y = (dialog.winfo_screenheight() - dialog.winfo_height()) // 2
+        dialog.geometry(f"+{x}+{y}")
+
+        # Main frame with scrollbar
+        main_frame = ttk.Frame(dialog)
+        main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        canvas = tk.Canvas(main_frame)
+        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Title
+        ttk.Label(scrollable_frame, text="Narrative Templates",
+                 font=("Arial", 12, "bold")).grid(row=0, column=0, columnspan=2, pady=(10, 20))
+
+        # Template fields
+        templates = [
+            ("Reason Cannot Complete:", "reason_cannot_complete", 4),
+            ("Operational Impact:", "operational_impact", 4),
+            ("Plan of Action:", "plan_of_action", 6),
+            ("Timeline/Milestones:", "timeline_milestones", 6),
+            ("Vulnerability Detection Method:", "vulnerability_detection_method", 4),
+            ("Temporary Mitigations:", "temporary_mitigations", 4),
+        ]
+
+        entries = {}
+        for row, (label_text, config_key, height) in enumerate(templates, start=1):
+            ttk.Label(scrollable_frame, text=label_text).grid(row=row*2-1, column=0, sticky="nw", padx=(10, 10), pady=(10, 0))
+            text_widget = tk.Text(scrollable_frame, height=height, width=70, wrap=tk.WORD)
+            current_value = config.get('NARRATIVE_TEMPLATES', config_key, fallback=defaults.get(config_key, ''))
+            text_widget.insert(tk.END, current_value)
+            text_widget.grid(row=row*2, column=0, sticky="ew", padx=10, pady=(0, 5))
+            entries[config_key] = text_widget
+
+        scrollable_frame.columnconfigure(0, weight=1)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # Button frame
+        button_frame = ttk.Frame(dialog)
+        button_frame.pack(side="bottom", fill="x", padx=15, pady=15)
+
+        def save_templates():
+            for key, text_widget in entries.items():
+                content = text_widget.get("1.0", tk.END).strip()
+                config.set('NARRATIVE_TEMPLATES', key, content)
+            # Ensure config directory exists
+            os.makedirs(config_dir, exist_ok=True)
+            with open(config_file, 'w') as f:
+                config.write(f)
+            self._opdir_log("Saved narrative templates")
+            dialog.destroy()
+
+        def reset_defaults():
+            for key, text_widget in entries.items():
+                text_widget.delete("1.0", tk.END)
+                text_widget.insert(tk.END, defaults.get(key, ''))
+
+        ttk.Button(button_frame, text="Save", command=save_templates).pack(side="left", padx=5)
+        ttk.Button(button_frame, text="Reset to Defaults", command=reset_defaults).pack(side="left", padx=5)
+        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side="left", padx=5)
+
+    def _apply_iava_filter(self):
+        """Apply the IAVA paste filter to the IAVM list."""
+        paste_content = self.opdir_iava_paste_text.get("1.0", tk.END).strip()
+        if not paste_content:
+            self._clear_iava_filter()
+            return
+
+        # Parse pasted IAVA numbers
+        import re
+        iava_pattern = r'(\d{4}-[AB]-\d{4})|([AB]-\d{4})'
+        matches = re.findall(iava_pattern, paste_content)
+
+        # Build filter set - handle both full format and suffix-only
+        self._opdir_iava_filter = set()
+        for match in matches:
+            full_match, suffix_match = match
+            if full_match:
+                self._opdir_iava_filter.add(full_match.upper())
+            elif suffix_match:
+                self._opdir_iava_filter.add(suffix_match.upper())
+
+        if self._opdir_iava_filter:
+            self.opdir_filter_status.config(text=f"Filter: {len(self._opdir_iava_filter)} IAVAs")
+            self._opdir_log(f"Applied filter for {len(self._opdir_iava_filter)} IAVA numbers")
+            self._refresh_opdir_iavms()
         else:
-            messagebox.showinfo("Config Not Found",
-                               f"Configuration file not found:\n{config_file}\n\n"
-                               "Use the standalone generator to create initial config.")
+            self._opdir_log("No valid IAVA numbers found in pasted text")
+            self.opdir_filter_status.config(text="No valid IAVAs found")
+
+    def _clear_iava_filter(self):
+        """Clear the IAVA paste filter."""
+        self._opdir_iava_filter = set()
+        self.opdir_iava_paste_text.delete("1.0", tk.END)
+        self.opdir_filter_status.config(text="")
+        self._opdir_log("IAVA filter cleared")
+        self._refresh_opdir_iavms()
 
     def _refresh_opdir_iavms(self):
-        """Refresh the IAVM list from current lifecycle data."""
+        """Refresh the IAVM list from current lifecycle data (active findings only)."""
         # Clear existing items
         for item in self.opdir_iavm_tree.get_children():
             self.opdir_iavm_tree.delete(item)
 
+        # Update OPDIR reference status
+        if not self.opdir_df.empty:
+            self.opdir_ref_status_label.config(
+                text=f"Loaded: {len(self.opdir_df)} OPDIR mappings",
+                foreground='green'
+            )
+        else:
+            self.opdir_ref_status_label.config(
+                text="Not loaded - load via Master Tracker tab",
+                foreground='orange'
+            )
+
         if self.lifecycle_df.empty:
             self._opdir_log("No lifecycle data loaded. Process archives first.")
+            self.opdir_iavm_count_label.config(text="No data")
             return
 
         # Extract unique IAVMs from lifecycle data
@@ -7515,26 +7747,60 @@ Avg New/Month: {monthly_new.mean():.0f}
             self._opdir_log("No IAVX data found in lifecycle")
             return
 
+        # Build OPDIR lookup from loaded data
+        opdir_lookup = {}
+        if not self.opdir_df.empty:
+            for _, row in self.opdir_df.iterrows():
+                iavab = str(row.get('iavab', '') or '').strip().upper()
+                opdir_num = str(row.get('opdir_number', '') or row.get('OPDIR NUMBER', '') or '').strip()
+                if iavab and opdir_num:
+                    opdir_lookup[iavab] = opdir_num
+                    # Also add suffix-only lookup
+                    if '-' in iavab:
+                        suffix = iavab.split('-', 1)[1] if iavab.count('-') >= 2 else iavab
+                        if suffix not in opdir_lookup:
+                            opdir_lookup[suffix] = opdir_num
+
         iavm_data = {}
+        import re
+        iavx_pattern = r'IAV[AB]:\d{4}-[AB]-\d{4}|\d{4}-[AB]-\d{4}'
+
         for idx, row in self.lifecycle_df.iterrows():
+            # Filter to active findings only (exclude Resolved)
+            status = row.get('status', 'Active')
+            if status == 'Resolved':
+                continue
+
             iavx = row.get('iavx', '')
             if not iavx or pd.isna(iavx):
                 continue
 
             # Parse IAVX references
-            import re
-            iavx_pattern = r'IAV[AB]:\d{4}-[AB]-\d{4}|\d{4}-[AB]-\d{4}'
             matches = re.findall(iavx_pattern, str(iavx))
 
             for iavm in matches:
                 # Clean up the IAVM format
-                iavm_clean = iavm.replace('IAVA:', '').replace('IAVB:', '')
+                iavm_clean = iavm.replace('IAVA:', '').replace('IAVB:', '').upper()
+
+                # Apply IAVA filter if set
+                if self._opdir_iava_filter:
+                    # Check if full match or suffix match
+                    suffix = iavm_clean.split('-', 1)[1] if iavm_clean.count('-') >= 2 else iavm_clean
+                    if iavm_clean not in self._opdir_iava_filter and suffix not in self._opdir_iava_filter:
+                        continue
 
                 if iavm_clean not in iavm_data:
+                    # Look up OPDIR number
+                    opdir_num = opdir_lookup.get(iavm_clean, '')
+                    if not opdir_num:
+                        # Try suffix lookup
+                        suffix = iavm_clean.split('-', 1)[1] if iavm_clean.count('-') >= 2 else iavm_clean
+                        opdir_num = opdir_lookup.get(suffix, '')
+
                     iavm_data[iavm_clean] = {
                         'hosts': set(),
                         'severity': row.get('severity_text', 'Unknown'),
-                        'status': row.get('status', 'Active')
+                        'opdir': opdir_num or 'N/A'
                     }
                 hostname = row.get('hostname', '')
                 if hostname:
@@ -7546,10 +7812,14 @@ Avg New/Month: {monthly_new.mean():.0f}
                 iavm,
                 len(data['hosts']),
                 data['severity'],
-                data['status']
+                data['opdir']
             ))
 
-        self._opdir_log(f"Found {len(iavm_data)} unique IAVMs in loaded data")
+        # Update count label
+        total_count = len(iavm_data)
+        filter_note = f" (filtered)" if self._opdir_iava_filter else ""
+        self.opdir_iavm_count_label.config(text=f"Active: {total_count}{filter_note}")
+        self._opdir_log(f"Found {total_count} unique active IAVMs{filter_note}")
 
     def _select_all_iavms(self, select=True):
         """Select or deselect all IAVMs in the tree."""
