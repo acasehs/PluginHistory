@@ -814,9 +814,10 @@ class NessusHistoryTrackerApp:
         cvss_label = tk.Label(cvss_row, text="CVSS:", width=8, bg=self.filter_label_default_bg, fg='white', anchor='w')
         cvss_label.pack(side=tk.LEFT)
         self.filter_labels['cvss'] = cvss_label
-        ttk.Entry(cvss_row, textvariable=self.filter_cvss_min, width=5).pack(side=tk.LEFT, padx=1)
+        # Min box: larger (accommodates values like 0.0-9.9), Max box: smaller but fits 10.0
+        ttk.Entry(cvss_row, textvariable=self.filter_cvss_min, width=5).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
         ttk.Label(cvss_row, text="-").pack(side=tk.LEFT)
-        ttk.Entry(cvss_row, textvariable=self.filter_cvss_max, width=5).pack(side=tk.LEFT, padx=1, fill=tk.X, expand=True)
+        ttk.Entry(cvss_row, textvariable=self.filter_cvss_max, width=6).pack(side=tk.LEFT, padx=1)
 
         # Left Column Row 4: OPDIR Status
         opdir_row = ttk.Frame(left_col)
