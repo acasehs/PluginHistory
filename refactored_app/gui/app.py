@@ -314,9 +314,9 @@ class NessusHistoryTrackerApp:
         self._build_priority_tab(self.findings_notebook)
         self._build_stig_tab(self.findings_notebook)
 
-        # 3. Analysis group (Timeline, 8 Week Rolling, Risk, Efficiency, Metrics, Advanced)
+        # 3. Core Analysis group (Timeline, 8 Week Rolling, Risk, Efficiency, Metrics)
         analysis_container = ttk.Frame(self.notebook)
-        self.notebook.add(analysis_container, text="Analysis")
+        self.notebook.add(analysis_container, text="Core Analysis")
         self.analysis_notebook = ttk.Notebook(analysis_container)
         self.analysis_notebook.pack(fill=tk.BOTH, expand=True)
 
@@ -325,9 +325,11 @@ class NessusHistoryTrackerApp:
         self._build_risk_tab(self.analysis_notebook)
         self._build_efficiency_tab(self.analysis_notebook)
         self._build_metrics_tab(self.analysis_notebook)
-        self._build_advanced_tab(self.analysis_notebook)
 
-        # 4. Infrastructure group (Hosts, Host Track, Network)
+        # 4. Advanced Analysis (top-level for advanced visualizations)
+        self._build_advanced_tab()
+
+        # 5. Infrastructure group (Hosts, Host Track, Network)
         infra_container = ttk.Frame(self.notebook)
         self.notebook.add(infra_container, text="Infrastructure")
         self.infra_notebook = ttk.Notebook(infra_container)
@@ -337,7 +339,7 @@ class NessusHistoryTrackerApp:
         self._build_host_tracking_tab(self.infra_notebook)
         self._build_network_tab(self.infra_notebook)
 
-        # 5. Compliance group (OPDIR, POA&M, SLA)
+        # 6. Compliance group (OPDIR, POA&M, SLA)
         compliance_container = ttk.Frame(self.notebook)
         self.notebook.add(compliance_container, text="Compliance")
         self.compliance_notebook = ttk.Notebook(compliance_container)
@@ -347,10 +349,10 @@ class NessusHistoryTrackerApp:
         self._build_poam_tab(self.compliance_notebook)
         self._build_sla_tab(self.compliance_notebook)
 
-        # 6. Reporting (will be enhanced with report subtabs)
+        # 7. Reporting (with report subtabs)
         self._build_reporting_tab()
 
-        # 7. Management group (Database, Logging)
+        # 8. Management group (Database, Logging)
         mgmt_container = ttk.Frame(self.notebook)
         self.notebook.add(mgmt_container, text="Management")
         self.mgmt_notebook = ttk.Notebook(mgmt_container)
@@ -1511,7 +1513,7 @@ class NessusHistoryTrackerApp:
         """Build advanced analytics visualization tab with 8 advanced charts."""
         target_notebook = parent if parent else self.notebook
         advanced_frame = ttk.Frame(target_notebook)
-        target_notebook.add(advanced_frame, text="Advanced")
+        target_notebook.add(advanced_frame, text="Advanced Analysis")
         self.advanced_frame = advanced_frame
 
         if HAS_MATPLOTLIB:
