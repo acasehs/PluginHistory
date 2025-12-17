@@ -28,12 +28,21 @@ def migrate_database_schema(conn: sqlite3.Connection) -> List[str]:
     schema_updates = {
         'historical_findings': [
             ('source_file', 'TEXT'),
+            ('port', 'TEXT'),
+            ('protocol', 'TEXT'),
+            ('canonical_hostname', 'TEXT'),
         ],
         'finding_lifecycle': [
             ('source_files', 'TEXT'),
+            ('port', 'TEXT'),
+            ('protocol', 'TEXT'),
+            ('canonical_hostname', 'TEXT'),
         ],
         'info_findings': [
             ('source_file', 'TEXT'),
+            ('port', 'TEXT'),
+            ('protocol', 'TEXT'),
+            ('canonical_hostname', 'TEXT'),
         ],
     }
 
@@ -232,7 +241,10 @@ def create_sqlite_database(filepath: str) -> sqlite3.Connection:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             plugin_id TEXT,
             hostname TEXT,
+            canonical_hostname TEXT,
             ip_address TEXT,
+            port TEXT,
+            protocol TEXT,
             scan_date TEXT,
             scan_file TEXT,
             source_file TEXT,
@@ -254,7 +266,10 @@ def create_sqlite_database(filepath: str) -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS finding_lifecycle (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             hostname TEXT,
+            canonical_hostname TEXT,
             ip_address TEXT,
+            port TEXT,
+            protocol TEXT,
             plugin_id TEXT,
             plugin_name TEXT,
             severity_text TEXT,
@@ -354,6 +369,55 @@ def create_sqlite_database(filepath: str) -> sqlite3.Connection:
             reason TEXT,
             created_date TEXT,
             modified_date TEXT
+        )
+    ''')
+
+    # Plugins table - central storage for plugin metadata
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS plugins (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            plugin_id TEXT UNIQUE NOT NULL,
+            plugin_name TEXT,
+            family TEXT,
+            severity TEXT,
+            severity_value INTEGER,
+            cvss3_base_score REAL,
+            cvss3_temporal_score REAL,
+            cvss2_base_score REAL,
+            cvss_v3_vector TEXT,
+            risk_factor TEXT,
+            synopsis TEXT,
+            description TEXT,
+            solution TEXT,
+            see_also TEXT,
+            cves TEXT,
+            cpe TEXT,
+            exploit_available TEXT,
+            exploit_ease TEXT,
+            exploit_frameworks TEXT,
+            stig_severity TEXT,
+            iavx TEXT,
+            vuln_publication_date TEXT,
+            patch_publication_date TEXT,
+            plugin_publication_date TEXT,
+            plugin_modification_date TEXT,
+            first_observed TEXT,
+            last_observed TEXT,
+            observation_count INTEGER DEFAULT 1
+        )
+    ''')
+
+    # Host aliases table - track hostname aliases (e.g., server1 and server1-mgmt)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS host_aliases (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            canonical_hostname TEXT NOT NULL,
+            alias_hostname TEXT NOT NULL,
+            ip_address TEXT,
+            alias_type TEXT,
+            first_seen TEXT,
+            last_seen TEXT,
+            UNIQUE(canonical_hostname, alias_hostname)
         )
     ''')
 
@@ -651,3 +715,287 @@ def query_database(filepath: str, query: str) -> pd.DataFrame:
         return pd.DataFrame()
     finally:
         conn.close()
+
+
+def save_plugins_to_database(conn: sqlite3.Connection, plugins_df: pd.DataFrame) -> int:
+    """
+    Save plugin metadata to the plugins table.
+
+    Uses INSERT OR REPLACE to update existing plugins with newer data.
+
+    Args:
+        conn: SQLite connection object
+        plugins_df: DataFrame with plugin data
+
+    Returns:
+        Number of plugins saved/updated
+    """
+    if plugins_df.empty:
+        return 0
+
+    cursor = conn.cursor()
+
+    # Prepare data
+    columns = [
+        'plugin_id', 'plugin_name', 'family', 'severity', 'severity_value',
+        'cvss3_base_score', 'cvss3_temporal_score', 'cvss2_base_score', 'cvss_v3_vector',
+        'risk_factor', 'synopsis', 'description', 'solution', 'see_also',
+        'cves', 'cpe', 'exploit_available', 'exploit_ease', 'exploit_frameworks',
+        'stig_severity', 'iavx', 'vuln_publication_date', 'patch_publication_date',
+        'plugin_publication_date', 'plugin_modification_date'
+    ]
+
+    count = 0
+    scan_date = datetime.now().strftime('%Y-%m-%d')
+
+    for _, row in plugins_df.iterrows():
+        plugin_id = str(row.get('plugin_id', ''))
+        if not plugin_id:
+            continue
+
+        # Check if plugin exists
+        cursor.execute("SELECT first_observed, observation_count FROM plugins WHERE plugin_id = ?", (plugin_id,))
+        existing = cursor.fetchone()
+
+        if existing:
+            first_observed = existing[0]
+            observation_count = existing[1] + 1
+        else:
+            first_observed = scan_date
+            observation_count = 1
+
+        # Build values dict
+        values = {col: row.get(col, '') for col in columns if col in row.index}
+        values['plugin_id'] = plugin_id
+        values['first_observed'] = first_observed
+        values['last_observed'] = scan_date
+        values['observation_count'] = observation_count
+
+        # Use INSERT OR REPLACE
+        cols = ', '.join(values.keys())
+        placeholders = ', '.join(['?' for _ in values])
+        sql = f"INSERT OR REPLACE INTO plugins ({cols}) VALUES ({placeholders})"
+
+        try:
+            cursor.execute(sql, list(values.values()))
+            count += 1
+        except Exception as e:
+            print(f"Error saving plugin {plugin_id}: {e}")
+
+    conn.commit()
+    return count
+
+
+def save_host_aliases_to_database(conn: sqlite3.Connection, aliases: List[Dict[str, str]]) -> int:
+    """
+    Save host aliases to the host_aliases table.
+
+    Args:
+        conn: SQLite connection object
+        aliases: List of dictionaries with keys:
+                 canonical_hostname, alias_hostname, ip_address, alias_type
+
+    Returns:
+        Number of aliases saved
+    """
+    if not aliases:
+        return 0
+
+    cursor = conn.cursor()
+    scan_date = datetime.now().strftime('%Y-%m-%d')
+    count = 0
+
+    for alias in aliases:
+        canonical = alias.get('canonical_hostname', '')
+        alias_name = alias.get('alias_hostname', '')
+        ip_address = alias.get('ip_address', '')
+        alias_type = alias.get('alias_type', 'detected')
+
+        if not canonical or not alias_name or canonical == alias_name:
+            continue
+
+        # Check if alias exists
+        cursor.execute(
+            "SELECT first_seen FROM host_aliases WHERE canonical_hostname = ? AND alias_hostname = ?",
+            (canonical, alias_name)
+        )
+        existing = cursor.fetchone()
+
+        if existing:
+            first_seen = existing[0]
+            # Update last_seen
+            cursor.execute(
+                "UPDATE host_aliases SET last_seen = ?, ip_address = ? "
+                "WHERE canonical_hostname = ? AND alias_hostname = ?",
+                (scan_date, ip_address, canonical, alias_name)
+            )
+        else:
+            first_seen = scan_date
+            cursor.execute(
+                "INSERT INTO host_aliases (canonical_hostname, alias_hostname, ip_address, alias_type, first_seen, last_seen) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (canonical, alias_name, ip_address, alias_type, first_seen, scan_date)
+            )
+        count += 1
+
+    conn.commit()
+    return count
+
+
+def get_canonical_hostname(conn: sqlite3.Connection, hostname: str) -> str:
+    """
+    Get the canonical hostname for a given hostname.
+
+    Args:
+        conn: SQLite connection object
+        hostname: Hostname to look up
+
+    Returns:
+        Canonical hostname if found, otherwise the original hostname
+    """
+    cursor = conn.cursor()
+
+    # First check if this hostname is a known alias
+    cursor.execute(
+        "SELECT canonical_hostname FROM host_aliases WHERE alias_hostname = ?",
+        (hostname.lower(),)
+    )
+    result = cursor.fetchone()
+
+    if result:
+        return result[0]
+
+    # Check if this is already a canonical hostname
+    cursor.execute(
+        "SELECT canonical_hostname FROM host_aliases WHERE canonical_hostname = ?",
+        (hostname.lower(),)
+    )
+    result = cursor.fetchone()
+
+    if result:
+        return result[0]
+
+    return hostname
+
+
+def load_host_aliases(conn: sqlite3.Connection) -> Dict[str, str]:
+    """
+    Load all host aliases as a dictionary mapping alias -> canonical.
+
+    Args:
+        conn: SQLite connection object
+
+    Returns:
+        Dictionary mapping alias hostnames to canonical hostnames
+    """
+    cursor = conn.cursor()
+    cursor.execute("SELECT alias_hostname, canonical_hostname FROM host_aliases")
+
+    aliases = {}
+    for alias, canonical in cursor.fetchall():
+        aliases[alias.lower()] = canonical.lower()
+
+    return aliases
+
+
+def detect_hostname_aliases(df: pd.DataFrame) -> List[Dict[str, str]]:
+    """
+    Detect hostname aliases based on IP address matching.
+
+    Identifies cases where the same IP has multiple hostnames
+    (e.g., server1 and server1-mgmt).
+
+    Args:
+        df: DataFrame with hostname and ip_address columns
+
+    Returns:
+        List of detected aliases
+    """
+    from ..models.hostname_structure import normalize_hostname_for_matching
+
+    if df.empty or 'hostname' not in df.columns or 'ip_address' not in df.columns:
+        return []
+
+    # Group hostnames by IP
+    ip_to_hostnames = {}
+    for _, row in df.iterrows():
+        ip = row.get('ip_address', '')
+        hostname = row.get('hostname', '')
+        if ip and hostname:
+            if ip not in ip_to_hostnames:
+                ip_to_hostnames[ip] = set()
+            ip_to_hostnames[ip].add(hostname.lower())
+
+    aliases = []
+
+    for ip, hostnames in ip_to_hostnames.items():
+        if len(hostnames) <= 1:
+            continue
+
+        # Normalize all hostnames to find the canonical one
+        normalized_map = {}
+        for hostname in hostnames:
+            normalized = normalize_hostname_for_matching(hostname)
+            if normalized not in normalized_map:
+                normalized_map[normalized] = []
+            normalized_map[normalized].append(hostname)
+
+        # For each normalized group, pick the shortest/simplest as canonical
+        for normalized, hostname_list in normalized_map.items():
+            if len(hostname_list) <= 1:
+                continue
+
+            # Sort by length (shorter = more canonical), then alphabetically
+            sorted_hostnames = sorted(hostname_list, key=lambda x: (len(x), x))
+            canonical = sorted_hostnames[0]
+
+            # Add aliases for all non-canonical hostnames
+            for hostname in sorted_hostnames[1:]:
+                alias_type = 'management' if any(s in hostname for s in ['-mgmt', '-ilom', '-ilo', '-oob']) else 'alternate'
+                aliases.append({
+                    'canonical_hostname': canonical,
+                    'alias_hostname': hostname,
+                    'ip_address': ip,
+                    'alias_type': alias_type
+                })
+
+    return aliases
+
+
+def apply_hostname_normalization(df: pd.DataFrame, alias_map: Dict[str, str] = None) -> pd.DataFrame:
+    """
+    Apply hostname normalization to a DataFrame.
+
+    Adds a canonical_hostname column based on alias mappings and
+    normalization rules.
+
+    Args:
+        df: DataFrame with hostname column
+        alias_map: Optional dictionary mapping alias -> canonical hostnames
+
+    Returns:
+        DataFrame with canonical_hostname column added
+    """
+    from ..models.hostname_structure import normalize_hostname_for_matching
+
+    if df.empty or 'hostname' not in df.columns:
+        return df
+
+    df = df.copy()
+
+    def get_canonical(hostname):
+        if not hostname:
+            return hostname
+
+        hostname_lower = hostname.lower()
+
+        # Check alias map first
+        if alias_map and hostname_lower in alias_map:
+            return alias_map[hostname_lower]
+
+        # Fall back to normalization
+        return normalize_hostname_for_matching(hostname_lower)
+
+    df['canonical_hostname'] = df['hostname'].apply(get_canonical)
+
+    return df

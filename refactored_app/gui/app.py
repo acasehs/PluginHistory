@@ -2404,6 +2404,9 @@ class NessusHistoryTrackerApp:
         ttk.Button(btn_frame, text="Plugin Severity Remap",
                   command=self._show_severity_remap_dialog).pack(side=tk.LEFT, padx=5)
 
+        ttk.Button(btn_frame, text="Update Plugin DB",
+                  command=self._show_plugin_update_dialog).pack(side=tk.LEFT, padx=5)
+
         # Info panel
         info_frame = ttk.LabelFrame(db_frame, text="Table Information", padding=5)
         info_frame.pack(fill=tk.X, padx=10, pady=5)
@@ -3206,6 +3209,195 @@ class NessusHistoryTrackerApp:
         ttk.Button(btn_row, text="Add/Update Override", command=add_override).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_row, text="Delete Selected", command=delete_selected).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_row, text="Apply to Loaded Data", command=apply_to_loaded_data).pack(side=tk.LEFT, padx=5)
+
+        # Close button
+        ttk.Button(dialog, text="Close", command=dialog.destroy).pack(pady=10)
+
+    def _show_plugin_update_dialog(self):
+        """Show dialog to update/rebuild the plugins database table."""
+        if not self.existing_db_path or not os.path.exists(self.existing_db_path):
+            messagebox.showwarning("No Database", "Please load a database first.")
+            return
+
+        dialog = tk.Toplevel(self.window)
+        dialog.title("Plugin Database Management")
+        dialog.geometry("600x450")
+        dialog.transient(self.window)
+
+        # Header
+        header = ttk.Label(dialog, text="Plugin Database Management",
+                          font=('Arial', 12, 'bold'))
+        header.pack(pady=10)
+
+        ttk.Label(dialog,
+                 text="Manage the centralized plugin metadata table. This table stores plugin details\n"
+                      "for lookup and reduces redundancy in finding records.",
+                 foreground='gray', justify='center').pack()
+
+        # Current status
+        status_frame = ttk.LabelFrame(dialog, text="Current Status", padding=10)
+        status_frame.pack(fill=tk.X, padx=10, pady=10)
+
+        status_text = tk.Text(status_frame, height=4, wrap=tk.WORD,
+                             bg=GUI_DARK_THEME['entry_bg'], fg=GUI_DARK_THEME['fg'])
+        status_text.pack(fill=tk.X)
+
+        def refresh_status():
+            status_text.config(state=tk.NORMAL)
+            status_text.delete('1.0', tk.END)
+            try:
+                import sqlite3
+                conn = sqlite3.connect(self.existing_db_path)
+                cursor = conn.cursor()
+
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='plugins'")
+                if cursor.fetchone():
+                    cursor.execute("SELECT COUNT(*) FROM plugins")
+                    count = cursor.fetchone()[0]
+                    cursor.execute("SELECT MIN(first_observed), MAX(last_observed) FROM plugins")
+                    first, last = cursor.fetchone()
+                    status_text.insert(tk.END, f"Plugins table exists: {count} plugins\n")
+                    status_text.insert(tk.END, f"First observed: {first or 'N/A'}\n")
+                    status_text.insert(tk.END, f"Last updated: {last or 'N/A'}\n")
+                else:
+                    status_text.insert(tk.END, "Plugins table does not exist yet.\n")
+                    status_text.insert(tk.END, "Use 'Populate from Findings' or 'Full Update from XML' to create it.\n")
+
+                conn.close()
+            except Exception as e:
+                status_text.insert(tk.END, f"Error: {e}\n")
+            status_text.config(state=tk.DISABLED)
+
+        refresh_status()
+
+        # Options frame
+        options_frame = ttk.LabelFrame(dialog, text="Update Options", padding=10)
+        options_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        ttk.Label(options_frame,
+                 text="Incremental Update: Only adds new plugins from current findings.\n"
+                      "Full Update from XML: Reloads all plugin data from plugins.xml file.\n"
+                      "Clear & Rebuild: Deletes existing data and rebuilds from scratch.",
+                 foreground='gray', justify='left').pack(anchor=tk.W)
+
+        # Buttons
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(fill=tk.X, padx=10, pady=15)
+
+        def populate_from_findings():
+            """Populate plugins table from current findings data."""
+            if self.historical_df.empty:
+                messagebox.showwarning("No Data", "No findings data loaded")
+                return
+
+            try:
+                import sqlite3
+                from ..export.sqlite_export import save_plugins_to_database, create_sqlite_database
+
+                # Ensure table exists
+                conn = sqlite3.connect(self.existing_db_path)
+                create_sqlite_database(self.existing_db_path)  # Creates tables if not exist
+                conn.close()
+
+                conn = sqlite3.connect(self.existing_db_path)
+
+                # Get unique plugins from findings
+                plugin_cols = ['plugin_id', 'name', 'family', 'severity_text', 'severity_value',
+                              'cvss3_base_score', 'cvss2_base_score', 'description', 'solution',
+                              'cves', 'iavx', 'exploit_available', 'risk_factor']
+                available_cols = [c for c in plugin_cols if c in self.historical_df.columns]
+
+                plugins_df = self.historical_df[available_cols].drop_duplicates(subset=['plugin_id'])
+                plugins_df = plugins_df.rename(columns={'name': 'plugin_name', 'severity_text': 'severity'})
+
+                count = save_plugins_to_database(conn, plugins_df)
+                conn.close()
+
+                self._log(f"Saved {count} plugins to database")
+                messagebox.showinfo("Success", f"Saved {count} plugins to database")
+                refresh_status()
+
+            except Exception as e:
+                self._log(f"Error populating plugins: {e}")
+                messagebox.showerror("Error", f"Failed to populate plugins: {e}")
+
+        def full_update_from_xml():
+            """Full update from plugins.xml file."""
+            if not self.plugins_db_path or not os.path.exists(self.plugins_db_path):
+                messagebox.showwarning("No Plugin XML",
+                                      "Please select a plugins.xml database file first\n"
+                                      "(File Selection -> Plugin DB)")
+                return
+
+            try:
+                import sqlite3
+                from ..export.sqlite_export import save_plugins_to_database, create_sqlite_database
+                from ..core.plugin_database import load_plugins_database
+
+                self._log("Loading plugins from XML...")
+                plugins_dict = load_plugins_database(self.plugins_db_path)
+
+                if not plugins_dict:
+                    messagebox.showwarning("No Plugins", "Could not load plugins from XML")
+                    return
+
+                # Convert to DataFrame
+                plugins_list = []
+                for plugin_id, data in plugins_dict.items():
+                    plugin_data = {'plugin_id': plugin_id}
+                    plugin_data.update(data)
+                    plugins_list.append(plugin_data)
+
+                plugins_df = pd.DataFrame(plugins_list)
+
+                # Ensure table exists
+                conn = sqlite3.connect(self.existing_db_path)
+                create_sqlite_database(self.existing_db_path)
+                conn.close()
+
+                conn = sqlite3.connect(self.existing_db_path)
+                count = save_plugins_to_database(conn, plugins_df)
+                conn.close()
+
+                self._log(f"Updated {count} plugins from XML")
+                messagebox.showinfo("Success", f"Updated {count} plugins from XML file")
+                refresh_status()
+
+            except Exception as e:
+                self._log(f"Error updating plugins from XML: {e}")
+                messagebox.showerror("Error", f"Failed to update plugins: {e}")
+
+        def clear_and_rebuild():
+            """Clear plugins table and rebuild from scratch."""
+            if not messagebox.askyesno("Confirm Clear",
+                                       "This will delete all plugin data and rebuild.\n\nContinue?"):
+                return
+
+            try:
+                import sqlite3
+                conn = sqlite3.connect(self.existing_db_path)
+                cursor = conn.cursor()
+                cursor.execute("DROP TABLE IF EXISTS plugins")
+                conn.commit()
+                conn.close()
+
+                self._log("Cleared plugins table")
+                refresh_status()
+
+                # Offer to rebuild
+                if messagebox.askyesno("Rebuild?", "Table cleared. Rebuild from current findings?"):
+                    populate_from_findings()
+
+            except Exception as e:
+                self._log(f"Error clearing plugins: {e}")
+                messagebox.showerror("Error", f"Failed to clear plugins: {e}")
+
+        ttk.Button(btn_frame, text="Populate from Findings",
+                  command=populate_from_findings).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Full Update from XML",
+                  command=full_update_from_xml).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Clear & Rebuild",
+                  command=clear_and_rebuild).pack(side=tk.LEFT, padx=5)
 
         # Close button
         ttk.Button(dialog, text="Close", command=dialog.destroy).pack(pady=10)
@@ -7303,8 +7495,62 @@ Avg New/Month: {monthly_new.mean():.0f}
             self.historical_df = pd.concat(all_findings, ignore_index=True)
             self._log_safe(f"Total findings: {len(self.historical_df)}")
 
+            # Detect hostname aliases and apply normalization
+            self._apply_hostname_normalization()
+
         # Run analysis refresh on main thread
         self.window.after(0, self._refresh_analysis_internal)
+
+    def _apply_hostname_normalization(self):
+        """Detect hostname aliases and apply canonical hostname normalization."""
+        from ..export.sqlite_export import (
+            detect_hostname_aliases, apply_hostname_normalization,
+            save_host_aliases_to_database, load_host_aliases
+        )
+
+        if self.historical_df.empty:
+            return
+
+        try:
+            # Load existing aliases from database if available
+            alias_map = {}
+            if self.existing_db_path:
+                import sqlite3
+                try:
+                    conn = sqlite3.connect(self.existing_db_path)
+                    alias_map = load_host_aliases(conn)
+                    conn.close()
+                    if alias_map:
+                        self._log_safe(f"Loaded {len(alias_map)} existing hostname aliases")
+                except Exception as e:
+                    self._log_safe(f"Could not load aliases: {e}")
+
+            # Detect new aliases from current data
+            new_aliases = detect_hostname_aliases(self.historical_df)
+            if new_aliases:
+                self._log_safe(f"Detected {len(new_aliases)} hostname aliases (e.g., server-mgmt variants)")
+                # Add to alias map
+                for alias in new_aliases:
+                    alias_map[alias['alias_hostname'].lower()] = alias['canonical_hostname'].lower()
+
+                # Save new aliases to database if we have one
+                if self.existing_db_path:
+                    try:
+                        conn = sqlite3.connect(self.existing_db_path)
+                        save_host_aliases_to_database(conn, new_aliases)
+                        conn.close()
+                    except Exception as e:
+                        self._log_safe(f"Could not save aliases: {e}")
+
+            # Apply normalization to add canonical_hostname column
+            self.historical_df = apply_hostname_normalization(self.historical_df, alias_map)
+            self._log_safe("Applied hostname normalization")
+
+        except Exception as e:
+            self._log_safe(f"Warning: Could not apply hostname normalization: {e}")
+            # Fallback: just copy hostname to canonical_hostname
+            if 'canonical_hostname' not in self.historical_df.columns:
+                self.historical_df['canonical_hostname'] = self.historical_df['hostname']
 
     def _append_new_archives_thread(self):
         """Append new archive files to existing database (called from thread)."""
@@ -7343,10 +7589,35 @@ Avg New/Month: {monthly_new.mean():.0f}
             new_count = len(new_findings_df)
             self._log_safe(f"New findings from archives: {new_count}")
 
+            # Apply hostname normalization to new findings
+            from ..export.sqlite_export import apply_hostname_normalization, load_host_aliases, detect_hostname_aliases
+            alias_map = {}
+            if self.existing_db_path:
+                import sqlite3
+                try:
+                    conn = sqlite3.connect(self.existing_db_path)
+                    alias_map = load_host_aliases(conn)
+                    conn.close()
+                except:
+                    pass
+
+            # Detect new aliases from new findings
+            new_aliases = detect_hostname_aliases(new_findings_df)
+            for alias in new_aliases:
+                alias_map[alias['alias_hostname'].lower()] = alias['canonical_hostname'].lower()
+
+            new_findings_df = apply_hostname_normalization(new_findings_df, alias_map)
+
             # Check for duplicates before appending
             if not self.historical_df.empty:
-                # Identify key columns for deduplication (including port/protocol to preserve multi-port findings)
-                key_cols = ['hostname', 'plugin_id', 'scan_date', 'port', 'protocol']
+                # Use canonical_hostname for deduplication (with port to preserve multi-port findings)
+                key_cols = ['canonical_hostname', 'plugin_id', 'scan_date', 'port', 'protocol']
+                # Fallback to hostname if canonical_hostname not available
+                if 'canonical_hostname' not in self.historical_df.columns:
+                    key_cols[0] = 'hostname'
+                if 'canonical_hostname' not in new_findings_df.columns:
+                    key_cols[0] = 'hostname'
+
                 available_keys = [col for col in key_cols if col in self.historical_df.columns and col in new_findings_df.columns]
 
                 if available_keys:
@@ -12634,9 +12905,10 @@ Avg New/Month: {monthly_new.mean():.0f}
             plugin_names = {}
 
         plugin_data['plugin_name'] = plugin_data['plugin_id'].map(lambda x: plugin_names.get(x, '')[:40])
-        # Sort numerically by plugin_id (convert to int for proper numeric sort)
+        # Sort by severity (descending) then numerically by plugin_id within each severity group
+        plugin_data['sort_key'] = plugin_data[sev_col].map(lambda x: severity_order.get(x, 5))
         plugin_data['plugin_id_int'] = pd.to_numeric(plugin_data['plugin_id'], errors='coerce').fillna(0).astype(int)
-        plugin_data = plugin_data.sort_values('plugin_id_int', ascending=True)
+        plugin_data = plugin_data.sort_values(['sort_key', 'plugin_id_int'], ascending=[True, True])
 
         # Configure tag colors for severity
         plugin_tree.tag_configure('Critical', foreground='#dc3545')

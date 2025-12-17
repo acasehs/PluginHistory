@@ -16,7 +16,7 @@ def analyze_finding_lifecycle(historical_df: pd.DataFrame) -> pd.DataFrame:
     """
     Analyze finding lifecycle across multiple scans.
 
-    Tracks each unique finding (hostname + plugin_id) across all scans to determine:
+    Tracks each unique finding (canonical_hostname + plugin_id + port) across all scans to determine:
     - First/last seen dates
     - Duration open
     - Number of observations
@@ -27,6 +27,7 @@ def analyze_finding_lifecycle(historical_df: pd.DataFrame) -> pd.DataFrame:
         historical_df: DataFrame with historical findings across multiple scans.
                        Must have columns: hostname, plugin_id, scan_date, name,
                        severity_text, severity_value, ip_address, cvss3_base_score, cves, iavx
+                       Optional columns: canonical_hostname, port, protocol
 
     Returns:
         DataFrame with lifecycle analysis for each unique finding
@@ -39,14 +40,41 @@ def analyze_finding_lifecycle(historical_df: pd.DataFrame) -> pd.DataFrame:
     if not pd.api.types.is_datetime64_any_dtype(historical_df['scan_date']):
         historical_df['scan_date'] = pd.to_datetime(historical_df['scan_date'])
 
-    # Create unique finding key
-    historical_df['finding_key'] = historical_df['hostname'].astype(str) + '|' + historical_df['plugin_id'].astype(str)
+    # Use canonical_hostname if available, otherwise fall back to hostname
+    if 'canonical_hostname' in historical_df.columns:
+        historical_df['_effective_hostname'] = historical_df['canonical_hostname'].fillna(historical_df['hostname'])
+    else:
+        historical_df['_effective_hostname'] = historical_df['hostname']
+
+    # Ensure port column exists (for backward compatibility)
+    if 'port' not in historical_df.columns:
+        historical_df['port'] = '0'
+    else:
+        historical_df['port'] = historical_df['port'].fillna('0').astype(str)
+
+    # Ensure protocol column exists
+    if 'protocol' not in historical_df.columns:
+        historical_df['protocol'] = 'tcp'
+    else:
+        historical_df['protocol'] = historical_df['protocol'].fillna('tcp').astype(str)
+
+    # Create unique finding key including port for multi-port finding support
+    # Key format: canonical_hostname|plugin_id|port
+    historical_df['finding_key'] = (
+        historical_df['_effective_hostname'].astype(str) + '|' +
+        historical_df['plugin_id'].astype(str) + '|' +
+        historical_df['port'].astype(str)
+    )
 
     lifecycle_records = []
     latest_scan_date = historical_df['scan_date'].max()
 
     for finding_key, group in historical_df.groupby('finding_key'):
-        hostname, plugin_id = finding_key.split('|')
+        parts = finding_key.split('|')
+        effective_hostname = parts[0]
+        plugin_id = parts[1]
+        port = parts[2] if len(parts) > 2 else '0'
+
         group = group.sort_values('scan_date')
         latest = group.iloc[-1]
 
@@ -88,9 +116,15 @@ def analyze_finding_lifecycle(historical_df: pd.DataFrame) -> pd.DataFrame:
         if 'source_file' in group.columns:
             source_files = sorted(group['source_file'].dropna().unique().tolist())
 
+        # Get original hostname (first observed) for reference
+        original_hostname = group.iloc[0].get('hostname', effective_hostname)
+
         lifecycle_records.append({
-            'hostname': hostname,
+            'hostname': original_hostname,
+            'canonical_hostname': effective_hostname,
             'ip_address': latest.get('ip_address', ''),
+            'port': port,
+            'protocol': latest.get('protocol', 'tcp'),
             'plugin_id': plugin_id,
             'plugin_name': latest.get('name', 'Unknown'),
             'severity_text': latest.get('severity_text', 'Unknown'),

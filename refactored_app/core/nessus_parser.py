@@ -208,8 +208,8 @@ def extract_finding_data(item: ET.Element, host_name: str, hostname: str,
     plugin_id = item.attrib.get('pluginID', '')
     severity = item.attrib.get('severity', '0')
     plugin_name = item.attrib.get('pluginName', 'Unknown')
-    port = item.attrib.get('port', 'N/A')
-    protocol = item.attrib.get('protocol', 'N/A')
+    port_raw = item.attrib.get('port', '0')
+    protocol = item.attrib.get('protocol', 'tcp')
     svc_name = item.attrib.get('svc_name', '')
 
     finding = {
@@ -220,7 +220,8 @@ def extract_finding_data(item: ET.Element, host_name: str, hostname: str,
         'severity': severity,
         'ip_address': host_name,
         'protocol': protocol,
-        'port': f"{port}/{protocol}",
+        'port': port_raw,  # Store just the port number for dedup
+        'port_full': f"{port_raw}/{protocol}",  # Combined format for display
         'exploit_available': 'No',
         'output': '',
         'synopsis': '',
