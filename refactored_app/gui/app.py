@@ -7383,10 +7383,20 @@ Avg New/Month: {monthly_new.mean():.0f}
     def _load_existing_database_thread(self):
         """Load data from existing database (called from thread)."""
         import sqlite3
+        from ..export.sqlite_export import migrate_database_schema
 
         self._log_safe("Loading existing database...")
 
         conn = sqlite3.connect(self.existing_db_path)
+
+        # Run schema migrations FIRST to ensure all columns exist before any data operations
+        try:
+            migrations = migrate_database_schema(conn)
+            if migrations:
+                for msg in migrations:
+                    self._log_safe(f"Schema migration: {msg}")
+        except Exception as e:
+            self._log_safe(f"Warning: Schema migration error: {e}")
 
         try:
             self.historical_df = pd.read_sql_query("SELECT * FROM historical_findings", conn)
@@ -7658,10 +7668,20 @@ Avg New/Month: {monthly_new.mean():.0f}
     def _load_existing_database(self):
         """Load data from existing database."""
         import sqlite3
+        from ..export.sqlite_export import migrate_database_schema
 
         self._log("Loading existing database...")
 
         conn = sqlite3.connect(self.existing_db_path)
+
+        # Run schema migrations FIRST to ensure all columns exist before any data operations
+        try:
+            migrations = migrate_database_schema(conn)
+            if migrations:
+                for msg in migrations:
+                    self._log(f"Schema migration: {msg}")
+        except Exception as e:
+            self._log(f"Warning: Schema migration error: {e}")
 
         try:
             self.historical_df = pd.read_sql_query("SELECT * FROM historical_findings", conn)
