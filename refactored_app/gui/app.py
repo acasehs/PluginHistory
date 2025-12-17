@@ -12457,12 +12457,14 @@ Avg New/Month: {monthly_new.mean():.0f}
             quadrant = get_click_quadrant(event)
             if quadrant == 1:  # Plugin Severity Distribution - use custom popup with list
                 self._show_plugin_severity_popup()
+            elif quadrant == 3:  # Plugin Average Age - use scrollable list popup
+                self._show_plugin_age_popup()
             else:
                 chart_info = [
                     ('Top Most Common Plugins', self._draw_top_plugins_popout),
-                    None,  # Placeholder for quadrant 1
+                    None,  # Placeholder for quadrant 1 (plugin severity)
                     ('Plugins Affecting Most Hosts', self._draw_plugins_by_hosts_popout),
-                    ('Plugin Average Age', self._draw_plugin_age_popout),
+                    None,  # Placeholder for quadrant 3 (plugin age)
                 ]
                 if chart_info[quadrant]:
                     title, redraw_func = chart_info[quadrant]
@@ -12691,6 +12693,165 @@ Avg New/Month: {monthly_new.mean():.0f}
                  font=('Arial', 10)).pack(side=tk.LEFT)
 
         ttk.Button(summary_frame, text="Close", command=popup.destroy).pack(side=tk.RIGHT)
+
+    def _show_plugin_age_popup(self):
+        """Show custom popup with scrollable list of ALL open findings sorted by age."""
+        df = self._get_chart_data('lifecycle')
+
+        if df.empty or 'plugin_id' not in df.columns or 'days_open' not in df.columns:
+            messagebox.showwarning("No Data", "No plugin age data available")
+            return
+
+        # Create popup window
+        popup = tk.Toplevel(self.window)
+        popup.title("All Open Findings by Age")
+        popup.geometry("1200x700")
+        popup.configure(bg='#1e1e1e')
+        popup.transient(self.window)
+
+        # Main container
+        main_frame = ttk.Frame(popup)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Title label
+        title_label = ttk.Label(main_frame,
+                               text="All Open Findings - Sorted by Days Open (Descending)",
+                               font=('Arial', 12, 'bold'))
+        title_label.pack(pady=(0, 10))
+
+        # Create treeview frame
+        tree_frame = ttk.Frame(main_frame)
+        tree_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Treeview for findings list
+        columns = ('plugin_id', 'plugin_name', 'severity', 'hostname', 'days_open', 'first_seen')
+        findings_tree = ttk.Treeview(tree_frame, columns=columns, show='headings', height=25)
+
+        findings_tree.heading('plugin_id', text='Plugin ID')
+        findings_tree.heading('plugin_name', text='Plugin Name')
+        findings_tree.heading('severity', text='Severity')
+        findings_tree.heading('hostname', text='Hostname')
+        findings_tree.heading('days_open', text='Days Open')
+        findings_tree.heading('first_seen', text='First Seen')
+
+        findings_tree.column('plugin_id', width=80, anchor='center')
+        findings_tree.column('plugin_name', width=400)
+        findings_tree.column('severity', width=80, anchor='center')
+        findings_tree.column('hostname', width=250)
+        findings_tree.column('days_open', width=80, anchor='center')
+        findings_tree.column('first_seen', width=100, anchor='center')
+
+        # Vertical Scrollbar
+        v_scroll = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=findings_tree.yview)
+        findings_tree.configure(yscrollcommand=v_scroll.set)
+
+        # Horizontal Scrollbar
+        h_scroll = ttk.Scrollbar(tree_frame, orient=tk.HORIZONTAL, command=findings_tree.xview)
+        findings_tree.configure(xscrollcommand=h_scroll.set)
+
+        # Grid layout for scrollbars
+        findings_tree.grid(row=0, column=0, sticky='nsew')
+        v_scroll.grid(row=0, column=1, sticky='ns')
+        h_scroll.grid(row=1, column=0, sticky='ew')
+
+        tree_frame.grid_rowconfigure(0, weight=1)
+        tree_frame.grid_columnconfigure(0, weight=1)
+
+        # Process data
+        df_copy = df.copy()
+        df_copy['days_open'] = pd.to_numeric(df_copy['days_open'], errors='coerce').fillna(0)
+
+        # Get severity column
+        sev_col = 'severity_text' if 'severity_text' in df_copy.columns else 'severity' if 'severity' in df_copy.columns else None
+
+        # Sort by days_open descending
+        df_sorted = df_copy.sort_values('days_open', ascending=False)
+
+        # Configure tag colors for severity
+        findings_tree.tag_configure('Critical', foreground='#dc3545')
+        findings_tree.tag_configure('High', foreground='#fd7e14')
+        findings_tree.tag_configure('Medium', foreground='#B8860B')
+        findings_tree.tag_configure('Low', foreground='#007bff')
+        findings_tree.tag_configure('Info', foreground='#6c757d')
+
+        # Color tags based on age
+        findings_tree.tag_configure('age_critical', background='#3d1f1f')  # Very old (>90 days)
+        findings_tree.tag_configure('age_warning', background='#3d3d1f')   # Old (>30 days)
+        findings_tree.tag_configure('age_ok', background='#1f3d1f')        # Recent (<30 days)
+
+        # Insert data
+        for _, row in df_sorted.iterrows():
+            plugin_id = row.get('plugin_id', '')
+            plugin_name = row.get('plugin_name', '')[:80] if 'plugin_name' in row else ''
+            severity = row.get(sev_col, '') if sev_col else ''
+            hostname = row.get('hostname', '')
+            days_open = int(row.get('days_open', 0))
+            first_seen = row.get('first_seen', '')
+
+            # Determine tags
+            tags = []
+            if severity:
+                tags.append(severity)
+            if days_open > 90:
+                tags.append('age_critical')
+            elif days_open > 30:
+                tags.append('age_warning')
+            else:
+                tags.append('age_ok')
+
+            findings_tree.insert('', tk.END, values=(
+                plugin_id,
+                plugin_name,
+                severity,
+                hostname,
+                days_open,
+                first_seen
+            ), tags=tuple(tags))
+
+        # Summary stats at bottom
+        summary_frame = ttk.Frame(popup)
+        summary_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        total_findings = len(df_sorted)
+        total_plugins = df_sorted['plugin_id'].nunique()
+        total_hosts = df_sorted['hostname'].nunique() if 'hostname' in df_sorted.columns else 0
+        avg_age = df_sorted['days_open'].mean() if len(df_sorted) > 0 else 0
+        max_age = df_sorted['days_open'].max() if len(df_sorted) > 0 else 0
+
+        # Age breakdown
+        over_90 = len(df_sorted[df_sorted['days_open'] > 90])
+        over_30 = len(df_sorted[(df_sorted['days_open'] > 30) & (df_sorted['days_open'] <= 90)])
+        under_30 = len(df_sorted[df_sorted['days_open'] <= 30])
+
+        ttk.Label(summary_frame,
+                 text=f"Total: {total_findings} findings | {total_plugins} plugins | {total_hosts} hosts | "
+                      f"Avg Age: {avg_age:.0f} days | Max: {int(max_age)} days",
+                 font=('Arial', 10)).pack(side=tk.LEFT)
+
+        age_label = ttk.Label(summary_frame,
+                             text=f"  |  >90 days: {over_90}  |  30-90 days: {over_30}  |  <30 days: {under_30}",
+                             font=('Arial', 10))
+        age_label.pack(side=tk.LEFT)
+
+        ttk.Button(summary_frame, text="Close", command=popup.destroy).pack(side=tk.RIGHT)
+
+        # Export button
+        def export_to_csv():
+            from tkinter import filedialog
+            filepath = filedialog.asksaveasfilename(
+                defaultextension='.csv',
+                filetypes=[('CSV files', '*.csv'), ('All files', '*.*')],
+                title='Export Findings to CSV'
+            )
+            if filepath:
+                export_df = df_sorted[['plugin_id', 'plugin_name', sev_col if sev_col else 'plugin_id',
+                                       'hostname', 'days_open', 'first_seen']].copy()
+                if sev_col:
+                    export_df = export_df.rename(columns={sev_col: 'severity'})
+                export_df.to_csv(filepath, index=False)
+                messagebox.showinfo("Export Complete", f"Exported {len(export_df)} findings to {filepath}")
+
+        ttk.Button(summary_frame, text="Export CSV", command=export_to_csv).pack(side=tk.RIGHT, padx=5)
 
     def _draw_plugins_by_hosts_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw plugins affecting most hosts for pop-out."""
