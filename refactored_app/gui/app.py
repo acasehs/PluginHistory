@@ -4070,29 +4070,42 @@ class NessusHistoryTrackerApp:
 
         self.report_text.insert(tk.END, "\n")
 
+        # Severity sort order helper
+        sev_order = {'Crit': 0, 'High': 1, 'Med': 2, 'Low': 3, 'Info': 4, 'Unk': 5}
+
         # === NEW FINDINGS IN PERIOD ===
         new_findings = data.get('new_findings', [])
         self.report_text.insert(tk.END, f"NEW FINDINGS IN PERIOD ({len(new_findings)})\n", 'subheader')
         self.report_text.insert(tk.END, "-" * 90 + "\n", 'divider')
 
         if new_findings:
-            # Group by environment
-            new_by_env = {}
+            # Group by date first, then environment
+            new_by_date = {}
             for item in new_findings:
+                date = item.get('first_seen', 'Unknown')
+                if date not in new_by_date:
+                    new_by_date[date] = {}
                 env = item.get('environment', 'Unknown')
-                if env not in new_by_env:
-                    new_by_env[env] = []
-                new_by_env[env].append(item)
+                if env not in new_by_date[date]:
+                    new_by_date[date][env] = []
+                new_by_date[date][env].append(item)
 
-            for env in sorted(new_by_env.keys()):
-                items = new_by_env[env]
-                self.report_text.insert(tk.END, f"\n  {env} ({len(items)} new):\n", 'section')
-                for item in items:  # NO LIMIT - show all
-                    sev_label = self._format_severity_label(item['severity'])
-                    self.report_text.insert(tk.END,
-                        f"    {sev_label}{item['plugin_name']}\n")
-                    self.report_text.insert(tk.END,
-                        f"           {item['hostname']} | First seen: {item['first_seen']}\n", 'divider')
+            for date in sorted(new_by_date.keys(), reverse=True):  # Most recent first
+                date_items = new_by_date[date]
+                total_for_date = sum(len(items) for items in date_items.values())
+                self.report_text.insert(tk.END, f"\n  {date} ({total_for_date} new):\n", 'subheader')
+
+                for env in sorted(date_items.keys()):
+                    items = date_items[env]
+                    # Sort by severity
+                    items.sort(key=lambda x: sev_order.get(x.get('severity', 'Unk'), 5))
+                    self.report_text.insert(tk.END, f"    [{env}] ({len(items)}):\n", 'section')
+                    for item in items:
+                        sev_label = self._format_severity_label(item['severity'])
+                        self.report_text.insert(tk.END,
+                            f"      {sev_label}{item['plugin_name']}\n")
+                        self.report_text.insert(tk.END,
+                            f"             {item['hostname']}\n", 'divider')
         else:
             self.report_text.insert(tk.END, "  No new findings in this period\n", 'divider')
 
@@ -4104,23 +4117,33 @@ class NessusHistoryTrackerApp:
         self.report_text.insert(tk.END, "-" * 90 + "\n", 'divider')
 
         if closed_findings:
-            # Group by environment
-            closed_by_env = {}
+            # Group by date first, then environment
+            closed_by_date = {}
             for item in closed_findings:
+                date = item.get('last_seen', 'Unknown')
+                if date not in closed_by_date:
+                    closed_by_date[date] = {}
                 env = item.get('environment', 'Unknown')
-                if env not in closed_by_env:
-                    closed_by_env[env] = []
-                closed_by_env[env].append(item)
+                if env not in closed_by_date[date]:
+                    closed_by_date[date][env] = []
+                closed_by_date[date][env].append(item)
 
-            for env in sorted(closed_by_env.keys()):
-                items = closed_by_env[env]
-                self.report_text.insert(tk.END, f"\n  {env} ({len(items)} closed):\n", 'section')
-                for item in items:  # NO LIMIT - show all
-                    sev_label = self._format_severity_label(item['severity'])
-                    self.report_text.insert(tk.END,
-                        f"    {sev_label}{item['plugin_name']}\n", 'success')
-                    self.report_text.insert(tk.END,
-                        f"           {item['hostname']} | Last seen: {item['last_seen']}\n", 'divider')
+            for date in sorted(closed_by_date.keys(), reverse=True):  # Most recent first
+                date_items = closed_by_date[date]
+                total_for_date = sum(len(items) for items in date_items.values())
+                self.report_text.insert(tk.END, f"\n  {date} ({total_for_date} closed):\n", 'subheader')
+
+                for env in sorted(date_items.keys()):
+                    items = date_items[env]
+                    # Sort by severity
+                    items.sort(key=lambda x: sev_order.get(x.get('severity', 'Unk'), 5))
+                    self.report_text.insert(tk.END, f"    [{env}] ({len(items)}):\n", 'section')
+                    for item in items:
+                        sev_label = self._format_severity_label(item['severity'])
+                        self.report_text.insert(tk.END,
+                            f"      {sev_label}{item['plugin_name']}\n", 'success')
+                        self.report_text.insert(tk.END,
+                            f"             {item['hostname']}\n", 'divider')
         else:
             self.report_text.insert(tk.END, "  No closed findings in this period\n", 'divider')
 
@@ -4133,31 +4156,41 @@ class NessusHistoryTrackerApp:
 
         if repops:
             self.report_text.insert(tk.END, "Findings that were resolved but returned:\n\n")
-            # Group by environment
-            repops_by_env = {}
+            # Group by last_seen date first, then environment
+            repops_by_date = {}
             for item in repops:
+                date = item.get('last_seen', 'Unknown')
+                if date not in repops_by_date:
+                    repops_by_date[date] = {}
                 env = item.get('environment', 'Unknown')
-                if env not in repops_by_env:
-                    repops_by_env[env] = []
-                repops_by_env[env].append(item)
+                if env not in repops_by_date[date]:
+                    repops_by_date[date][env] = []
+                repops_by_date[date][env].append(item)
 
-            for env in sorted(repops_by_env.keys()):
-                items = repops_by_env[env]
-                self.report_text.insert(tk.END, f"  {env} ({len(items)} reappearances):\n", 'section')
-                for item in items:  # NO LIMIT - show all
-                    sev_label = self._format_severity_label(item['severity'])
-                    self.report_text.insert(tk.END,
-                        f"    {sev_label}{item['hostname']}\n", 'warning')
-                    self.report_text.insert(tk.END,
-                        f"           {item['plugin_name']}\n")
-                    # Show reappearance details including scan gaps and current status
-                    status_info = f"Reappeared {item['reappearances']}x"
-                    if item.get('scans_absent'):
-                        status_info += f" | Absent for {item['scans_absent']} scan(s)"
-                    if item.get('currently_closed'):
-                        status_info += " | Currently CLOSED"
-                    self.report_text.insert(tk.END,
-                        f"           {status_info} | First: {item['first_seen']} | Last: {item['last_seen']}\n", 'divider')
+            for date in sorted(repops_by_date.keys(), reverse=True):  # Most recent first
+                date_items = repops_by_date[date]
+                total_for_date = sum(len(items) for items in date_items.values())
+                self.report_text.insert(tk.END, f"\n  {date} ({total_for_date} reappearances):\n", 'subheader')
+
+                for env in sorted(date_items.keys()):
+                    items = date_items[env]
+                    # Sort by severity
+                    items.sort(key=lambda x: sev_order.get(x.get('severity', 'Unk'), 5))
+                    self.report_text.insert(tk.END, f"    [{env}] ({len(items)}):\n", 'section')
+                    for item in items:
+                        sev_label = self._format_severity_label(item['severity'])
+                        self.report_text.insert(tk.END,
+                            f"      {sev_label}{item['hostname']}\n", 'warning')
+                        self.report_text.insert(tk.END,
+                            f"             {item['plugin_name']}\n")
+                        # Show reappearance details including scan gaps and current status
+                        status_info = f"Reappeared {item['reappearances']}x"
+                        if item.get('scans_absent'):
+                            status_info += f" | Absent for {item['scans_absent']} scan(s)"
+                        if item.get('currently_closed'):
+                            status_info += " | Currently CLOSED"
+                        self.report_text.insert(tk.END,
+                            f"             {status_info} | First: {item['first_seen']}\n", 'divider')
         else:
             self.report_text.insert(tk.END, "  No reappearances detected in this period\n", 'success')
 
