@@ -802,8 +802,8 @@ class NessusHistoryTrackerApp:
         tree_frame = ttk.Frame(lifecycle_frame)
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        # Define columns
-        columns = ('hostname', 'plugin_id', 'name', 'severity', 'status', 'first_seen', 'last_seen', 'days_open')
+        # Define columns (environment after severity, before status)
+        columns = ('hostname', 'plugin_id', 'name', 'severity', 'environment', 'status', 'first_seen', 'last_seen', 'days_open')
         self.lifecycle_tree = ttk.Treeview(tree_frame, columns=columns, show='headings', height=20)
 
         # Configure columns
@@ -812,6 +812,7 @@ class NessusHistoryTrackerApp:
             'plugin_id': ('Plugin ID', 70),
             'name': ('Name', 250),
             'severity': ('Severity', 70),
+            'environment': ('Environment', 80),
             'status': ('Status', 70),
             'first_seen': ('First Seen', 90),
             'last_seen': ('Last Seen', 90),
@@ -3932,8 +3933,14 @@ class NessusHistoryTrackerApp:
                 'environment': row.get(env_col, 'Unknown')
             })
 
-        # All currently active findings - NO LIMIT
-        final_active = df[df['status'] == 'Active']
+        # Active findings at end of period - only show findings that:
+        # 1. Were first seen by end of period (existed during the report timeframe)
+        # 2. Were still active at end of period (not resolved before period end)
+        #    - Either still active now, OR last seen was on/after end_date
+        final_active = df[
+            (df['first_seen'] <= end_date) &
+            ((df['status'] == 'Active') | (df['last_seen'] >= end_date))
+        ]
         for _, row in final_active.iterrows():
             result['active_findings'].append({
                 'hostname': row['hostname'],
@@ -7828,11 +7835,15 @@ Avg New/Month: {monthly_new.mean():.0f}
         for _, row in display_df.iterrows():
             # Use plugin_name field (from lifecycle analysis), fallback to name
             plugin_name = row.get('plugin_name', row.get('name', ''))
+            # Get environment from hostname mapping
+            hostname = row.get('hostname', '')
+            environment = self._get_environment_type(hostname) if hostname else 'Unknown'
             values = (
-                row.get('hostname', ''),
+                hostname,
                 row.get('plugin_id', ''),
                 str(plugin_name) if plugin_name else '',  # Full plugin name, no truncation
                 row.get('severity_text', row.get('severity', '')),
+                environment,
                 row.get('status', ''),
                 str(row.get('first_seen', ''))[:10],
                 str(row.get('last_seen', ''))[:10],
@@ -8621,7 +8632,8 @@ Avg New/Month: {monthly_new.mean():.0f}
     def _create_finding_detail_popup(self, finding, hist_details):
         """Create and display the finding detail popup modal."""
         modal = tk.Toplevel(self.window)
-        modal.title(f"Finding Details: {finding.get('plugin_name', 'Unknown')[:50]}")
+        # Show complete finding name in title bar without truncation
+        modal.title(f"Finding Details: {finding.get('plugin_name', 'Unknown')}")
         modal.geometry("900x900")
         modal.configure(bg=GUI_DARK_THEME['bg'])
         modal.transient(self.window)
@@ -8711,7 +8723,7 @@ Avg New/Month: {monthly_new.mean():.0f}
             base_col = col_offset * 3  # Each column pair takes 3 grid columns (label, value, spacer)
             tk.Label(parent, text=f"{label}:", font=('Arial', 9, 'bold'),
                     bg=GUI_DARK_THEME['bg'], fg='#17a2b8',
-                    anchor='e', width=14).grid(row=row_num, column=base_col, sticky='e', padx=(5, 5), pady=2)
+                    anchor='e', width=18).grid(row=row_num, column=base_col, sticky='e', padx=(5, 10), pady=2)
             tk.Label(parent, text=str(value), bg=GUI_DARK_THEME['bg'],
                     fg=GUI_DARK_THEME['fg'], anchor='w',
                     wraplength=300).grid(row=row_num, column=base_col + 1, sticky='w', pady=2)
@@ -8821,6 +8833,13 @@ Avg New/Month: {monthly_new.mean():.0f}
 
         add_multi_column_list(cve_iavx_frame, "CVEs", finding.get('cves'), num_cols=4)
         add_multi_column_list(cve_iavx_frame, "IAVX", finding.get('iavx'), num_cols=3)
+
+        # Source Files section for auditability
+        source_files = finding.get('source_files', '')
+        if source_files and source_files != 'nan' and not pd.isna(source_files):
+            source_frame = ttk.LabelFrame(scrollable_frame, text="Source Files (Auditability)")
+            source_frame.pack(fill=tk.X, pady=5, padx=5)
+            add_multi_column_list(source_frame, "Observed In", source_files, num_cols=2)
 
         # OPDIR information if available
         opdir_num = finding.get('opdir_number')
