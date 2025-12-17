@@ -95,7 +95,7 @@ class UserSettings:
     # Severity colors (hex)
     color_critical: str = '#dc3545'
     color_high: str = '#fd7e14'
-    color_medium: str = '#ffc107'
+    color_medium: str = '#B8860B'  # Dark goldenrod (changed from #ffc107 yellow)
     color_low: str = '#28a745'  # Changed to green per user request
     color_info: str = '#17a2b8'  # Changed to blue per user request
 

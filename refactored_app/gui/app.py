@@ -314,6 +314,7 @@ class NessusHistoryTrackerApp:
         self._build_stig_tab()  # STIG checklist findings
         self._build_poam_tab()  # POA&M tracking
         self._build_reporting_tab()  # Weekly resolution reports
+        self._build_database_browser_tab()  # Database management
         self._build_logging_tab()  # Moved to last
 
     def _build_file_selection(self, parent):
@@ -683,7 +684,7 @@ class NessusHistoryTrackerApp:
         severity_frame.pack(fill=tk.X, padx=10, pady=5)
 
         self.severity_labels = {}
-        severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff', 'Info': '#6c757d'}
+        severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#B8860B', 'Low': '#007bff', 'Info': '#6c757d'}
         for i, sev in enumerate(['Critical', 'High', 'Medium', 'Low', 'Info']):
             frame = ttk.Frame(severity_frame)
             frame.grid(row=0, column=i, padx=15, pady=5)
@@ -1288,7 +1289,7 @@ class NessusHistoryTrackerApp:
         sla_info.pack(fill=tk.X)
         for i, (sev, days) in enumerate(SLA_TARGETS_DAYS.items()):
             if days is not None:
-                color = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff'}.get(sev, 'white')
+                color = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#B8860B', 'Low': '#007bff'}.get(sev, 'white')
                 ttk.Label(sla_info, text=f"{sev}: {days}d", foreground=color).grid(row=0, column=i, padx=10)
 
         if HAS_MATPLOTLIB:
@@ -1737,6 +1738,582 @@ class NessusHistoryTrackerApp:
         self.report_status_label = ttk.Label(status_frame, text="Ready", foreground='gray')
         self.report_status_label.pack(side=tk.LEFT)
 
+    def _build_database_browser_tab(self):
+        """Build the Database Browser tab for table management."""
+        db_frame = ttk.Frame(self.notebook)
+        self.notebook.add(db_frame, text="Database")
+        self.db_browser_frame = db_frame
+
+        # Header frame
+        header_frame = ttk.Frame(db_frame)
+        header_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        ttk.Label(header_frame, text="Database Table Management",
+                 font=('Arial', 11, 'bold')).pack(side=tk.LEFT)
+
+        ttk.Button(header_frame, text="Refresh",
+                  command=self._refresh_database_browser).pack(side=tk.RIGHT, padx=5)
+
+        # Table list with treeview
+        tree_frame = ttk.Frame(db_frame)
+        tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        columns = ('table', 'rows', 'type', 'can_drop', 'dedup_key')
+        self.db_tree = ttk.Treeview(tree_frame, columns=columns, show='headings', height=12)
+
+        self.db_tree.heading('table', text='Table Name')
+        self.db_tree.heading('rows', text='Rows')
+        self.db_tree.heading('type', text='Data Type')
+        self.db_tree.heading('can_drop', text='Drop Safe?')
+        self.db_tree.heading('dedup_key', text='Unique Key')
+
+        self.db_tree.column('table', width=180)
+        self.db_tree.column('rows', width=80, anchor='center')
+        self.db_tree.column('type', width=120)
+        self.db_tree.column('can_drop', width=100, anchor='center')
+        self.db_tree.column('dedup_key', width=300)
+
+        db_scroll = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.db_tree.yview)
+        self.db_tree.configure(yscrollcommand=db_scroll.set)
+
+        self.db_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        db_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Button frame
+        btn_frame = ttk.Frame(db_frame)
+        btn_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        ttk.Button(btn_frame, text="Deduplicate Selected",
+                  command=self._deduplicate_selected_table).pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(btn_frame, text="Drop Selected Table",
+                  command=self._drop_selected_table).pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(btn_frame, text="Backup Table",
+                  command=self._backup_selected_table).pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(btn_frame, text="Restore from Backup",
+                  command=self._restore_table_from_backup).pack(side=tk.LEFT, padx=5)
+
+        # Info panel
+        info_frame = ttk.LabelFrame(db_frame, text="Table Information", padding=5)
+        info_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        self.db_info_text = tk.Text(info_frame, height=6, wrap=tk.WORD,
+                                    bg=GUI_DARK_THEME['entry_bg'], fg=GUI_DARK_THEME['fg'])
+        self.db_info_text.pack(fill=tk.X, padx=5, pady=5)
+        self.db_info_text.insert(tk.END, "Select a table above to see details and available actions.\n\n")
+        self.db_info_text.insert(tk.END, "• Deduplicate: Remove duplicate records (ignores import_date)\n")
+        self.db_info_text.insert(tk.END, "• Drop Table: Clear all data (creates backup first)\n")
+        self.db_info_text.insert(tk.END, "• Backup: Save table to backup file for recovery\n")
+        self.db_info_text.config(state=tk.DISABLED)
+
+        # Bind selection event
+        self.db_tree.bind('<<TreeviewSelect>>', self._on_db_table_select)
+
+        # Status
+        status_frame = ttk.Frame(db_frame)
+        status_frame.pack(fill=tk.X, padx=10, pady=2)
+        self.db_status_label = ttk.Label(status_frame, text="Load database to view tables", foreground='gray')
+        self.db_status_label.pack(side=tk.LEFT)
+
+        # Store table metadata for operations
+        self.db_table_metadata = self._get_table_metadata()
+
+    def _get_table_metadata(self) -> dict:
+        """Get metadata about database tables for deduplication and safety assessment."""
+        return {
+            'historical_findings': {
+                'type': 'Primary Data',
+                'can_drop': 'CRITICAL',
+                'dedup_key': ['plugin_id', 'hostname', 'scan_date', 'ip_address'],
+                'description': 'Raw scan data from Nessus exports. Dropping requires re-importing all scan files.',
+                'regenerable': False
+            },
+            'finding_lifecycle': {
+                'type': 'Calculated',
+                'can_drop': 'Yes',
+                'dedup_key': ['plugin_id', 'hostname', 'first_seen'],
+                'description': 'Calculated finding status/tracking. Can regenerate from historical_findings.',
+                'regenerable': True
+            },
+            'host_presence': {
+                'type': 'Calculated',
+                'can_drop': 'Yes',
+                'dedup_key': ['hostname'],
+                'description': 'Host scanning history. Can regenerate from historical_findings.',
+                'regenerable': True
+            },
+            'scan_changes': {
+                'type': 'Calculated',
+                'can_drop': 'Yes',
+                'dedup_key': ['scan_date'],
+                'description': 'Delta between scans. Can regenerate from historical_findings.',
+                'regenerable': True
+            },
+            'opdir_mapping': {
+                'type': 'Reference',
+                'can_drop': 'Yes',
+                'dedup_key': ['plugin_id'],
+                'description': 'OPDIR/IAVA reference data. Re-importable from Excel file.',
+                'regenerable': True
+            },
+            'iavm_notices': {
+                'type': 'Reference',
+                'can_drop': 'Yes',
+                'dedup_key': ['iavm_id'],
+                'description': 'IAVM notice reference. Re-importable from XML file.',
+                'regenerable': True
+            },
+            'stig_findings': {
+                'type': 'Imported',
+                'can_drop': 'Caution',
+                'dedup_key': ['hostname', 'stig_id', 'sv_id_base', 'stig_version', 'release_number'],
+                'description': 'STIG checklist results. Re-importable from .cklb files.',
+                'regenerable': True
+            },
+            'poam_entries': {
+                'type': 'Imported',
+                'can_drop': 'Caution',
+                'dedup_key': ['poam_id'],
+                'description': 'POAM tracking items. May contain manual entries.',
+                'regenerable': False
+            },
+            'host_overrides': {
+                'type': 'User Data',
+                'can_drop': 'Caution',
+                'dedup_key': ['hostname'],
+                'description': 'Manual host property edits. Cannot regenerate - user-entered data.',
+                'regenerable': False
+            },
+            'export_summary': {
+                'type': 'Metadata',
+                'can_drop': 'Yes',
+                'dedup_key': [],
+                'description': 'Export metadata. Auto-regenerated on next export.',
+                'regenerable': True
+            }
+        }
+
+    def _refresh_database_browser(self):
+        """Refresh the database browser with current table information."""
+        # Clear existing items
+        for item in self.db_tree.get_children():
+            self.db_tree.delete(item)
+
+        if not self.existing_db_path or not os.path.exists(self.existing_db_path):
+            self.db_status_label.config(text="No database loaded")
+            return
+
+        try:
+            import sqlite3
+            conn = sqlite3.connect(self.existing_db_path)
+            cursor = conn.cursor()
+
+            # Get list of tables
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+            tables = [row[0] for row in cursor.fetchall()]
+
+            for table in tables:
+                # Get row count
+                try:
+                    cursor.execute(f"SELECT COUNT(*) FROM {table}")
+                    row_count = cursor.fetchone()[0]
+                except:
+                    row_count = 0
+
+                # Get metadata
+                meta = self.db_table_metadata.get(table, {
+                    'type': 'Unknown',
+                    'can_drop': 'Unknown',
+                    'dedup_key': [],
+                    'description': 'Unknown table'
+                })
+
+                dedup_key_str = ', '.join(meta.get('dedup_key', [])) if meta.get('dedup_key') else 'N/A'
+
+                self.db_tree.insert('', tk.END, values=(
+                    table,
+                    f"{row_count:,}",
+                    meta.get('type', 'Unknown'),
+                    meta.get('can_drop', 'Unknown'),
+                    dedup_key_str
+                ))
+
+            conn.close()
+            self.db_status_label.config(text=f"Found {len(tables)} tables in {os.path.basename(self.existing_db_path)}")
+
+        except Exception as e:
+            self.db_status_label.config(text=f"Error: {str(e)}")
+            self._log(f"Database browser error: {e}")
+
+    def _on_db_table_select(self, event):
+        """Handle table selection in database browser."""
+        selection = self.db_tree.selection()
+        if not selection:
+            return
+
+        item = self.db_tree.item(selection[0])
+        table_name = item['values'][0]
+
+        meta = self.db_table_metadata.get(table_name, {})
+        description = meta.get('description', 'No information available')
+        regenerable = meta.get('regenerable', False)
+        can_drop = meta.get('can_drop', 'Unknown')
+
+        # Update info panel
+        self.db_info_text.config(state=tk.NORMAL)
+        self.db_info_text.delete('1.0', tk.END)
+        self.db_info_text.insert(tk.END, f"Table: {table_name}\n\n")
+        self.db_info_text.insert(tk.END, f"Description: {description}\n\n")
+        self.db_info_text.insert(tk.END, f"Drop Safety: {can_drop}\n")
+        self.db_info_text.insert(tk.END, f"Can Regenerate: {'Yes' if regenerable else 'No'}\n")
+
+        if can_drop == 'CRITICAL':
+            self.db_info_text.insert(tk.END, "\n⚠️ WARNING: This is primary source data. Dropping will require re-importing all scan files!")
+        elif can_drop == 'Caution':
+            self.db_info_text.insert(tk.END, "\n⚠️ CAUTION: May contain user-entered data. Backup recommended before any operation.")
+
+        self.db_info_text.config(state=tk.DISABLED)
+
+    def _backup_selected_table(self):
+        """Backup the selected table to a file."""
+        selection = self.db_tree.selection()
+        if not selection:
+            messagebox.showwarning("No Selection", "Please select a table to backup.")
+            return
+
+        item = self.db_tree.item(selection[0])
+        table_name = item['values'][0]
+
+        if not self.existing_db_path or not os.path.exists(self.existing_db_path):
+            messagebox.showerror("Error", "No database loaded")
+            return
+
+        # Create backup directory
+        db_dir = os.path.dirname(self.existing_db_path)
+        backup_dir = os.path.join(db_dir, 'backups')
+        os.makedirs(backup_dir, exist_ok=True)
+
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        backup_path = os.path.join(backup_dir, f"{table_name}_backup_{timestamp}.db")
+
+        try:
+            import sqlite3
+
+            # Connect to source and backup databases
+            src_conn = sqlite3.connect(self.existing_db_path)
+            bak_conn = sqlite3.connect(backup_path)
+
+            # Get table schema
+            cursor = src_conn.cursor()
+            cursor.execute(f"SELECT sql FROM sqlite_master WHERE type='table' AND name='{table_name}'")
+            create_sql = cursor.fetchone()
+
+            if not create_sql:
+                messagebox.showerror("Error", f"Table '{table_name}' not found")
+                return
+
+            # Create table in backup
+            bak_cursor = bak_conn.cursor()
+            bak_cursor.execute(create_sql[0])
+
+            # Copy data
+            cursor.execute(f"SELECT * FROM {table_name}")
+            rows = cursor.fetchall()
+
+            if rows:
+                placeholders = ','.join(['?' for _ in rows[0]])
+                bak_cursor.executemany(f"INSERT INTO {table_name} VALUES ({placeholders})", rows)
+
+            bak_conn.commit()
+            bak_conn.close()
+            src_conn.close()
+
+            self._log(f"Backed up {len(rows)} rows from '{table_name}' to {backup_path}")
+            messagebox.showinfo("Backup Complete",
+                              f"Table '{table_name}' backed up successfully!\n\n"
+                              f"Rows: {len(rows):,}\n"
+                              f"Location: {backup_path}")
+
+        except Exception as e:
+            self._log(f"Backup error: {e}")
+            messagebox.showerror("Backup Error", f"Failed to backup table: {e}")
+
+    def _deduplicate_selected_table(self):
+        """Deduplicate the selected table."""
+        selection = self.db_tree.selection()
+        if not selection:
+            messagebox.showwarning("No Selection", "Please select a table to deduplicate.")
+            return
+
+        item = self.db_tree.item(selection[0])
+        table_name = item['values'][0]
+
+        if not self.existing_db_path or not os.path.exists(self.existing_db_path):
+            messagebox.showerror("Error", "No database loaded")
+            return
+
+        meta = self.db_table_metadata.get(table_name, {})
+        dedup_key = meta.get('dedup_key', [])
+
+        if not dedup_key:
+            messagebox.showwarning("Cannot Deduplicate",
+                                 f"No deduplication key defined for table '{table_name}'")
+            return
+
+        # Confirm and offer backup
+        result = messagebox.askyesnocancel(
+            "Deduplicate Table",
+            f"Deduplicate table '{table_name}'?\n\n"
+            f"Unique key: {', '.join(dedup_key)}\n\n"
+            f"This will keep the earliest record for each unique key.\n"
+            f"(import_date is NOT considered in deduplication)\n\n"
+            f"Create backup first?",
+            icon='warning'
+        )
+
+        if result is None:  # Cancel
+            return
+
+        if result:  # Yes - create backup first
+            self._backup_selected_table()
+
+        try:
+            import sqlite3
+            conn = sqlite3.connect(self.existing_db_path)
+            cursor = conn.cursor()
+
+            # Count before
+            cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+            before_count = cursor.fetchone()[0]
+
+            # Build deduplication query
+            key_cols = ', '.join(dedup_key)
+            dedup_sql = f"""
+                DELETE FROM {table_name}
+                WHERE rowid NOT IN (
+                    SELECT MIN(rowid) FROM {table_name}
+                    GROUP BY {key_cols}
+                )
+            """
+
+            cursor.execute(dedup_sql)
+            conn.commit()
+
+            # Count after
+            cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+            after_count = cursor.fetchone()[0]
+
+            removed = before_count - after_count
+            conn.close()
+
+            self._log(f"Deduplicated '{table_name}': removed {removed} duplicates ({before_count} -> {after_count})")
+            messagebox.showinfo("Deduplication Complete",
+                              f"Table '{table_name}' deduplicated!\n\n"
+                              f"Before: {before_count:,} rows\n"
+                              f"After: {after_count:,} rows\n"
+                              f"Removed: {removed:,} duplicates")
+
+            self._refresh_database_browser()
+
+        except Exception as e:
+            self._log(f"Deduplication error: {e}")
+            messagebox.showerror("Deduplication Error", f"Failed to deduplicate: {e}")
+
+    def _drop_selected_table(self):
+        """Drop/clear the selected table."""
+        selection = self.db_tree.selection()
+        if not selection:
+            messagebox.showwarning("No Selection", "Please select a table to drop.")
+            return
+
+        item = self.db_tree.item(selection[0])
+        table_name = item['values'][0]
+        row_count = item['values'][1]
+
+        if not self.existing_db_path or not os.path.exists(self.existing_db_path):
+            messagebox.showerror("Error", "No database loaded")
+            return
+
+        meta = self.db_table_metadata.get(table_name, {})
+        can_drop = meta.get('can_drop', 'Unknown')
+
+        # Different confirmation levels based on risk
+        if can_drop == 'CRITICAL':
+            # Require typing confirmation for critical tables
+            confirm_dialog = tk.Toplevel(self.window)
+            confirm_dialog.title("Confirm Critical Drop")
+            confirm_dialog.geometry("450x200")
+            confirm_dialog.transient(self.window)
+            confirm_dialog.grab_set()
+
+            ttk.Label(confirm_dialog,
+                     text=f"⚠️ CRITICAL WARNING ⚠️\n\n"
+                          f"Table '{table_name}' is PRIMARY SOURCE DATA.\n"
+                          f"Dropping will require re-importing all scan files!\n\n"
+                          f"Type 'DELETE' to confirm:",
+                     font=('Arial', 10)).pack(pady=20)
+
+            confirm_var = tk.StringVar()
+            entry = ttk.Entry(confirm_dialog, textvariable=confirm_var, width=20)
+            entry.pack(pady=10)
+
+            def do_drop():
+                if confirm_var.get().upper() == 'DELETE':
+                    confirm_dialog.destroy()
+                    self._perform_table_drop(table_name)
+                else:
+                    messagebox.showerror("Invalid Confirmation", "Type 'DELETE' to confirm")
+
+            ttk.Button(confirm_dialog, text="Drop Table", command=do_drop).pack(side=tk.LEFT, padx=20, pady=10)
+            ttk.Button(confirm_dialog, text="Cancel", command=confirm_dialog.destroy).pack(side=tk.RIGHT, padx=20, pady=10)
+
+        elif can_drop == 'Caution':
+            # Require backup before dropping
+            result = messagebox.askyesnocancel(
+                "Drop Table (Caution)",
+                f"⚠️ Table '{table_name}' may contain user-entered data.\n\n"
+                f"Current rows: {row_count}\n\n"
+                f"A backup is REQUIRED before dropping.\n\n"
+                f"Create backup and drop table?",
+                icon='warning'
+            )
+
+            if result is None:  # Cancel
+                return
+            if result:  # Yes - backup and drop
+                self._backup_selected_table()
+                self._perform_table_drop(table_name)
+        else:
+            # Normal confirmation
+            result = messagebox.askyesnocancel(
+                "Drop Table",
+                f"Drop all data from table '{table_name}'?\n\n"
+                f"Current rows: {row_count}\n\n"
+                f"Create backup first?",
+                icon='question'
+            )
+
+            if result is None:  # Cancel
+                return
+            if result:  # Yes - backup first
+                self._backup_selected_table()
+
+            self._perform_table_drop(table_name)
+
+    def _perform_table_drop(self, table_name: str):
+        """Actually perform the table drop/clear."""
+        try:
+            import sqlite3
+            conn = sqlite3.connect(self.existing_db_path)
+            cursor = conn.cursor()
+
+            # Clear table data (keep structure)
+            cursor.execute(f"DELETE FROM {table_name}")
+            conn.commit()
+            conn.close()
+
+            self._log(f"Cleared all data from table '{table_name}'")
+            messagebox.showinfo("Table Cleared",
+                              f"All data cleared from '{table_name}'.\n\n"
+                              f"Table structure preserved.\n"
+                              f"Use 'Restore from Backup' to recover data.")
+
+            self._refresh_database_browser()
+
+        except Exception as e:
+            self._log(f"Drop table error: {e}")
+            messagebox.showerror("Drop Error", f"Failed to clear table: {e}")
+
+    def _restore_table_from_backup(self):
+        """Restore a table from a backup file."""
+        if not self.existing_db_path or not os.path.exists(self.existing_db_path):
+            messagebox.showerror("Error", "No database loaded")
+            return
+
+        # Find backup directory
+        db_dir = os.path.dirname(self.existing_db_path)
+        backup_dir = os.path.join(db_dir, 'backups')
+
+        if not os.path.exists(backup_dir):
+            messagebox.showinfo("No Backups", "No backup directory found.\n\nCreate backups using the 'Backup Table' button.")
+            return
+
+        # Let user select backup file
+        backup_file = filedialog.askopenfilename(
+            title="Select Backup File",
+            initialdir=backup_dir,
+            filetypes=[("SQLite Backup", "*.db"), ("All Files", "*.*")]
+        )
+
+        if not backup_file:
+            return
+
+        try:
+            import sqlite3
+
+            # Connect to backup
+            bak_conn = sqlite3.connect(backup_file)
+            bak_cursor = bak_conn.cursor()
+
+            # Get table name from backup
+            bak_cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            tables = bak_cursor.fetchall()
+
+            if not tables:
+                messagebox.showerror("Error", "No tables found in backup file")
+                bak_conn.close()
+                return
+
+            table_name = tables[0][0]
+
+            # Confirm restore
+            bak_cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+            backup_rows = bak_cursor.fetchone()[0]
+
+            result = messagebox.askyesno(
+                "Confirm Restore",
+                f"Restore table '{table_name}' from backup?\n\n"
+                f"Backup rows: {backup_rows:,}\n\n"
+                f"This will REPLACE all current data in the table.",
+                icon='warning'
+            )
+
+            if not result:
+                bak_conn.close()
+                return
+
+            # Connect to main database
+            main_conn = sqlite3.connect(self.existing_db_path)
+            main_cursor = main_conn.cursor()
+
+            # Clear existing data
+            main_cursor.execute(f"DELETE FROM {table_name}")
+
+            # Copy from backup
+            bak_cursor.execute(f"SELECT * FROM {table_name}")
+            rows = bak_cursor.fetchall()
+
+            if rows:
+                placeholders = ','.join(['?' for _ in rows[0]])
+                main_cursor.executemany(f"INSERT INTO {table_name} VALUES ({placeholders})", rows)
+
+            main_conn.commit()
+            main_conn.close()
+            bak_conn.close()
+
+            self._log(f"Restored {len(rows)} rows to '{table_name}' from {backup_file}")
+            messagebox.showinfo("Restore Complete",
+                              f"Table '{table_name}' restored!\n\n"
+                              f"Rows restored: {len(rows):,}")
+
+            self._refresh_database_browser()
+
+        except Exception as e:
+            self._log(f"Restore error: {e}")
+            messagebox.showerror("Restore Error", f"Failed to restore: {e}")
+
     # Helper methods
     def _get_current_date_interval(self) -> str:
         """
@@ -1901,6 +2478,36 @@ class NessusHistoryTrackerApp:
             return 'PSS'
         elif parsed.environment_type == EnvironmentType.SHARED:
             return 'Shared'
+        return 'Unknown'
+
+    def _determine_host_type(self, hostname: str) -> str:
+        """
+        Determine host type based on hostname naming convention.
+
+        Detection rules:
+        - Contains 'ilom' -> ILOM
+        - Ends with 'p' -> Physical
+        - Ends with 'v' -> Virtual
+        - Otherwise -> Unknown
+
+        Args:
+            hostname: The hostname to classify
+
+        Returns:
+            Host type string: 'Physical', 'Virtual', 'ILOM', or 'Unknown'
+        """
+        if not isinstance(hostname, str) or not hostname:
+            return 'Unknown'
+
+        h_lower = hostname.lower().strip()
+
+        if 'ilom' in h_lower:
+            return 'ILOM'
+        elif h_lower.endswith('p'):
+            return 'Physical'
+        elif h_lower.endswith('v'):
+            return 'Virtual'
+
         return 'Unknown'
 
     def _add_environment_column(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -2349,6 +2956,23 @@ class NessusHistoryTrackerApp:
                 keep_history=True
             )
 
+            # Check for hostname mismatches and offer mapping dialog
+            if not self.stig_df.empty and not self.host_presence_df.empty:
+                stig_hostnames = set(self.stig_df['hostname'].unique())
+                known_hostnames = set(self.host_presence_df['hostname'].str.lower().unique())
+                unmatched = [h for h in stig_hostnames if h.lower() not in known_hostnames]
+
+                if unmatched:
+                    self._log(f"Found {len(unmatched)} STIG hostnames not matching known hosts")
+                    # Show mapping dialog - returns dictionary of {stig_hostname: mapped_hostname}
+                    mapping = self._show_stig_hostname_mapping_dialog(unmatched, list(self.host_presence_df['hostname'].unique()))
+                    if mapping:
+                        # Apply hostname mapping to stig_df
+                        for old_name, new_name in mapping.items():
+                            if new_name and new_name != old_name:
+                                self.stig_df.loc[self.stig_df['hostname'] == old_name, 'hostname'] = new_name
+                                self._log(f"  Mapped STIG hostname: {old_name} → {new_name}")
+
             # Log import statistics
             self._log(f"STIG Import Statistics:")
             self._log(f"  Files processed: {import_stats['files_processed']}")
@@ -2396,6 +3020,10 @@ class NessusHistoryTrackerApp:
                 if hasattr(self, '_update_stig_tab'):
                     self.window.after(0, self._update_stig_tab)
 
+                # Refresh host tree to update STIG count column
+                if hasattr(self, '_update_host_tree'):
+                    self.window.after(100, self._update_host_tree)
+
                 # Build summary message
                 msg_parts = [f"Loaded {len(self.stig_df)} STIG records"]
                 msg_parts.append(f"Current: {current_count} | Historical: {superseded_count}")
@@ -2424,6 +3052,112 @@ class NessusHistoryTrackerApp:
             self._log(traceback.format_exc())
             messagebox.showerror("Error", f"Failed to load STIG files: {e}")
 
+    def _show_stig_hostname_mapping_dialog(self, unmatched_hosts: list, known_hosts: list) -> dict:
+        """
+        Show dialog for mapping STIG checklist hostnames to known hosts.
+
+        Args:
+            unmatched_hosts: List of hostnames from STIG files that don't match known hosts
+            known_hosts: List of known hostnames from host_presence_df
+
+        Returns:
+            Dictionary mapping stig_hostname -> mapped_hostname (or empty if cancelled)
+        """
+        mapping_result = {}
+
+        dialog = tk.Toplevel(self.window)
+        dialog.title("STIG Hostname Mapping")
+        dialog.geometry("600x450")
+        dialog.transient(self.window)
+        dialog.grab_set()
+
+        # Header
+        header_frame = ttk.Frame(dialog)
+        header_frame.pack(fill=tk.X, padx=20, pady=10)
+
+        ttk.Label(header_frame, text="⚠️ Unmatched STIG Hostnames",
+                 font=('Arial', 12, 'bold')).pack(anchor=tk.W)
+        ttk.Label(header_frame,
+                 text=f"{len(unmatched_hosts)} STIG checklist hostname(s) don't match known hosts.\n"
+                      "Select a mapping for each, or leave unchanged.",
+                 foreground='gray').pack(anchor=tk.W)
+
+        # Scrollable mapping area
+        canvas_frame = ttk.Frame(dialog)
+        canvas_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=5)
+
+        canvas = tk.Canvas(canvas_frame, bg=GUI_DARK_THEME['entry_bg'])
+        scrollbar = ttk.Scrollbar(canvas_frame, orient=tk.VERTICAL, command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Add (Keep Original) option to known hosts
+        host_options = ['(Keep Original)', '(Skip - Don\'t Import)'] + sorted(known_hosts)
+
+        # Create mapping dropdowns
+        host_vars = {}
+        for i, stig_host in enumerate(sorted(unmatched_hosts)):
+            row_frame = ttk.Frame(scrollable_frame)
+            row_frame.pack(fill=tk.X, pady=2)
+
+            ttk.Label(row_frame, text=stig_host, width=30, anchor=tk.W).pack(side=tk.LEFT, padx=5)
+            ttk.Label(row_frame, text="→", width=3).pack(side=tk.LEFT)
+
+            host_var = tk.StringVar(value='(Keep Original)')
+            combo = ttk.Combobox(row_frame, textvariable=host_var, values=host_options, width=30)
+            combo.pack(side=tk.LEFT, padx=5)
+            host_vars[stig_host] = host_var
+
+        # Button frame
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(fill=tk.X, padx=20, pady=15)
+
+        def apply_mapping():
+            for stig_host, var in host_vars.items():
+                selected = var.get()
+                if selected == '(Keep Original)':
+                    # Keep original hostname
+                    mapping_result[stig_host] = stig_host
+                elif selected == '(Skip - Don\'t Import)':
+                    # Mark for removal
+                    mapping_result[stig_host] = None
+                else:
+                    # Map to selected host
+                    mapping_result[stig_host] = selected
+            dialog.destroy()
+
+        def cancel():
+            # Return empty dict - no mapping applied
+            dialog.destroy()
+
+        ttk.Button(btn_frame, text="Apply Mapping", command=apply_mapping).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Keep All Original", command=lambda: [dialog.destroy() for _ in [None]]).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Cancel Import", command=cancel).pack(side=tk.RIGHT, padx=5)
+
+        # Wait for dialog to close
+        dialog.wait_window()
+
+        # Remove entries marked for skip
+        final_mapping = {k: v for k, v in mapping_result.items() if v is not None}
+
+        # If any were marked for skip, remove them from stig_df
+        skipped = [k for k, v in mapping_result.items() if v is None]
+        if skipped:
+            self._log(f"Skipping {len(skipped)} unmapped STIG hostnames: {skipped}")
+            self.stig_df = self.stig_df[~self.stig_df['hostname'].isin(skipped)]
+
+        return final_mapping
+
     def _select_poam_file(self):
         """Select POAM Excel file."""
         filetypes = (('Excel files', '*.xlsx;*.xls'), ('All files', '*.*'))
@@ -2438,13 +3172,25 @@ class NessusHistoryTrackerApp:
             self._load_poam_file()
 
     def _load_poam_file(self):
-        """Load and parse selected POAM file."""
+        """Load and parse selected POAM file with column mapping validation."""
         if not self.poam_file_path:
             return
 
         try:
             self._log("Parsing POAM file...")
-            raw_df, entries = parse_poam_excel(self.poam_file_path)
+            raw_df, entries, mapping_info = parse_poam_excel(self.poam_file_path, return_mapping_info=True)
+
+            # Check for column mapping issues
+            if mapping_info:
+                unmapped = mapping_info.get('unmapped_columns', [])
+                missing_required = mapping_info.get('missing_required', [])
+
+                if unmapped or missing_required:
+                    # Show column mapping dialog
+                    proceed = self._show_poam_column_mapping_dialog(mapping_info, raw_df)
+                    if not proceed:
+                        self._log("POAM import cancelled by user")
+                        return
 
             if entries:
                 # Expand consolidated POAMs to individual entries
@@ -2481,6 +3227,123 @@ class NessusHistoryTrackerApp:
         except Exception as e:
             self._log(f"Error loading POAM file: {e}")
             messagebox.showerror("Error", f"Failed to load POAM file: {e}")
+
+    def _show_poam_column_mapping_dialog(self, mapping_info: dict, raw_df) -> bool:
+        """
+        Show dialog for POAM column mapping issues.
+
+        Args:
+            mapping_info: Dictionary with mapping information from parser
+            raw_df: Raw DataFrame from POAM file
+
+        Returns:
+            True to proceed with import, False to cancel
+        """
+        unmapped = mapping_info.get('unmapped_columns', [])
+        missing_required = mapping_info.get('missing_required', [])
+        mapped = mapping_info.get('mapped_columns', {})
+
+        result = {'proceed': False}
+
+        dialog = tk.Toplevel(self.window)
+        dialog.title("POAM Column Mapping")
+        dialog.geometry("650x500")
+        dialog.transient(self.window)
+        dialog.grab_set()
+
+        # Header
+        header_frame = ttk.Frame(dialog)
+        header_frame.pack(fill=tk.X, padx=20, pady=10)
+
+        if missing_required:
+            ttk.Label(header_frame, text="⚠️ Missing Required Columns",
+                     font=('Arial', 12, 'bold'), foreground='#dc3545').pack(anchor=tk.W)
+            ttk.Label(header_frame,
+                     text=f"Required column(s) not found: {', '.join(missing_required)}\n"
+                          "GPM UID is required for matching existing POAM entries.",
+                     foreground='gray').pack(anchor=tk.W)
+        else:
+            ttk.Label(header_frame, text="POAM Column Mapping",
+                     font=('Arial', 12, 'bold')).pack(anchor=tk.W)
+
+        if unmapped:
+            ttk.Label(header_frame,
+                     text=f"\n{len(unmapped)} column(s) could not be mapped automatically.\n"
+                          "These columns will be ignored during import.",
+                     foreground='gray').pack(anchor=tk.W)
+
+        # Two-column layout: Mapped and Unmapped
+        main_frame = ttk.Frame(dialog)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=5)
+
+        # Mapped columns (left)
+        mapped_frame = ttk.LabelFrame(main_frame, text=f"Mapped Columns ({len(mapped)})", padding=5)
+        mapped_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
+
+        mapped_list = tk.Listbox(mapped_frame, height=12, bg=GUI_DARK_THEME['entry_bg'], fg='#28a745')
+        mapped_scroll = ttk.Scrollbar(mapped_frame, orient=tk.VERTICAL, command=mapped_list.yview)
+        mapped_list.configure(yscrollcommand=mapped_scroll.set)
+
+        for orig, internal in sorted(mapped.items()):
+            mapped_list.insert(tk.END, f"{orig} → {internal}")
+
+        mapped_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        mapped_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Unmapped columns (right)
+        unmapped_frame = ttk.LabelFrame(main_frame, text=f"Unmapped Columns ({len(unmapped)})", padding=5)
+        unmapped_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(5, 0))
+
+        unmapped_list = tk.Listbox(unmapped_frame, height=12, bg=GUI_DARK_THEME['entry_bg'], fg='#ffc107')
+        unmapped_scroll = ttk.Scrollbar(unmapped_frame, orient=tk.VERTICAL, command=unmapped_list.yview)
+        unmapped_list.configure(yscrollcommand=unmapped_scroll.set)
+
+        for col in sorted(unmapped):
+            unmapped_list.insert(tk.END, col)
+
+        unmapped_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        unmapped_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Options frame
+        options_frame = ttk.LabelFrame(dialog, text="Import Options", padding=10)
+        options_frame.pack(fill=tk.X, padx=20, pady=10)
+
+        ttk.Label(options_frame,
+                 text="• Existing POAM entries are matched by GPM UID only\n"
+                      "• Unmapped columns will be dropped\n"
+                      "• Matching entries will be updated, new entries will be appended",
+                 foreground='gray').pack(anchor=tk.W)
+
+        # Button frame
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(fill=tk.X, padx=20, pady=15)
+
+        def proceed():
+            result['proceed'] = True
+            dialog.destroy()
+
+        def cancel():
+            result['proceed'] = False
+            dialog.destroy()
+
+        if missing_required:
+            # If GPM UID is missing, warn more strongly
+            ttk.Button(btn_frame, text="Import Anyway (New Entries Only)",
+                      command=proceed).pack(side=tk.LEFT, padx=5)
+        else:
+            ttk.Button(btn_frame, text="Proceed with Import",
+                      command=proceed).pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(btn_frame, text="Cancel Import",
+                  command=cancel).pack(side=tk.RIGHT, padx=5)
+
+        # Log the mapping info
+        self._log(f"POAM column mapping: {len(mapped)} mapped, {len(unmapped)} unmapped")
+        if unmapped:
+            self._log(f"  Unmapped columns: {unmapped}")
+
+        dialog.wait_window()
+        return result['proceed']
 
     def _perform_poam_matching(self):
         """Match POAM entries to Tenable findings and STIG checklists."""
@@ -2597,7 +3460,7 @@ class NessusHistoryTrackerApp:
         cat_colors = {
             'CAT I': '#dc3545',    # Red
             'CAT II': '#fd7e14',   # Orange
-            'CAT III': '#ffc107',  # Yellow
+            'CAT III': '#B8860B',  # Yellow
             'Unknown': '#6c757d'   # Gray
         }
         cat_order = ['CAT I', 'CAT II', 'CAT III', 'Unknown']
@@ -4114,7 +4977,7 @@ Risk Score: {risk_score:,}
                     ax1 = axes[0, 0]
                     if 'severity_text' in active_df.columns and not active_df.empty:
                         sev_counts = active_df['severity_text'].value_counts()
-                        colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#28a745'}
+                        colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#B8860B', 'Low': '#28a745'}
                         bar_colors = [colors.get(s, '#6c757d') for s in sev_counts.index]
                         bars = ax1.bar(sev_counts.index, sev_counts.values, color=bar_colors)
                         ax1.set_ylabel('Count')
@@ -4512,7 +5375,7 @@ By Severity (Active):
                     ax1 = axes[0, 0]
                     top_impact = plugin_impact.head(15)
                     if not top_impact.empty:
-                        colors = [{'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#28a745'}.get(s, '#6c757d')
+                        colors = [{'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#B8860B', 'Low': '#28a745'}.get(s, '#6c757d')
                                  for s in top_impact['severity']]
                         bars = ax1.barh(range(len(top_impact)), top_impact['impact_score'].values, color=colors)
                         ax1.set_yticks(range(len(top_impact)))
@@ -4825,7 +5688,7 @@ Avg New/Month: {monthly_new.mean():.0f}
                     ax1 = axes[0]
                     severity_monthly = df_copy.groupby([df_copy['first_seen'].dt.to_period('M'), 'severity_text']).size().unstack(fill_value=0)
                     if not severity_monthly.empty:
-                        colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#28a745'}
+                        colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#B8860B', 'Low': '#28a745'}
                         for sev in ['Critical', 'High', 'Medium', 'Low']:
                             if sev in severity_monthly.columns:
                                 ax1.plot(severity_monthly.index.astype(str), severity_monthly[sev],
@@ -5708,6 +6571,10 @@ Avg New/Month: {monthly_new.mean():.0f}
         self._update_lifecycle_tree()
         self._update_host_tree()
         self._update_all_visualizations()
+
+        # Refresh database browser if available
+        if hasattr(self, '_refresh_database_browser'):
+            self._refresh_database_browser()
 
     def _apply_default_date_filter(self):
         """Apply the default 180-day date filter after data loading."""
@@ -6878,16 +7745,8 @@ Avg New/Month: {monthly_new.mean():.0f}
 
         for _, row in display_df.iterrows():
             hostname = row.get('hostname', '')
-            # Determine host type
-            host_type = 'Unknown'
-            if isinstance(hostname, str):
-                h_lower = hostname.lower()
-                if 'ilom' in h_lower:
-                    host_type = 'ILOM'
-                elif h_lower.endswith('p'):
-                    host_type = 'Physical'
-                elif h_lower.endswith('v'):
-                    host_type = 'Virtual'
+            # Determine host type using helper function
+            host_type = self._determine_host_type(hostname)
 
             # Determine status display
             is_missing = row.get('_is_missing', False)
@@ -7077,7 +7936,7 @@ Avg New/Month: {monthly_new.mean():.0f}
                 sev_colors = {
                     'Critical': '#dc3545',
                     'High': '#fd7e14',
-                    'Medium': '#ffc107',
+                    'Medium': '#B8860B',
                     'Low': '#28a745',
                     'Info': '#17a2b8'
                 }
@@ -7159,7 +8018,10 @@ Avg New/Month: {monthly_new.mean():.0f}
 
     def _build_host_stig_tab(self, parent, hostname: str):
         """Build the STIG checklists tab for a host."""
-        if self.stig_df.empty:
+        # Use filtered (current only) STIG data by default
+        stig_data = self.filtered_stig_df if hasattr(self, 'filtered_stig_df') and not self.filtered_stig_df.empty else self.stig_df
+
+        if stig_data.empty:
             ttk.Label(parent, text="No STIG data loaded\n\nLoad .cklb files from Data Sources",
                      justify=tk.CENTER).pack(pady=50)
             return
@@ -7167,16 +8029,16 @@ Avg New/Month: {monthly_new.mean():.0f}
         # Find matching STIG data using normalized hostname
         normalized = normalize_hostname_for_matching(hostname)
 
-        host_stigs = self.stig_df[
-            self.stig_df['hostname'].apply(
+        host_stigs = stig_data[
+            stig_data['hostname'].apply(
                 lambda x: normalize_hostname_for_matching(x) == normalized
             )
         ]
 
         # Try exact match if no results
         if host_stigs.empty:
-            host_stigs = self.stig_df[
-                self.stig_df['hostname'].str.lower() == hostname.lower()
+            host_stigs = stig_data[
+                stig_data['hostname'].str.lower() == hostname.lower()
             ]
 
         if host_stigs.empty:
@@ -7213,7 +8075,7 @@ Avg New/Month: {monthly_new.mean():.0f}
             open_stigs = host_stigs[host_stigs['status'] == 'Open'] if 'status' in host_stigs.columns else host_stigs
             if not open_stigs.empty and 'cat_severity' in open_stigs.columns:
                 cat_counts = open_stigs['cat_severity'].value_counts()
-                cat_colors = {'CAT I': '#dc3545', 'CAT II': '#fd7e14', 'CAT III': '#ffc107', 'Unknown': '#6c757d'}
+                cat_colors = {'CAT I': '#dc3545', 'CAT II': '#fd7e14', 'CAT III': '#B8860B', 'Unknown': '#6c757d'}
                 cat_order = ['CAT I', 'CAT II', 'CAT III', 'Unknown']
                 cat_counts = cat_counts.reindex([c for c in cat_order if c in cat_counts.index])
 
@@ -7307,20 +8169,23 @@ Avg New/Month: {monthly_new.mean():.0f}
         # Get current values (from overrides or detected)
         current_overrides = self.host_overrides.get(hostname, {})
 
-        # Try to get detected values from host_presence_df
-        detected_values = {}
+        # Get detected values using helper functions (not stored in df)
+        detected_values = {
+            'host_type': self._determine_host_type(hostname),
+            'environment': self._get_environment_type(hostname),
+            'location': '',
+            'ip_address': '',
+        }
+
+        # Try to get additional values from host_presence_df
         if not self.host_presence_df.empty:
             host_row = self.host_presence_df[
                 self.host_presence_df['hostname'].str.lower() == hostname.lower()
             ]
             if not host_row.empty:
                 row = host_row.iloc[0]
-                detected_values = {
-                    'host_type': row.get('host_type', 'Unknown'),
-                    'environment': row.get('environment', ''),
-                    'location': row.get('location', ''),
-                    'ip_address': row.get('ip_address', ''),
-                }
+                detected_values['location'] = row.get('location', '')
+                detected_values['ip_address'] = row.get('ip_address', '')
 
         # Header
         header = ttk.Label(parent, text=f"Edit Host Properties: {hostname}",
@@ -8044,7 +8909,7 @@ Avg New/Month: {monthly_new.mean():.0f}
 
         # Chart 2: Severity breakdown over time with markers (grouped by interval)
         if 'severity_text' in hist_df.columns:
-            severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff', 'Info': '#6c757d'}
+            severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#B8860B', 'Low': '#007bff', 'Info': '#6c757d'}
             for sev in ['Critical', 'High', 'Medium', 'Low']:
                 sev_df = hist_df[hist_df['severity_text'] == sev]
                 if not sev_df.empty:
@@ -8189,7 +9054,7 @@ Avg New/Month: {monthly_new.mean():.0f}
         severity_colors = {
             'Critical': '#dc3545',
             'High': '#fd7e14',
-            'Medium': '#ffc107',
+            'Medium': '#B8860B',
             'Low': '#28a745'
         }
         severities = ['Critical', 'High', 'Medium', 'Low']
@@ -8520,7 +9385,7 @@ Avg New/Month: {monthly_new.mean():.0f}
                     # Standard display
                     mttr = resolved.groupby('severity_text')['days_open_numeric'].mean()
                     mttr = mttr.reindex([s for s in severity_order if s in mttr.index])
-                    severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff'}
+                    severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#B8860B', 'Low': '#007bff'}
                     colors = [severity_colors.get(s, '#6c757d') for s in mttr.index]
                     bars = self.risk_ax2.bar(range(len(mttr)), mttr.values, color=colors)
                     self.risk_ax2.set_xticks(range(len(mttr)))
@@ -8716,7 +9581,7 @@ Avg New/Month: {monthly_new.mean():.0f}
         severity_order = ['Critical', 'High', 'Medium', 'Low', 'Info']
         mttr = mttr.reindex([s for s in severity_order if s in mttr.index])
 
-        colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107',
+        colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#B8860B',
                  'Low': '#28a745', 'Info': '#17a2b8'}
         bar_colors = [colors.get(s, '#6c757d') for s in mttr.index]
 
@@ -9158,7 +10023,7 @@ Avg New/Month: {monthly_new.mean():.0f}
         all_weeks = pd.date_range(start=min_date, end=max_date, freq='W-MON')
         week_labels = [w.strftime('%m/%d') for w in all_weeks[-8:]]
 
-        severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#28a745'}
+        severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#B8860B', 'Low': '#28a745'}
         severities = ['Critical', 'High', 'Medium', 'Low']
 
         self._draw_rolling_severity_totals(ax, rolling_df, all_weeks[-8:], week_labels,
@@ -9203,7 +10068,7 @@ Avg New/Month: {monthly_new.mean():.0f}
         all_weeks = pd.date_range(start=min_date, end=max_date, freq='W-MON')
         week_labels = [w.strftime('%m/%d') for w in all_weeks[-8:]]
 
-        severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#28a745'}
+        severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#B8860B', 'Low': '#28a745'}
         severities = ['Critical', 'High', 'Medium', 'Low']
 
         self._draw_rolling_unique_plugins(ax, rolling_df, all_weeks[-8:], week_labels,
@@ -9273,7 +10138,7 @@ Avg New/Month: {monthly_new.mean():.0f}
         all_weeks = pd.date_range(start=min_date, end=max_date, freq='W-MON')
         week_labels = [w.strftime('%m/%d') for w in all_weeks[-8:]]
 
-        severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#28a745'}
+        severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#B8860B', 'Low': '#28a745'}
         severities = ['Critical', 'High', 'Medium', 'Low']
 
         self._draw_rolling_env_totals(ax, rolling_df, all_weeks[-8:], week_labels,
@@ -9363,7 +10228,7 @@ Avg New/Month: {monthly_new.mean():.0f}
             return
 
         dates = pivot.index
-        severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff', 'Info': '#6c757d'}
+        severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#B8860B', 'Low': '#007bff', 'Info': '#6c757d'}
 
         for sev in ['Critical', 'High', 'Medium', 'Low']:
             if sev in pivot.columns:
@@ -9814,7 +10679,7 @@ Avg New/Month: {monthly_new.mean():.0f}
         severity_order = ['Critical', 'High', 'Medium', 'Low']
         sev_counts = sev_counts.reindex([s for s in severity_order if s in sev_counts.index])
 
-        severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff'}
+        severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#B8860B', 'Low': '#007bff'}
         colors = [severity_colors.get(s, '#6c757d') for s in sev_counts.index]
 
         bars = ax.bar(range(len(sev_counts)), sev_counts.values, color=colors)
@@ -9902,7 +10767,7 @@ Avg New/Month: {monthly_new.mean():.0f}
         if len(plot_df) > 500:
             plot_df = plot_df.sample(500, random_state=42)
 
-        severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff'}
+        severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#B8860B', 'Low': '#007bff'}
 
         for sev in ['Critical', 'High', 'Medium', 'Low']:
             sev_df = plot_df[plot_df['severity'] == sev]
@@ -10284,7 +11149,7 @@ Avg New/Month: {monthly_new.mean():.0f}
             return
 
         x = range(len(segment_sev))
-        severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff'}
+        severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#B8860B', 'Low': '#007bff'}
 
         bottom = np.zeros(len(segment_sev))
         for sev in ['Low', 'Medium', 'High', 'Critical']:
@@ -10331,7 +11196,7 @@ Avg New/Month: {monthly_new.mean():.0f}
                 x = np.arange(len(env_sev))
                 width = 0.15
                 severity_order = ['Critical', 'High', 'Medium', 'Low', 'Info']
-                severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107',
+                severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#B8860B',
                                   'Low': '#28a745', 'Info': '#17a2b8'}
 
                 for i, sev in enumerate(severity_order):
@@ -10533,7 +11398,7 @@ Avg New/Month: {monthly_new.mean():.0f}
             ax.text(0.5, 0.5, 'No severity data', ha='center', va='center', color='white', fontsize=12)
             return
 
-        severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107',
+        severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#B8860B',
                           'Low': '#007bff', 'Info': '#6c757d'}
         colors = [severity_colors.get(s, '#6c757d') for s in plugin_sev.index]
 
@@ -10694,10 +11559,22 @@ Avg New/Month: {monthly_new.mean():.0f}
                    color='#dc3545', fontweight='bold', ha='center')
             ax.text(0.25, 0.95, 'HIGH PRIORITY', transform=ax.transAxes, fontsize=10,
                    color='#fd7e14', fontweight='bold', ha='center')
-            ax.text(0.75, 0.05, 'MONITOR', transform=ax.transAxes, fontsize=10,
-                   color='#ffc107', fontweight='bold', ha='center')
-            ax.text(0.25, 0.05, 'LOW PRIORITY', transform=ax.transAxes, fontsize=10,
+            ax.text(0.75, 0.05, 'SCHEDULE', transform=ax.transAxes, fontsize=10,
+                   color='#B8860B', fontweight='bold', ha='center')
+            ax.text(0.25, 0.05, 'MONITOR', transform=ax.transAxes, fontsize=10,
                    color='#28a745', fontweight='bold', ha='center')
+
+        # Add data labels for top priority findings (urgent quadrant)
+        if show_labels and 'plugin_id' in plot_df.columns:
+            urgent_df = plot_df[(plot_df['cvss'] >= 7) & (plot_df['days_open'] > 30)]
+            if not urgent_df.empty:
+                n_labels = 10 if enlarged else 5
+                top_urgent = urgent_df.nlargest(min(n_labels, len(urgent_df)), 'priority_score')
+                for _, row in top_urgent.iterrows():
+                    label = str(row.get('plugin_id', ''))[:10]
+                    ax.annotate(label, (row['days_open'], row['cvss']),
+                               fontsize=7 if enlarged else 5, color='white', alpha=0.9,
+                               xytext=(4, 4), textcoords='offset points')
 
         ax.set_title('Remediation Priority Matrix')
         ax.set_xlabel('Days Open')
@@ -10739,7 +11616,7 @@ Avg New/Month: {monthly_new.mean():.0f}
             ax.text(0.5, 0.5, 'No data', ha='center', va='center', color='white', fontsize=12)
             return
 
-        colors = {'Urgent': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#28a745'}
+        colors = {'Urgent': '#dc3545', 'High': '#fd7e14', 'Medium': '#B8860B', 'Low': '#28a745'}
         pie_colors = [colors.get(p, '#6c757d') for p in priority_counts.index]
 
         labels = [f'{p}\n({c})' for p, c in zip(priority_counts.index, priority_counts.values)]
@@ -10807,7 +11684,7 @@ Avg New/Month: {monthly_new.mean():.0f}
             ax.text(0.5, 0.5, 'No data', ha='center', va='center', color='white', fontsize=12)
             return
 
-        severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff'}
+        severity_colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#B8860B', 'Low': '#007bff'}
         colors = [severity_colors.get(s, '#6c757d') for s in avg_priority.index]
 
         bars = ax.bar(range(len(avg_priority)), avg_priority.values, color=colors)
@@ -11148,7 +12025,7 @@ Avg New/Month: {monthly_new.mean():.0f}
         cat_colors = {
             'CAT I': '#dc3545',    # Red (Critical)
             'CAT II': '#fd7e14',   # Orange (High)
-            'CAT III': '#ffc107',  # Yellow (Medium)
+            'CAT III': '#B8860B',  # Yellow (Medium)
             'Unknown': '#6c757d'   # Gray
         }
 
@@ -11271,7 +12148,7 @@ Avg New/Month: {monthly_new.mean():.0f}
         cat_colors = {
             'CAT I': '#dc3545',
             'CAT II': '#fd7e14',
-            'CAT III': '#ffc107',
+            'CAT III': '#B8860B',
             'Unknown': '#6c757d'
         }
         cat_order = ['CAT I', 'CAT II', 'CAT III', 'Unknown']
@@ -12501,7 +13378,7 @@ Avg New/Month: {monthly_new.mean():.0f}
                     if sev in plugin_severity.columns:
                         severity_totals[sev] = plugin_severity[sev].sum()
                 if severity_totals:
-                    colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff', 'Info': '#6c757d'}
+                    colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#B8860B', 'Low': '#007bff', 'Info': '#6c757d'}
                     bar_colors = [colors.get(s, 'gray') for s in severity_totals.keys()]
                     bars = self.plugin_ax2.bar(range(len(severity_totals)), list(severity_totals.values()), color=bar_colors)
                     self.plugin_ax2.set_xticks(range(len(severity_totals)))
@@ -12658,8 +13535,20 @@ Avg New/Month: {monthly_new.mean():.0f}
                                   transform=self.priority_ax1.transAxes, va='top', ha='right')
             self.priority_ax1.text(0.02, 0.02, f'Monitor ({monitor})', fontsize=8, color='#28a745',
                                   transform=self.priority_ax1.transAxes, va='bottom')
-            self.priority_ax1.text(0.98, 0.02, f'Schedule ({schedule})', fontsize=8, color='#ffc107',
+            self.priority_ax1.text(0.98, 0.02, f'Schedule ({schedule})', fontsize=8, color='#B8860B',
                                   transform=self.priority_ax1.transAxes, va='bottom', ha='right')
+
+            # Add data labels for top priority findings (highest risk - urgent quadrant)
+            if show_labels and 'plugin_id' in sample_df.columns:
+                # Label top 5 urgent findings
+                urgent_df = sample_df[(sample_df['cvss'] >= 7) & (sample_df['days_open'] > 30)]
+                if not urgent_df.empty:
+                    top_urgent = urgent_df.nlargest(min(5, len(urgent_df)), 'priority_score')
+                    for _, row in top_urgent.iterrows():
+                        label = str(row.get('plugin_id', ''))[:8]
+                        self.priority_ax1.annotate(label, (row['days_open'], row['cvss']),
+                                                  fontsize=6, color='white', alpha=0.8,
+                                                  xytext=(3, 3), textcoords='offset points')
         self.priority_ax1.set_title('Priority Matrix (CVSS vs Age)', color=GUI_DARK_THEME['fg'], fontsize=10)
         self.priority_ax1.set_xlabel('Days Open', color=GUI_DARK_THEME['fg'])
         self.priority_ax1.set_ylabel('CVSS Score', color=GUI_DARK_THEME['fg'])
@@ -12678,7 +13567,7 @@ Avg New/Month: {monthly_new.mean():.0f}
             priority_cats = active_df['priority_score'].apply(categorize_priority).value_counts()
             priority_order = ['Critical', 'High', 'Medium', 'Low']
             priority_cats = priority_cats.reindex([p for p in priority_order if p in priority_cats.index])
-            colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#28a745'}
+            colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#B8860B', 'Low': '#28a745'}
             pie_colors = [colors.get(c, 'gray') for c in priority_cats.index]
             labels = [f'{idx}\n({val})' for idx, val in zip(priority_cats.index, priority_cats.values)]
             self.priority_ax2.pie(priority_cats.values, labels=labels, colors=pie_colors,
@@ -12725,7 +13614,7 @@ Avg New/Month: {monthly_new.mean():.0f}
                 sev_priority = active_df_numeric.groupby(sev_col)['priority_score'].mean()
                 sev_priority = sev_priority.reindex([s for s in sev_order if s in sev_priority.index])
                 if len(sev_priority) > 0:
-                    colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff', 'Info': '#6c757d'}
+                    colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#B8860B', 'Low': '#007bff', 'Info': '#6c757d'}
                     bar_colors = [colors.get(s, 'gray') for s in sev_priority.index]
                     bars = self.priority_ax4.bar(range(len(sev_priority)), sev_priority.values, color=bar_colors)
                     self.priority_ax4.set_xticks(range(len(sev_priority)))
@@ -12845,7 +13734,7 @@ Avg New/Month: {monthly_new.mean():.0f}
                 overdue_by_sev = overdue['severity_text'].value_counts()
                 overdue_by_sev = overdue_by_sev.reindex([s for s in sev_order if s in overdue_by_sev.index])
                 if len(overdue_by_sev) > 0:
-                    colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#ffc107', 'Low': '#007bff'}
+                    colors = {'Critical': '#dc3545', 'High': '#fd7e14', 'Medium': '#B8860B', 'Low': '#007bff'}
                     bar_colors = [colors.get(s, 'gray') for s in overdue_by_sev.index]
                     bars = self.sla_ax2.bar(range(len(overdue_by_sev)), overdue_by_sev.values, color=bar_colors)
                     self.sla_ax2.set_xticks(range(len(overdue_by_sev)))

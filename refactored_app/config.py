@@ -22,7 +22,7 @@ SEVERITY_ORDER = ['Critical', 'High', 'Medium', 'Low', 'Info']
 SEVERITY_COLORS = {
     'Critical': '#dc3545',
     'High': '#fd7e14',
-    'Medium': '#ffc107',
+    'Medium': '#B8860B',  # Dark goldenrod (changed from #ffc107 yellow)
     'Low': '#007bff',
     'Info': '#6c757d'
 }
