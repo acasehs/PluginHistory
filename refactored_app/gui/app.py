@@ -2060,6 +2060,131 @@ class NessusHistoryTrackerApp:
         for report_key, config in self.report_configs.items():
             self._build_report_subtab(report_key, config)
 
+        # Add OPDIR Generator subtab (separate from standard reports)
+        self._build_opdir_generator_subtab()
+
+    def _build_opdir_generator_subtab(self):
+        """Build the OPDIR POA&M Generator subtab."""
+        frame = ttk.Frame(self.reporting_notebook)
+        self.reporting_notebook.add(frame, text="OPDIR Generator")
+
+        # Main layout: left panel for config, right for output
+        main_pane = ttk.PanedWindow(frame, orient=tk.HORIZONTAL)
+        main_pane.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # Left panel - Configuration
+        left_frame = ttk.Frame(main_pane)
+        main_pane.add(left_frame, weight=1)
+
+        # Configuration section
+        config_frame = ttk.LabelFrame(left_frame, text="OPDIR Generator Configuration", padding=10)
+        config_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        # OPDIR Reference File
+        ref_frame = ttk.Frame(config_frame)
+        ref_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(ref_frame, text="OPDIR Reference:").pack(side=tk.LEFT)
+        self.opdir_gen_ref_var = tk.StringVar()
+        ttk.Entry(ref_frame, textvariable=self.opdir_gen_ref_var, width=40).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        ttk.Button(ref_frame, text="Browse", command=self._browse_opdir_reference).pack(side=tk.LEFT)
+
+        # PDF Template File
+        template_frame = ttk.Frame(config_frame)
+        template_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(template_frame, text="PDF Template:").pack(side=tk.LEFT)
+        self.opdir_gen_template_var = tk.StringVar()
+        ttk.Entry(template_frame, textvariable=self.opdir_gen_template_var, width=40).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        ttk.Button(template_frame, text="Browse", command=self._browse_opdir_template).pack(side=tk.LEFT)
+
+        # Output Directory
+        output_frame = ttk.Frame(config_frame)
+        output_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(output_frame, text="Output Directory:").pack(side=tk.LEFT)
+        self.opdir_gen_output_var = tk.StringVar()
+        ttk.Entry(output_frame, textvariable=self.opdir_gen_output_var, width=40).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        ttk.Button(output_frame, text="Browse", command=self._browse_opdir_output).pack(side=tk.LEFT)
+
+        # Configuration buttons
+        config_buttons = ttk.Frame(config_frame)
+        config_buttons.pack(fill=tk.X, pady=10)
+        ttk.Button(config_buttons, text="Open Standalone Generator",
+                  command=self._launch_opdir_generator).pack(side=tk.LEFT, padx=5)
+        ttk.Button(config_buttons, text="Edit POC Info",
+                  command=self._edit_opdir_poc_info).pack(side=tk.LEFT, padx=5)
+        ttk.Button(config_buttons, text="Edit Templates",
+                  command=self._edit_opdir_templates).pack(side=tk.LEFT, padx=5)
+
+        # IAVM Selection from current data
+        iavm_frame = ttk.LabelFrame(left_frame, text="IAVM Selection (from loaded data)", padding=10)
+        iavm_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # IAVM list with checkboxes
+        iavm_list_frame = ttk.Frame(iavm_frame)
+        iavm_list_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.opdir_iavm_tree = ttk.Treeview(iavm_list_frame, columns=('iavm', 'hosts', 'severity', 'status'),
+                                            show='headings', selectmode='extended')
+        self.opdir_iavm_tree.heading('iavm', text='IAVM')
+        self.opdir_iavm_tree.heading('hosts', text='Hosts')
+        self.opdir_iavm_tree.heading('severity', text='Severity')
+        self.opdir_iavm_tree.heading('status', text='Status')
+        self.opdir_iavm_tree.column('iavm', width=120)
+        self.opdir_iavm_tree.column('hosts', width=50)
+        self.opdir_iavm_tree.column('severity', width=70)
+        self.opdir_iavm_tree.column('status', width=80)
+
+        iavm_scroll = ttk.Scrollbar(iavm_list_frame, orient=tk.VERTICAL, command=self.opdir_iavm_tree.yview)
+        self.opdir_iavm_tree.configure(yscrollcommand=iavm_scroll.set)
+        self.opdir_iavm_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        iavm_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # IAVM action buttons
+        iavm_buttons = ttk.Frame(iavm_frame)
+        iavm_buttons.pack(fill=tk.X, pady=5)
+        ttk.Button(iavm_buttons, text="Refresh IAVMs",
+                  command=self._refresh_opdir_iavms).pack(side=tk.LEFT, padx=5)
+        ttk.Button(iavm_buttons, text="Select All",
+                  command=lambda: self._select_all_iavms(True)).pack(side=tk.LEFT, padx=5)
+        ttk.Button(iavm_buttons, text="Clear Selection",
+                  command=lambda: self._select_all_iavms(False)).pack(side=tk.LEFT, padx=5)
+
+        # Right panel - Generation and output
+        right_frame = ttk.Frame(main_pane)
+        main_pane.add(right_frame, weight=1)
+
+        # Generation controls
+        gen_frame = ttk.LabelFrame(right_frame, text="Generation", padding=10)
+        gen_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        gen_buttons = ttk.Frame(gen_frame)
+        gen_buttons.pack(fill=tk.X)
+        ttk.Button(gen_buttons, text="Generate POA&M for Selected",
+                  command=self._generate_opdir_poam).pack(side=tk.LEFT, padx=5)
+        ttk.Button(gen_buttons, text="Generate All POA&Ms",
+                  command=self._generate_all_opdir_poams).pack(side=tk.LEFT, padx=5)
+
+        # Progress
+        self.opdir_gen_progress = ttk.Progressbar(gen_frame, mode='determinate')
+        self.opdir_gen_progress.pack(fill=tk.X, pady=5)
+        self.opdir_gen_status = ttk.Label(gen_frame, text="Ready")
+        self.opdir_gen_status.pack(anchor=tk.W)
+
+        # Output log
+        log_frame = ttk.LabelFrame(right_frame, text="Generation Log", padding=10)
+        log_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        self.opdir_gen_log = tk.Text(log_frame, height=15, wrap=tk.WORD)
+        log_scroll = ttk.Scrollbar(log_frame, orient=tk.VERTICAL, command=self.opdir_gen_log.yview)
+        self.opdir_gen_log.configure(yscrollcommand=log_scroll.set)
+        self.opdir_gen_log.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        log_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Note about INI files location
+        note_frame = ttk.Frame(right_frame)
+        note_frame.pack(fill=tk.X, padx=5, pady=5)
+        note_text = "Note: Configuration INI files are stored in: refactored_app/config/"
+        ttk.Label(note_frame, text=note_text, foreground='gray').pack(anchor=tk.W)
+
     def _build_report_subtab(self, report_key, config):
         """Build a single report subtab with options, preview, and export."""
         frame = ttk.Frame(self.reporting_notebook)
@@ -7286,6 +7411,321 @@ Avg New/Month: {monthly_new.mean():.0f}
             self._log(f"Error exporting Compliance Status: {e}")
             messagebox.showerror("Export Error", f"Failed to export: {e}")
 
+    # OPDIR Generator Helper Methods
+    def _browse_opdir_reference(self):
+        """Browse for OPDIR reference file."""
+        filepath = filedialog.askopenfilename(
+            title="Select OPDIR Reference File",
+            filetypes=[("Excel/CSV", "*.xlsx *.xls *.csv"), ("All files", "*.*")]
+        )
+        if filepath:
+            self.opdir_gen_ref_var.set(filepath)
+            self._opdir_log(f"Selected reference file: {os.path.basename(filepath)}")
+
+    def _browse_opdir_template(self):
+        """Browse for PDF template file."""
+        filepath = filedialog.askopenfilename(
+            title="Select PDF Template",
+            filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")]
+        )
+        if filepath:
+            self.opdir_gen_template_var.set(filepath)
+            self._opdir_log(f"Selected template: {os.path.basename(filepath)}")
+
+    def _browse_opdir_output(self):
+        """Browse for output directory."""
+        directory = filedialog.askdirectory(title="Select Output Directory")
+        if directory:
+            self.opdir_gen_output_var.set(directory)
+            self._opdir_log(f"Output directory: {directory}")
+
+    def _launch_opdir_generator(self):
+        """Launch the standalone OPDIR generator application."""
+        import subprocess
+        import sys
+
+        # Path to the standalone generator
+        generator_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+                                      'opdir_generator.py')
+
+        if os.path.exists(generator_path):
+            try:
+                subprocess.Popen([sys.executable, generator_path])
+                self._opdir_log("Launched standalone OPDIR Generator")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to launch generator: {e}")
+        else:
+            messagebox.showerror("Not Found",
+                               f"OPDIR Generator not found at:\n{generator_path}\n\n"
+                               "Please ensure opdir_generator.py is in the project root.")
+
+    def _edit_opdir_poc_info(self):
+        """Edit POC information for OPDIR generator."""
+        config_dir = os.path.join(os.path.dirname(__file__), '..', 'config')
+        predefined_file = os.path.join(config_dir, 'predefined.ini')
+
+        if os.path.exists(predefined_file):
+            # Open with default editor
+            import subprocess
+            import sys
+            if sys.platform == 'win32':
+                os.startfile(predefined_file)
+            elif sys.platform == 'darwin':
+                subprocess.call(['open', predefined_file])
+            else:
+                subprocess.call(['xdg-open', predefined_file])
+            self._opdir_log(f"Opened {predefined_file} for editing")
+        else:
+            messagebox.showinfo("Config Not Found",
+                               f"Configuration file not found:\n{predefined_file}\n\n"
+                               "Use the standalone generator to create initial config.")
+
+    def _edit_opdir_templates(self):
+        """Edit narrative templates for OPDIR generator."""
+        config_dir = os.path.join(os.path.dirname(__file__), '..', 'config')
+        config_file = os.path.join(config_dir, 'config.ini')
+
+        if os.path.exists(config_file):
+            import subprocess
+            import sys
+            if sys.platform == 'win32':
+                os.startfile(config_file)
+            elif sys.platform == 'darwin':
+                subprocess.call(['open', config_file])
+            else:
+                subprocess.call(['xdg-open', config_file])
+            self._opdir_log(f"Opened {config_file} for editing")
+        else:
+            messagebox.showinfo("Config Not Found",
+                               f"Configuration file not found:\n{config_file}\n\n"
+                               "Use the standalone generator to create initial config.")
+
+    def _refresh_opdir_iavms(self):
+        """Refresh the IAVM list from current lifecycle data."""
+        # Clear existing items
+        for item in self.opdir_iavm_tree.get_children():
+            self.opdir_iavm_tree.delete(item)
+
+        if self.lifecycle_df.empty:
+            self._opdir_log("No lifecycle data loaded. Process archives first.")
+            return
+
+        # Extract unique IAVMs from lifecycle data
+        if 'iavx' not in self.lifecycle_df.columns:
+            self._opdir_log("No IAVX data found in lifecycle")
+            return
+
+        iavm_data = {}
+        for idx, row in self.lifecycle_df.iterrows():
+            iavx = row.get('iavx', '')
+            if not iavx or pd.isna(iavx):
+                continue
+
+            # Parse IAVX references
+            import re
+            iavx_pattern = r'IAV[AB]:\d{4}-[AB]-\d{4}|\d{4}-[AB]-\d{4}'
+            matches = re.findall(iavx_pattern, str(iavx))
+
+            for iavm in matches:
+                # Clean up the IAVM format
+                iavm_clean = iavm.replace('IAVA:', '').replace('IAVB:', '')
+
+                if iavm_clean not in iavm_data:
+                    iavm_data[iavm_clean] = {
+                        'hosts': set(),
+                        'severity': row.get('severity_text', 'Unknown'),
+                        'status': row.get('status', 'Active')
+                    }
+                hostname = row.get('hostname', '')
+                if hostname:
+                    iavm_data[iavm_clean]['hosts'].add(hostname)
+
+        # Populate treeview
+        for iavm, data in sorted(iavm_data.items()):
+            self.opdir_iavm_tree.insert('', 'end', values=(
+                iavm,
+                len(data['hosts']),
+                data['severity'],
+                data['status']
+            ))
+
+        self._opdir_log(f"Found {len(iavm_data)} unique IAVMs in loaded data")
+
+    def _select_all_iavms(self, select=True):
+        """Select or deselect all IAVMs in the tree."""
+        if select:
+            for item in self.opdir_iavm_tree.get_children():
+                self.opdir_iavm_tree.selection_add(item)
+        else:
+            self.opdir_iavm_tree.selection_remove(*self.opdir_iavm_tree.selection())
+
+    def _generate_opdir_poam(self):
+        """Generate POA&M for selected IAVMs."""
+        selected = self.opdir_iavm_tree.selection()
+        if not selected:
+            messagebox.showwarning("No Selection", "Please select IAVMs to generate POA&Ms for")
+            return
+
+        iavms = [self.opdir_iavm_tree.item(item)['values'][0] for item in selected]
+        self._opdir_log(f"Generating POA&Ms for {len(iavms)} selected IAVMs...")
+        self._opdir_log("Note: Full generation requires the standalone generator.")
+        self._opdir_log(f"Selected IAVMs: {', '.join(iavms)}")
+
+        # For now, show info about using standalone generator
+        messagebox.showinfo("Generation",
+                           f"Selected {len(iavms)} IAVMs for generation.\n\n"
+                           "For full POA&M generation with PDF output, "
+                           "use the 'Open Standalone Generator' button.")
+
+    def _generate_all_opdir_poams(self):
+        """Generate POA&Ms for all IAVMs."""
+        all_items = self.opdir_iavm_tree.get_children()
+        if not all_items:
+            messagebox.showwarning("No Data", "No IAVMs available. Refresh the list first.")
+            return
+
+        count = len(all_items)
+        self._opdir_log(f"Generating POA&Ms for all {count} IAVMs...")
+        self._opdir_log("Note: Full generation requires the standalone generator.")
+
+        messagebox.showinfo("Generation",
+                           f"Found {count} IAVMs for generation.\n\n"
+                           "For full POA&M generation with PDF output, "
+                           "use the 'Open Standalone Generator' button.")
+
+    def _opdir_log(self, message):
+        """Log message to OPDIR generator log panel."""
+        if hasattr(self, 'opdir_gen_log'):
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            self.opdir_gen_log.insert(tk.END, f"[{timestamp}] {message}\n")
+            self.opdir_gen_log.see(tk.END)
+
+    # Evaluation Logging Methods
+    def _write_evaluation_log(self, findings_df: pd.DataFrame, output_dir: str = None):
+        """
+        Write evaluation log file grouped by source filename.
+
+        Args:
+            findings_df: DataFrame with findings to log
+            output_dir: Directory to save log file (uses settings default if not provided)
+        """
+        if findings_df.empty:
+            self._log("No findings to log for evaluation")
+            return
+
+        # Check if evaluation logging is enabled
+        if not self.settings_manager.settings.log_evaluation_to_file:
+            return
+
+        # Determine output directory
+        if not output_dir:
+            output_dir = self.settings_manager.settings.evaluation_log_directory
+            if not output_dir:
+                # Default to user's home directory
+                output_dir = os.path.expanduser('~')
+
+        # Filter out Info plugins if setting is disabled
+        if not self.settings_manager.settings.log_evaluation_info_plugins:
+            findings_to_log = findings_df[findings_df['severity_text'] != 'Info'].copy()
+            info_count = len(findings_df) - len(findings_to_log)
+            if info_count > 0:
+                self._log(f"Evaluation log: Excluded {info_count} Info findings (disabled in settings)")
+        else:
+            findings_to_log = findings_df.copy()
+
+        if findings_to_log.empty:
+            self._log("No findings to log after filtering")
+            return
+
+        # Group by source file
+        source_col = 'source_file' if 'source_file' in findings_to_log.columns else 'scan_file'
+        if source_col not in findings_to_log.columns:
+            self._log("Warning: No source file column found for grouping")
+            source_col = None
+
+        # Generate log filename with timestamp
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        log_filename = f"evaluation_log_{timestamp}.txt"
+        log_path = os.path.join(output_dir, log_filename)
+
+        try:
+            with open(log_path, 'w', encoding='utf-8') as f:
+                f.write("=" * 80 + "\n")
+                f.write(f"EVALUATION LOG - Generated {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write("=" * 80 + "\n\n")
+
+                # Summary
+                f.write(f"Total Findings: {len(findings_to_log)}\n")
+                if 'severity_text' in findings_to_log.columns:
+                    severity_counts = findings_to_log['severity_text'].value_counts()
+                    f.write("By Severity:\n")
+                    for sev, count in severity_counts.items():
+                        f.write(f"  {sev}: {count}\n")
+                f.write("\n")
+
+                # Group by source file
+                if source_col:
+                    grouped = findings_to_log.groupby(source_col)
+                    f.write(f"Findings grouped by {len(grouped)} source file(s):\n")
+                    f.write("-" * 80 + "\n\n")
+
+                    for source_file, group in grouped:
+                        f.write(f"\n{'=' * 80}\n")
+                        f.write(f"SOURCE FILE: {os.path.basename(str(source_file))}\n")
+                        f.write(f"Findings: {len(group)}\n")
+                        f.write("=" * 80 + "\n\n")
+
+                        # Sort by severity, then plugin_id
+                        severity_order = {'Critical': 0, 'High': 1, 'Medium': 2, 'Low': 3, 'Info': 4}
+                        group = group.copy()
+                        if 'severity_text' in group.columns:
+                            group['_sev_order'] = group['severity_text'].map(severity_order).fillna(5)
+                            group = group.sort_values(['_sev_order', 'plugin_id'])
+
+                        for idx, row in group.iterrows():
+                            plugin_id = row.get('plugin_id', 'N/A')
+                            plugin_name = row.get('name', row.get('plugin_name', 'Unknown'))
+                            severity = row.get('severity_text', 'Unknown')
+                            hostname = row.get('hostname', 'N/A')
+                            port = row.get('port_full', row.get('port', 'N/A'))
+                            cvss = row.get('cvss3_base_score', row.get('cvss_score', 'N/A'))
+
+                            f.write(f"Plugin {plugin_id}: {plugin_name}\n")
+                            f.write(f"  Severity: {severity} | CVSS: {cvss}\n")
+                            f.write(f"  Host: {hostname} | Port: {port}\n")
+
+                            # Include CVEs if available
+                            cves = row.get('cves', '')
+                            if cves and not pd.isna(cves):
+                                f.write(f"  CVEs: {cves[:100]}{'...' if len(str(cves)) > 100 else ''}\n")
+
+                            # Include IAVX if available
+                            iavx = row.get('iavx', '')
+                            if iavx and not pd.isna(iavx):
+                                f.write(f"  IAVX: {iavx[:100]}{'...' if len(str(iavx)) > 100 else ''}\n")
+
+                            f.write("\n")
+                else:
+                    # No grouping - just list all findings
+                    for idx, row in findings_to_log.iterrows():
+                        plugin_id = row.get('plugin_id', 'N/A')
+                        plugin_name = row.get('name', row.get('plugin_name', 'Unknown'))
+                        severity = row.get('severity_text', 'Unknown')
+                        hostname = row.get('hostname', 'N/A')
+
+                        f.write(f"Plugin {plugin_id}: {plugin_name} [{severity}] - {hostname}\n")
+
+                f.write("\n" + "=" * 80 + "\n")
+                f.write("END OF EVALUATION LOG\n")
+                f.write("=" * 80 + "\n")
+
+            self._log(f"Evaluation log saved: {log_path}")
+            return log_path
+
+        except Exception as e:
+            self._log(f"Error writing evaluation log: {e}")
+            return None
+
     # Processing methods
     def _process_archives(self):
         """Process selected archives in a background thread."""
@@ -7840,6 +8280,9 @@ Avg New/Month: {monthly_new.mean():.0f}
         if all_findings:
             self.historical_df = pd.concat(all_findings, ignore_index=True)
             self._log(f"Total findings: {len(self.historical_df)}")
+
+            # Write evaluation log if enabled
+            self._write_evaluation_log(self.historical_df)
 
         self._refresh_analysis_internal()
 
@@ -13099,6 +13542,24 @@ Avg New/Month: {monthly_new.mean():.0f}
 
         ttk.Button(summary_frame, text="Close", command=popup.destroy).pack(side=tk.RIGHT)
 
+        # Add Copy to Clipboard button for Excel paste
+        def copy_to_clipboard():
+            # Build tab-separated text for Excel paste
+            lines = ["Plugin ID\tPlugin Name\tSeverity\tAssets"]  # Header
+            for item in plugin_tree.get_children():
+                values = plugin_tree.item(item)['values']
+                lines.append(f"{values[0]}\t{values[1]}\t{values[2]}\t{values[3]}")
+
+            # Copy to clipboard
+            text = "\n".join(lines)
+            popup.clipboard_clear()
+            popup.clipboard_append(text)
+            messagebox.showinfo("Copied",
+                              f"Copied {len(plugin_tree.get_children())} rows to clipboard.\n"
+                              "You can paste directly into Excel.")
+
+        ttk.Button(summary_frame, text="Copy to Clipboard", command=copy_to_clipboard).pack(side=tk.RIGHT, padx=5)
+
     def _show_plugin_age_popup(self):
         """Show custom popup with scrollable list of ALL open findings sorted by age."""
         df = self._get_chart_data('lifecycle')
@@ -17331,6 +17792,17 @@ Avg New/Month: {monthly_new.mean():.0f}
                      values=['50', '100', '250', '500', '1000'],
                      width=8, state="readonly").pack(side=tk.LEFT, padx=5)
 
+        # Evaluation logging settings
+        ttk.Label(defaults_frame, text="Evaluation Logging:").pack(anchor=tk.W, pady=(15, 5))
+
+        log_eval_var = tk.BooleanVar(value=settings.log_evaluation_to_file)
+        ttk.Checkbutton(defaults_frame, text="Save evaluation log file when processing archives",
+                        variable=log_eval_var).pack(anchor=tk.W, pady=2)
+
+        log_info_var = tk.BooleanVar(value=settings.log_evaluation_info_plugins)
+        ttk.Checkbutton(defaults_frame, text="Include Info plugins in evaluation log (default off)",
+                        variable=log_info_var).pack(anchor=tk.W, pady=2)
+
         # === Recent Files Tab ===
         recent_frame = ttk.Frame(notebook, padding=10)
         notebook.add(recent_frame, text="Recent Files")
@@ -17374,6 +17846,10 @@ Avg New/Month: {monthly_new.mean():.0f}
                 settings.default_include_info = include_info_var.get()
                 settings.show_data_labels = show_labels_var.get()
                 settings.default_page_size = int(page_var.get())
+
+                # Update evaluation logging settings
+                settings.log_evaluation_to_file = log_eval_var.get()
+                settings.log_evaluation_info_plugins = log_info_var.get()
 
                 # Save to file
                 self.settings_manager.save()

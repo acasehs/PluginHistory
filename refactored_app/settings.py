@@ -147,6 +147,11 @@ class UserSettings:
     # Default filter date range (days back from today)
     default_date_range_days: int = 180
 
+    # Evaluation logging settings
+    log_evaluation_to_file: bool = True  # Enable evaluation logging to file
+    log_evaluation_info_plugins: bool = False  # Include Info severity plugins in evaluation log (default off)
+    evaluation_log_directory: str = ''  # Directory for evaluation logs (empty = same as output)
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return asdict(self)
