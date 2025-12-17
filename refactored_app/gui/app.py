@@ -7477,6 +7477,7 @@ Avg New/Month: {monthly_new.mean():.0f}
 
         all_findings = []
         temp_dirs = []
+        total_info_excluded = 0
 
         for archive_path in self.archive_paths:
             self._log_safe(f"Processing: {os.path.basename(archive_path)}")
@@ -7495,11 +7496,22 @@ Avg New/Month: {monthly_new.mean():.0f}
                     # Apply severity overrides from database
                     severity_overrides = self._load_severity_overrides()
                     findings_df = enrich_findings_with_severity(findings_df, severity_overrides)
+
+                    # Filter out Info findings BEFORE adding to results if Info is disabled
+                    # This prevents processing Info findings that will just be discarded
+                    if not self.severity_toggles['Info'].get():
+                        before_count = len(findings_df)
+                        findings_df = findings_df[findings_df['severity_text'] != 'Info']
+                        total_info_excluded += before_count - len(findings_df)
+
                     all_findings.append(findings_df)
 
         # Cleanup temp directories
         for temp_dir in temp_dirs:
             cleanup_temp_directory(temp_dir)
+
+        if total_info_excluded > 0:
+            self._log_safe(f"Excluded {total_info_excluded} Info findings (Info toggle off)")
 
         if all_findings:
             self.historical_df = pd.concat(all_findings, ignore_index=True)
@@ -7570,6 +7582,7 @@ Avg New/Month: {monthly_new.mean():.0f}
 
         all_findings = []
         temp_dirs = []
+        total_info_excluded = 0
 
         for archive_path in self.archive_paths:
             self._log_safe(f"Processing: {os.path.basename(archive_path)}")
@@ -7588,11 +7601,21 @@ Avg New/Month: {monthly_new.mean():.0f}
                     # Apply severity overrides from database
                     severity_overrides = self._load_severity_overrides()
                     findings_df = enrich_findings_with_severity(findings_df, severity_overrides)
+
+                    # Filter out Info findings BEFORE adding to results if Info is disabled
+                    if not self.severity_toggles['Info'].get():
+                        before_count = len(findings_df)
+                        findings_df = findings_df[findings_df['severity_text'] != 'Info']
+                        total_info_excluded += before_count - len(findings_df)
+
                     all_findings.append(findings_df)
 
         # Cleanup temp directories
         for temp_dir in temp_dirs:
             cleanup_temp_directory(temp_dir)
+
+        if total_info_excluded > 0:
+            self._log_safe(f"Excluded {total_info_excluded} Info findings (Info toggle off)")
 
         if all_findings:
             new_findings_df = pd.concat(all_findings, ignore_index=True)
@@ -7758,6 +7781,7 @@ Avg New/Month: {monthly_new.mean():.0f}
 
         all_findings = []
         temp_dirs = []
+        total_info_excluded = 0
 
         for archive_path in self.archive_paths:
             self._log(f"Processing: {os.path.basename(archive_path)}")
@@ -7776,11 +7800,21 @@ Avg New/Month: {monthly_new.mean():.0f}
                     # Apply severity overrides from database
                     severity_overrides = self._load_severity_overrides()
                     findings_df = enrich_findings_with_severity(findings_df, severity_overrides)
+
+                    # Filter out Info findings BEFORE adding to results if Info is disabled
+                    if not self.severity_toggles['Info'].get():
+                        before_count = len(findings_df)
+                        findings_df = findings_df[findings_df['severity_text'] != 'Info']
+                        total_info_excluded += before_count - len(findings_df)
+
                     all_findings.append(findings_df)
 
         # Cleanup temp directories
         for temp_dir in temp_dirs:
             cleanup_temp_directory(temp_dir)
+
+        if total_info_excluded > 0:
+            self._log(f"Excluded {total_info_excluded} Info findings (Info toggle off)")
 
         if all_findings:
             self.historical_df = pd.concat(all_findings, ignore_index=True)
