@@ -453,8 +453,12 @@ class NessusHistoryTrackerApp:
             # Add to main notebook with pin indicator
             self.notebook.add(tab_frame, text=f"📌 {tab_text}")
 
-            # Select the newly pinned tab
+            # Select the newly pinned tab and refresh UI
             self.notebook.select(tab_frame)
+            self.window.update_idletasks()
+
+            # Save pinned tabs to database for persistence
+            self._save_pinned_tabs()
 
             self._log(f"Pinned '{tab_text}' to top-level tabs")
 
@@ -471,6 +475,7 @@ class NessusHistoryTrackerApp:
             tab_text = pin_info['tab_text']
             source_notebook = pin_info['source_notebook']
             original_index = pin_info['original_index']
+            group_name = pin_info['group_name']
 
             # Find the tab in main notebook
             for tab_id in self.notebook.tabs():
@@ -485,14 +490,115 @@ class NessusHistoryTrackerApp:
                     insert_index = min(original_index, current_count)
                     source_notebook.insert(insert_index, tab_frame, text=tab_text)
 
-                    # Clean up
+                    # Clean up and refresh UI
                     del self.pinned_tabs[pin_key]
+                    self.window.update_idletasks()
 
-                    self._log(f"Unpinned '{tab_text}' back to {pin_info['group_name']}")
+                    # Save updated pinned tabs
+                    self._save_pinned_tabs()
+
+                    self._log(f"Unpinned '{tab_text}' back to {group_name}")
                     return
 
         except Exception as e:
             self._log(f"Error unpinning tab: {e}")
+
+    def _save_pinned_tabs(self):
+        """Save pinned tab preferences to database."""
+        if not self.existing_db_path or not os.path.exists(self.existing_db_path):
+            return
+
+        try:
+            import sqlite3
+            import json
+
+            conn = sqlite3.connect(self.existing_db_path)
+            cursor = conn.cursor()
+
+            # Create preferences table if not exists
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS user_preferences (
+                    key TEXT PRIMARY KEY,
+                    value TEXT,
+                    modified_date TEXT
+                )
+            ''')
+
+            # Save pinned tabs as JSON (only serializable data)
+            pinned_data = {}
+            for pin_key, pin_info in self.pinned_tabs.items():
+                pinned_data[pin_key] = {
+                    'tab_text': pin_info['tab_text'],
+                    'group_name': pin_info['group_name'],
+                    'original_index': pin_info['original_index']
+                }
+
+            from datetime import datetime
+            now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+            cursor.execute('''
+                INSERT OR REPLACE INTO user_preferences (key, value, modified_date)
+                VALUES (?, ?, ?)
+            ''', ('pinned_tabs', json.dumps(pinned_data), now))
+
+            conn.commit()
+            conn.close()
+
+        except Exception as e:
+            self._log(f"Error saving pinned tabs: {e}")
+
+    def _load_pinned_tabs(self):
+        """Load and restore pinned tabs from database."""
+        if not self.existing_db_path or not os.path.exists(self.existing_db_path):
+            return
+
+        try:
+            import sqlite3
+            import json
+
+            conn = sqlite3.connect(self.existing_db_path)
+            cursor = conn.cursor()
+
+            # Check if preferences table exists
+            cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='user_preferences'"
+            )
+            if not cursor.fetchone():
+                conn.close()
+                return
+
+            cursor.execute("SELECT value FROM user_preferences WHERE key = 'pinned_tabs'")
+            row = cursor.fetchone()
+            conn.close()
+
+            if not row:
+                return
+
+            pinned_data = json.loads(row[0])
+
+            # Restore each pinned tab
+            for pin_key, pin_info in pinned_data.items():
+                group_name = pin_info['group_name']
+                tab_text = pin_info['tab_text']
+                original_index = pin_info['original_index']
+
+                # Find the source notebook
+                if group_name not in self.subtab_notebooks:
+                    continue
+
+                source_notebook = self.subtab_notebooks[group_name]
+
+                # Find the tab by name in the source notebook
+                for idx, tab_id in enumerate(source_notebook.tabs()):
+                    if source_notebook.tab(tab_id, 'text') == tab_text:
+                        # Pin this tab
+                        self._pin_tab(source_notebook, idx, group_name)
+                        break
+
+            self._log(f"Restored {len(pinned_data)} pinned tabs")
+
+        except Exception as e:
+            self._log(f"Error loading pinned tabs: {e}")
 
     def _build_file_selection(self, parent):
         """Build file selection section with compact layout."""
@@ -2400,6 +2506,13 @@ class NessusHistoryTrackerApp:
                 'can_drop': 'Caution',
                 'dedup_key': ['plugin_id'],
                 'description': 'User-defined plugin severity remappings. Applied on all imports.',
+                'regenerable': False
+            },
+            'user_preferences': {
+                'type': 'User Data',
+                'can_drop': 'Caution',
+                'dedup_key': ['key'],
+                'description': 'User preferences including pinned tabs. Dropping will reset UI customizations.',
                 'regenerable': False
             }
         }
@@ -7146,6 +7259,9 @@ Avg New/Month: {monthly_new.mean():.0f}
 
         finally:
             conn.close()
+
+        # Restore pinned tabs from database preferences
+        self.window.after(0, self._load_pinned_tabs)
 
         # Run analysis refresh on main thread
         self.window.after(0, self._refresh_analysis_internal)
