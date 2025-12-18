@@ -12790,8 +12790,23 @@ Avg New/Month: {monthly_new.mean():.0f}
         width = 0.25
         offsets = [-width, 0, width][:len(environments)]
 
+        # Distinct color palettes for each environment (4 shades per env for severities)
+        env_color_palettes = [
+            # Blues for first environment
+            {'Critical': '#1a3a5c', 'High': '#2563eb', 'Medium': '#60a5fa', 'Low': '#93c5fd'},
+            # Greens for second environment
+            {'Critical': '#14532d', 'High': '#16a34a', 'Medium': '#4ade80', 'Low': '#86efac'},
+            # Purples for third environment
+            {'Critical': '#4c1d95', 'High': '#7c3aed', 'Medium': '#a78bfa', 'Low': '#c4b5fd'},
+        ]
+
+        # Track totals for data labels
+        env_totals = {env: np.zeros(len(weeks)) for env in environments}
+
         for idx, env in enumerate(environments):
             bottom = np.zeros(len(weeks))
+            palette = env_color_palettes[idx % len(env_color_palettes)]
+
             for sev in severities:
                 counts = []
                 for week in weeks:
@@ -12805,18 +12820,29 @@ Avg New/Month: {monthly_new.mean():.0f}
                         count = 0
                     counts.append(count)
 
-                # Only show label for first severity (to avoid clutter)
-                label = env if sev == 'Critical' else None
-                ax.bar(x + offsets[idx], counts, width, bottom=bottom, color=colors[sev],
-                      alpha=0.3 + 0.2*idx, label=label)
+                ax.bar(x + offsets[idx], counts, width, bottom=bottom, color=palette[sev])
                 bottom += np.array(counts)
+
+            env_totals[env] = bottom
+
+        # Add data labels showing totals at top of each bar
+        if show_labels:
+            for idx, env in enumerate(environments):
+                for i, total in enumerate(env_totals[env]):
+                    if total > 0:
+                        ax.annotate(f'{int(total)}',
+                                   xy=(x[i] + offsets[idx], total),
+                                   ha='center', va='bottom', fontsize=5, color='white',
+                                   fontweight='bold')
 
         ax.set_xticks(x)
         ax.set_xticklabels(week_labels, rotation=45, ha='right', fontsize=7)
         ax.set_ylabel('Total Findings', fontsize=8, color=GUI_DARK_THEME['fg'])
-        # Create custom legend for environments
+
+        # Create custom legend for environments with distinct colors
         from matplotlib.patches import Patch
-        env_handles = [Patch(facecolor='gray', alpha=0.3 + 0.2*i, label=env)
+        env_base_colors = ['#2563eb', '#16a34a', '#7c3aed']  # Representative colors
+        env_handles = [Patch(facecolor=env_base_colors[i % len(env_base_colors)], label=env)
                       for i, env in enumerate(environments)]
         ax.legend(handles=env_handles, fontsize=6, loc='upper left')
 
@@ -13643,15 +13669,6 @@ Avg New/Month: {monthly_new.mean():.0f}
         self._draw_rolling_env_totals(ax, rolling_df, all_weeks[-8:], week_labels,
                                       severities, severity_colors, show_labels)
         ax.set_title('Environment Totals by Severity (8 Week Rolling)', color='white', fontsize=12)
-
-        if enlarged and 'environment_type' in rolling_df.columns:
-            # Show severity breakdown for each environment
-            envs = rolling_df['environment_type'].dropna().unique()[:3]
-            if 'severity_text' in rolling_df.columns:
-                crit_total = len(rolling_df[rolling_df['severity_text'] == 'Critical'])
-                high_total = len(rolling_df[rolling_df['severity_text'] == 'High'])
-                ax.text(0.98, 0.98, f'Total Critical: {crit_total} | High: {high_total}',
-                       transform=ax.transAxes, fontsize=9, va='top', ha='right', color='#dc3545')
 
     def _draw_total_findings_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw total findings over time chart for pop-out."""
