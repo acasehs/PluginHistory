@@ -12800,8 +12800,15 @@ Avg New/Month: {monthly_new.mean():.0f}
             {'Critical': '#4c1d95', 'High': '#7c3aed', 'Medium': '#a78bfa', 'Low': '#c4b5fd'},
         ]
 
-        # Track totals for data labels
+        # Severity label abbreviations and text colors
+        sev_labels = {'Critical': 'C', 'High': 'H', 'Medium': 'M', 'Low': 'L'}
+        # Use dark text for lighter colors (Medium, Low)
+        sev_text_colors = {'Critical': 'white', 'High': 'white', 'Medium': '#333333', 'Low': '#333333'}
+
+        # Track totals and severity positions for data labels
         env_totals = {env: np.zeros(len(weeks)) for env in environments}
+        # Store severity section data: {env_idx: {week_idx: [(sev, bottom, height), ...]}}
+        sev_sections = {idx: {i: [] for i in range(len(weeks))} for idx in range(len(environments))}
 
         for idx, env in enumerate(environments):
             bottom = np.zeros(len(weeks))
@@ -12821,19 +12828,42 @@ Avg New/Month: {monthly_new.mean():.0f}
                     counts.append(count)
 
                 ax.bar(x + offsets[idx], counts, width, bottom=bottom, color=palette[sev])
+
+                # Store section info for labeling
+                for week_idx, count in enumerate(counts):
+                    if count > 0:
+                        sev_sections[idx][week_idx].append((sev, bottom[week_idx], count))
+
                 bottom += np.array(counts)
 
             env_totals[env] = bottom
 
-        # Add data labels showing totals at top of each bar
+        # Add severity labels within bar sections
         if show_labels:
             for idx, env in enumerate(environments):
-                for i, total in enumerate(env_totals[env]):
+                for week_idx in range(len(weeks)):
+                    total = env_totals[env][week_idx]
+                    sections = sev_sections[idx][week_idx]
+
+                    # Add total at top of bar
                     if total > 0:
                         ax.annotate(f'{int(total)}',
-                                   xy=(x[i] + offsets[idx], total),
+                                   xy=(x[week_idx] + offsets[idx], total),
                                    ha='center', va='bottom', fontsize=5, color='white',
                                    fontweight='bold')
+
+                    # Add severity labels within sections
+                    for sev, section_bottom, section_height in sections:
+                        section_center = section_bottom + section_height / 2
+                        label = sev_labels[sev]
+                        text_color = sev_text_colors[sev]
+
+                        # Only show label if section is tall enough (> 5% of total or > 3 units)
+                        min_height_for_label = max(total * 0.08, 3) if total > 0 else 3
+                        if section_height >= min_height_for_label:
+                            ax.annotate(label, xy=(x[week_idx] + offsets[idx], section_center),
+                                       ha='center', va='center', fontsize=4, color=text_color,
+                                       fontweight='bold')
 
         ax.set_xticks(x)
         ax.set_xticklabels(week_labels, rotation=45, ha='right', fontsize=7)
