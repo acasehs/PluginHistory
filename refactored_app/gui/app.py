@@ -8133,6 +8133,7 @@ Avg New/Month: {monthly_new.mean():.0f}
     def _generate_poam_output(self, iavm_data: list):
         """Generate POA&M output from IAVM data."""
         import configparser
+        from ..export.pdf_generator import is_pdf_available, generate_poam_pdfs
 
         # Ensure config files exist
         config_dir, predefined_file, config_file = self._ensure_poam_config_exists()
@@ -8165,7 +8166,65 @@ Avg New/Month: {monthly_new.mean():.0f}
         else:
             templates = defaults
 
-        # Build POA&M records
+        # Check if PDF template and output directory are configured
+        pdf_template = self.opdir_gen_template_var.get() if hasattr(self, 'opdir_gen_template_var') else ''
+        output_dir = self.opdir_gen_output_var.get() if hasattr(self, 'opdir_gen_output_var') else ''
+        pdf_ready = pdf_template and os.path.exists(pdf_template) and output_dir and is_pdf_available()
+
+        # Build export options message
+        if pdf_ready:
+            msg = (f"Generated {len(iavm_data)} POA&M records.\n\n"
+                   "Choose export format:\n\n"
+                   "Yes = Generate PDF files (using template)\n"
+                   "No = Export to Excel/CSV\n"
+                   "Cancel = View in dialog")
+            export_choice = messagebox.askyesnocancel("Export POA&Ms", msg)
+
+            if export_choice is True:
+                # Generate PDFs
+                self._generate_poam_pdfs(iavm_data, poc_info, templates, pdf_template, output_dir)
+                return
+            elif export_choice is False:
+                # Fall through to Excel/CSV choice
+                pass
+            else:
+                # Show in dialog
+                self._show_poams_dialog(self._build_poam_records(iavm_data, poc_info, templates))
+                return
+        else:
+            # No PDF template configured - show why if PDF was expected
+            if not is_pdf_available():
+                pdf_note = "\n(PDF generation requires PyMuPDF: pip install PyMuPDF)"
+            elif not pdf_template:
+                pdf_note = "\n(Select PDF Template in config to enable PDF generation)"
+            elif not output_dir:
+                pdf_note = "\n(Select Output Directory in config to enable PDF generation)"
+            else:
+                pdf_note = ""
+
+        # Excel/CSV choice
+        poam_records = self._build_poam_records(iavm_data, poc_info, templates)
+
+        export_choice = messagebox.askyesnocancel(
+            "Export POA&Ms",
+            f"Generated {len(poam_records)} POA&M records.\n\n"
+            "Yes = Export to Excel\n"
+            "No = Export to CSV\n"
+            f"Cancel = View in dialog{pdf_note if not pdf_ready else ''}"
+        )
+
+        if export_choice is True:
+            # Export to Excel
+            self._export_poams_excel(poam_records)
+        elif export_choice is False:
+            # Export to CSV
+            self._export_poams_csv(poam_records)
+        else:
+            # Show in dialog
+            self._show_poams_dialog(poam_records)
+
+    def _build_poam_records(self, iavm_data: list, poc_info: dict, templates: dict) -> list:
+        """Build POA&M records from IAVM data."""
         poam_records = []
         for idx, iavm in enumerate(iavm_data, start=1):
             record = {
@@ -8190,25 +8249,65 @@ Avg New/Month: {monthly_new.mean():.0f}
                 'Mitigations': templates['temporary_mitigations'],
             }
             poam_records.append(record)
+        return poam_records
 
-        # Ask user for export format
-        export_choice = messagebox.askyesnocancel(
-            "Export POA&Ms",
-            f"Generated {len(poam_records)} POA&M records.\n\n"
-            "Yes = Export to Excel\n"
-            "No = Export to CSV\n"
-            "Cancel = View in dialog"
-        )
+    def _generate_poam_pdfs(self, iavm_data: list, poc_info: dict, templates: dict,
+                           template_path: str, output_dir: str):
+        """Generate POA&M PDFs using the template."""
+        from ..export.pdf_generator import generate_poam_pdfs
 
-        if export_choice is True:
-            # Export to Excel
-            self._export_poams_excel(poam_records)
-        elif export_choice is False:
-            # Export to CSV
-            self._export_poams_csv(poam_records)
-        else:
-            # Show in dialog
-            self._show_poams_dialog(poam_records)
+        self._opdir_log(f"Generating {len(iavm_data)} POA&M PDFs...")
+        self.opdir_gen_status.config(text="Generating PDFs...")
+        self.opdir_gen_progress['value'] = 0
+        self.opdir_gen_progress['maximum'] = len(iavm_data)
+        self.window.update()
+
+        def progress_callback(current, total, message):
+            self.opdir_gen_progress['value'] = current
+            self.opdir_gen_status.config(text=message)
+            self.window.update()
+
+        try:
+            success, fail, output_files = generate_poam_pdfs(
+                template_path=template_path,
+                output_dir=output_dir,
+                iavm_list=iavm_data,
+                poc_info=poc_info,
+                templates=templates,
+                historical_df=self.historical_df if hasattr(self, 'historical_df') else None,
+                progress_callback=progress_callback
+            )
+
+            self.opdir_gen_progress['value'] = len(iavm_data)
+            self.opdir_gen_status.config(text=f"Complete: {success} success, {fail} failed")
+
+            self._opdir_log(f"PDF generation complete: {success} success, {fail} failed")
+
+            if success > 0:
+                messagebox.showinfo(
+                    "PDF Generation Complete",
+                    f"Generated {success} POA&M PDFs\n"
+                    f"Failed: {fail}\n\n"
+                    f"Output directory:\n{output_dir}"
+                )
+
+                # Offer to open output directory
+                if messagebox.askyesno("Open Folder", "Open output folder?"):
+                    import subprocess
+                    import sys
+                    if sys.platform == 'win32':
+                        os.startfile(output_dir)
+                    elif sys.platform == 'darwin':
+                        subprocess.run(['open', output_dir])
+                    else:
+                        subprocess.run(['xdg-open', output_dir])
+            else:
+                messagebox.showwarning("PDF Generation", f"No PDFs generated. {fail} failed.")
+
+        except Exception as e:
+            self._opdir_log(f"PDF generation error: {e}")
+            self.opdir_gen_status.config(text="Error")
+            messagebox.showerror("PDF Generation Error", f"Failed to generate PDFs:\n{e}")
 
     def _export_poams_excel(self, poam_records: list):
         """Export POA&M records to Excel."""
@@ -12650,15 +12749,15 @@ Avg New/Month: {monthly_new.mean():.0f}
             if show_labels:
                 for xi, total, new_val in zip(x + offset, total_counts, new_counts):
                     if total > 0:
-                        # Show total at top
-                        ax.annotate(f'{total}', xy=(xi, total), xytext=(0, 2),
+                        # Show total on first line (larger font)
+                        ax.annotate(f'{total}', xy=(xi, total), xytext=(0, 8),
                                    textcoords='offset points', ha='center', va='bottom',
-                                   fontsize=5, color='white', fontweight='bold')
-                    if new_val > 0:
-                        # Show new count in the transparent section
-                        ax.annotate(f'+{new_val}', xy=(xi, new_val/2), xytext=(0, 0),
-                                   textcoords='offset points', ha='center', va='center',
-                                   fontsize=4, color='white', alpha=0.9)
+                                   fontsize=6, color='white', fontweight='bold')
+                        # Show new count on second line below total (smaller, light green)
+                        if new_val > 0:
+                            ax.annotate(f'{new_val} new', xy=(xi, total), xytext=(0, 1),
+                                       textcoords='offset points', ha='center', va='bottom',
+                                       fontsize=5, color='#90EE90')
 
         ax.set_xticks(x)
         ax.set_xticklabels(week_labels, rotation=45, ha='right', fontsize=7)
@@ -12691,8 +12790,30 @@ Avg New/Month: {monthly_new.mean():.0f}
         width = 0.25
         offsets = [-width, 0, width][:len(environments)]
 
+        # Distinct color palettes for each environment (4 shades per env for severities)
+        env_color_palettes = [
+            # Blues for first environment
+            {'Critical': '#1a3a5c', 'High': '#2563eb', 'Medium': '#60a5fa', 'Low': '#93c5fd'},
+            # Greens for second environment
+            {'Critical': '#14532d', 'High': '#16a34a', 'Medium': '#4ade80', 'Low': '#86efac'},
+            # Purples for third environment
+            {'Critical': '#4c1d95', 'High': '#7c3aed', 'Medium': '#a78bfa', 'Low': '#c4b5fd'},
+        ]
+
+        # Severity label abbreviations and text colors
+        sev_labels = {'Critical': 'C', 'High': 'H', 'Medium': 'M', 'Low': 'L'}
+        # Use dark text for lighter colors (Medium, Low)
+        sev_text_colors = {'Critical': 'white', 'High': 'white', 'Medium': '#333333', 'Low': '#333333'}
+
+        # Track totals and severity positions for data labels
+        env_totals = {env: np.zeros(len(weeks)) for env in environments}
+        # Store severity section data: {env_idx: {week_idx: [(sev, bottom, height), ...]}}
+        sev_sections = {idx: {i: [] for i in range(len(weeks))} for idx in range(len(environments))}
+
         for idx, env in enumerate(environments):
             bottom = np.zeros(len(weeks))
+            palette = env_color_palettes[idx % len(env_color_palettes)]
+
             for sev in severities:
                 counts = []
                 for week in weeks:
@@ -12706,18 +12827,55 @@ Avg New/Month: {monthly_new.mean():.0f}
                         count = 0
                     counts.append(count)
 
-                # Only show label for first severity (to avoid clutter)
-                label = env if sev == 'Critical' else None
-                ax.bar(x + offsets[idx], counts, width, bottom=bottom, color=colors[sev],
-                      alpha=0.3 + 0.2*idx, label=label)
+                ax.bar(x + offsets[idx], counts, width, bottom=bottom, color=palette[sev])
+
+                # Store section info for labeling
+                for week_idx, count in enumerate(counts):
+                    if count > 0:
+                        sev_sections[idx][week_idx].append((sev, bottom[week_idx], count))
+
                 bottom += np.array(counts)
+
+            env_totals[env] = bottom
+
+        # Add severity labels within bar sections
+        if show_labels:
+            for idx, env in enumerate(environments):
+                for week_idx in range(len(weeks)):
+                    total = env_totals[env][week_idx]
+                    sections = sev_sections[idx][week_idx]
+
+                    # Add total at top of bar
+                    if total > 0:
+                        ax.annotate(f'{int(total)}',
+                                   xy=(x[week_idx] + offsets[idx], total),
+                                   ha='center', va='bottom', fontsize=5, color='white',
+                                   fontweight='bold')
+
+                    # Add severity labels within sections
+                    for sev, section_bottom, section_height in sections:
+                        section_center = section_bottom + section_height / 2
+                        sev_label = sev_labels[sev]
+                        count = int(section_height)
+                        text_color = sev_text_colors[sev]
+
+                        # Only show label if section is tall enough (> 8% of total or > 3 units)
+                        min_height_for_label = max(total * 0.08, 3) if total > 0 else 3
+                        if section_height >= min_height_for_label:
+                            # Format: "C:5" or "H:20"
+                            label = f'{sev_label}:{count}'
+                            ax.annotate(label, xy=(x[week_idx] + offsets[idx], section_center),
+                                       ha='center', va='center', fontsize=4, color=text_color,
+                                       fontweight='bold')
 
         ax.set_xticks(x)
         ax.set_xticklabels(week_labels, rotation=45, ha='right', fontsize=7)
         ax.set_ylabel('Total Findings', fontsize=8, color=GUI_DARK_THEME['fg'])
-        # Create custom legend for environments
+
+        # Create custom legend for environments with distinct colors
         from matplotlib.patches import Patch
-        env_handles = [Patch(facecolor='gray', alpha=0.3 + 0.2*i, label=env)
+        env_base_colors = ['#2563eb', '#16a34a', '#7c3aed']  # Representative colors
+        env_handles = [Patch(facecolor=env_base_colors[i % len(env_base_colors)], label=env)
                       for i, env in enumerate(environments)]
         ax.legend(handles=env_handles, fontsize=6, loc='upper left')
 
@@ -13544,15 +13702,6 @@ Avg New/Month: {monthly_new.mean():.0f}
         self._draw_rolling_env_totals(ax, rolling_df, all_weeks[-8:], week_labels,
                                       severities, severity_colors, show_labels)
         ax.set_title('Environment Totals by Severity (8 Week Rolling)', color='white', fontsize=12)
-
-        if enlarged and 'environment_type' in rolling_df.columns:
-            # Show severity breakdown for each environment
-            envs = rolling_df['environment_type'].dropna().unique()[:3]
-            if 'severity_text' in rolling_df.columns:
-                crit_total = len(rolling_df[rolling_df['severity_text'] == 'Critical'])
-                high_total = len(rolling_df[rolling_df['severity_text'] == 'High'])
-                ax.text(0.98, 0.98, f'Total Critical: {crit_total} | High: {high_total}',
-                       transform=ax.transAxes, fontsize=9, va='top', ha='right', color='#dc3545')
 
     def _draw_total_findings_popout(self, fig, ax, enlarged=False, show_labels=True):
         """Draw total findings over time chart for pop-out."""
