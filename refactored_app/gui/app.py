@@ -12550,6 +12550,7 @@ Avg New/Month: {monthly_new.mean():.0f}
 
         hist_df = self._get_chart_data('historical')
         show_labels = self.settings_manager.settings.show_data_labels
+        label_size = self.settings_manager.settings.label_font_size
 
         for ax in [self.rolling_ax1, self.rolling_ax2, self.rolling_ax3]:
             ax.clear()
@@ -12594,22 +12595,22 @@ Avg New/Month: {monthly_new.mean():.0f}
 
         # Chart 1: Total findings by severity per week (stacked bar)
         self._draw_rolling_severity_totals(self.rolling_ax1, rolling_df, all_weeks[-8:],
-                                           week_labels, severities, severity_colors, show_labels)
-        self.rolling_ax1.set_title('Total Findings by Severity (Weekly)', color=GUI_DARK_THEME['fg'], fontsize=10)
+                                           week_labels, severities, severity_colors, show_labels, label_size)
+        self.rolling_ax1.set_title('Total Findings by Severity (Weekly)', color=GUI_DARK_THEME['fg'], fontsize=label_size+2)
 
         # Chart 2: Findings by environment per week
         self._draw_rolling_env_findings(self.rolling_ax2, rolling_df, all_weeks[-8:],
-                                        week_labels, show_labels)
-        self.rolling_ax2.set_title('Findings by Environment (Weekly)', color=GUI_DARK_THEME['fg'], fontsize=10)
+                                        week_labels, show_labels, label_size)
+        self.rolling_ax2.set_title('Findings by Environment (Weekly)', color=GUI_DARK_THEME['fg'], fontsize=label_size+2)
 
         # Chart 3: Environment totals by severity per week
         self._draw_rolling_env_totals(self.rolling_ax3, rolling_df, all_weeks[-8:],
-                                      week_labels, severities, severity_colors, show_labels)
-        self.rolling_ax3.set_title('Environment Totals by Severity (Weekly)', color=GUI_DARK_THEME['fg'], fontsize=10)
+                                      week_labels, severities, severity_colors, show_labels, label_size)
+        self.rolling_ax3.set_title('Environment Totals by Severity (Weekly)', color=GUI_DARK_THEME['fg'], fontsize=label_size+2)
 
         # Style all axes
         for ax in [self.rolling_ax1, self.rolling_ax2, self.rolling_ax3]:
-            ax.tick_params(colors=GUI_DARK_THEME['fg'], labelsize=7)
+            ax.tick_params(colors=GUI_DARK_THEME['fg'], labelsize=max(6, label_size-1))
             for spine in ax.spines.values():
                 spine.set_color(GUI_DARK_THEME['fg'])
 
@@ -12623,6 +12624,7 @@ Avg New/Month: {monthly_new.mean():.0f}
 
         hist_df = self._get_chart_data('historical')
         show_labels = self.settings_manager.settings.show_data_labels
+        label_size = self.settings_manager.settings.label_font_size
 
         for ax in [self.unique_ax1, self.unique_ax2]:
             ax.clear()
@@ -12667,24 +12669,24 @@ Avg New/Month: {monthly_new.mean():.0f}
 
         # Chart 1: Unique plugins by severity per week (stacked bar)
         self._draw_rolling_unique_plugins(self.unique_ax1, rolling_df, all_weeks[-8:],
-                                          week_labels, severities, severity_colors, show_labels)
-        self.unique_ax1.set_title('Unique Plugins by Severity (Weekly)', color=GUI_DARK_THEME['fg'], fontsize=10)
+                                          week_labels, severities, severity_colors, show_labels, label_size)
+        self.unique_ax1.set_title('Unique Plugins by Severity (Weekly)', color=GUI_DARK_THEME['fg'], fontsize=label_size+2)
 
         # Chart 2: Unique plugins by environment and severity per week
         self._draw_unique_env_plugins(self.unique_ax2, rolling_df, all_weeks[-8:],
-                                      week_labels, severities, severity_colors, show_labels)
-        self.unique_ax2.set_title('Unique Plugins by Environment (Weekly)', color=GUI_DARK_THEME['fg'], fontsize=10)
+                                      week_labels, severities, severity_colors, show_labels, label_size)
+        self.unique_ax2.set_title('Unique Plugins by Environment (Weekly)', color=GUI_DARK_THEME['fg'], fontsize=label_size+2)
 
         # Style all axes
         for ax in [self.unique_ax1, self.unique_ax2]:
-            ax.tick_params(colors=GUI_DARK_THEME['fg'], labelsize=7)
+            ax.tick_params(colors=GUI_DARK_THEME['fg'], labelsize=max(6, label_size-1))
             for spine in ax.spines.values():
                 spine.set_color(GUI_DARK_THEME['fg'])
 
         self.unique_fig.tight_layout()
         self.unique_canvas.draw()
 
-    def _draw_unique_env_plugins(self, ax, df, weeks, week_labels, severities, colors, show_labels):
+    def _draw_unique_env_plugins(self, ax, df, weeks, week_labels, severities, colors, show_labels, label_size=8):
         """Draw unique plugins per environment by severity per week (similar to env totals but counting unique plugins)."""
         # Get environment types
         if 'environment_type' not in df.columns:
@@ -12760,7 +12762,7 @@ Avg New/Month: {monthly_new.mean():.0f}
                     if total > 0:
                         ax.annotate(f'{int(total)}',
                                    xy=(x[week_idx] + offsets[idx], total),
-                                   ha='center', va='bottom', fontsize=5, color='white',
+                                   ha='center', va='bottom', fontsize=max(4, label_size-2), color='white',
                                    fontweight='bold')
 
                     # Add severity labels within sections
@@ -12775,21 +12777,21 @@ Avg New/Month: {monthly_new.mean():.0f}
                         if section_height >= min_height_for_label:
                             label = f'{sev_label}:{count}'
                             ax.annotate(label, xy=(x[week_idx] + offsets[idx], section_center),
-                                       ha='center', va='center', fontsize=4, color=text_color,
+                                       ha='center', va='center', fontsize=max(4, label_size-3), color=text_color,
                                        fontweight='bold')
 
         ax.set_xticks(x)
-        ax.set_xticklabels(week_labels, rotation=45, ha='right', fontsize=7)
-        ax.set_ylabel('Unique Plugins', fontsize=8, color=GUI_DARK_THEME['fg'])
+        ax.set_xticklabels(week_labels, rotation=45, ha='right', fontsize=max(6, label_size-1))
+        ax.set_ylabel('Unique Plugins', fontsize=label_size, color=GUI_DARK_THEME['fg'])
 
         # Create custom legend for environments with distinct colors
         from matplotlib.patches import Patch
         env_base_colors = ['#2563eb', '#16a34a', '#7c3aed']
         env_handles = [Patch(facecolor=env_base_colors[i % len(env_base_colors)], label=env)
                       for i, env in enumerate(environments)]
-        ax.legend(handles=env_handles, fontsize=6, loc='upper left')
+        ax.legend(handles=env_handles, fontsize=max(5, label_size-2), loc='upper left')
 
-    def _draw_rolling_severity_totals(self, ax, df, weeks, week_labels, severities, colors, show_labels):
+    def _draw_rolling_severity_totals(self, ax, df, weeks, week_labels, severities, colors, show_labels, label_size=8):
         """Draw total findings by severity per week as stacked bars."""
         x = np.arange(len(weeks))
         width = 0.7
@@ -12821,16 +12823,16 @@ Avg New/Month: {monthly_new.mean():.0f}
                 for i, (xi, val) in enumerate(zip(x, counts)):
                     if val > 0:
                         ax.annotate(f'{val}', xy=(xi, bottom[i] + val/2),
-                                   ha='center', va='center', fontsize=6, color=text_color,
+                                   ha='center', va='center', fontsize=label_size, color=text_color,
                                    fontweight='bold')
             bottom += np.array(counts)
 
         ax.set_xticks(x)
-        ax.set_xticklabels(week_labels, rotation=45, ha='right', fontsize=7)
-        ax.set_ylabel('Count', fontsize=8, color=GUI_DARK_THEME['fg'])
-        ax.legend(fontsize=6, loc='upper left')
+        ax.set_xticklabels(week_labels, rotation=45, ha='right', fontsize=max(6, label_size-1))
+        ax.set_ylabel('Count', fontsize=label_size, color=GUI_DARK_THEME['fg'])
+        ax.legend(fontsize=max(5, label_size-2), loc='upper left')
 
-    def _draw_rolling_unique_plugins(self, ax, df, weeks, week_labels, severities, colors, show_labels):
+    def _draw_rolling_unique_plugins(self, ax, df, weeks, week_labels, severities, colors, show_labels, label_size=8):
         """Draw unique plugins by severity per week as stacked bars."""
         x = np.arange(len(weeks))
         width = 0.7
@@ -12862,16 +12864,16 @@ Avg New/Month: {monthly_new.mean():.0f}
                 for i, (xi, val) in enumerate(zip(x, counts)):
                     if val > 0:
                         ax.annotate(f'{val}', xy=(xi, bottom[i] + val/2),
-                                   ha='center', va='center', fontsize=6, color=text_color,
+                                   ha='center', va='center', fontsize=label_size, color=text_color,
                                    fontweight='bold')
             bottom += np.array(counts)
 
         ax.set_xticks(x)
-        ax.set_xticklabels(week_labels, rotation=45, ha='right', fontsize=7)
-        ax.set_ylabel('Unique Plugins', fontsize=8, color=GUI_DARK_THEME['fg'])
-        ax.legend(fontsize=6, loc='upper left')
+        ax.set_xticklabels(week_labels, rotation=45, ha='right', fontsize=max(6, label_size-1))
+        ax.set_ylabel('Unique Plugins', fontsize=label_size, color=GUI_DARK_THEME['fg'])
+        ax.legend(fontsize=max(5, label_size-2), loc='upper left')
 
-    def _draw_rolling_env_findings(self, ax, df, weeks, week_labels, show_labels):
+    def _draw_rolling_env_findings(self, ax, df, weeks, week_labels, show_labels, label_size=8):
         """Draw unique findings per environment by week as grouped bars.
 
         Shows total findings as solid color and NEW findings that week with transparency
@@ -12954,16 +12956,16 @@ Avg New/Month: {monthly_new.mean():.0f}
                         # Show total on first line (larger font)
                         ax.annotate(f'{total}', xy=(xi, total), xytext=(0, 8),
                                    textcoords='offset points', ha='center', va='bottom',
-                                   fontsize=6, color='white', fontweight='bold')
+                                   fontsize=label_size, color='white', fontweight='bold')
                         # Show new count on second line below total (smaller, light green)
                         if new_val > 0:
                             ax.annotate(f'{new_val} new', xy=(xi, total), xytext=(0, 1),
                                        textcoords='offset points', ha='center', va='bottom',
-                                       fontsize=5, color='#90EE90')
+                                       fontsize=max(4, label_size-1), color='#90EE90')
 
         ax.set_xticks(x)
-        ax.set_xticklabels(week_labels, rotation=45, ha='right', fontsize=7)
-        ax.set_ylabel('Unique Findings', fontsize=8, color=GUI_DARK_THEME['fg'])
+        ax.set_xticklabels(week_labels, rotation=45, ha='right', fontsize=max(6, label_size-1))
+        ax.set_ylabel('Unique Findings', fontsize=label_size, color=GUI_DARK_THEME['fg'])
 
         # Custom legend with transparency explanation
         from matplotlib.patches import Patch
@@ -12972,9 +12974,9 @@ Avg New/Month: {monthly_new.mean():.0f}
             color = env_colors.get(env, default_colors[i % len(default_colors)])
             legend_elements.append(Patch(facecolor=color, label=env))
         legend_elements.append(Patch(facecolor='gray', alpha=0.5, label='New this week'))
-        ax.legend(handles=legend_elements, fontsize=5, loc='upper left')
+        ax.legend(handles=legend_elements, fontsize=max(5, label_size-2), loc='upper left')
 
-    def _draw_rolling_env_totals(self, ax, df, weeks, week_labels, severities, colors, show_labels):
+    def _draw_rolling_env_totals(self, ax, df, weeks, week_labels, severities, colors, show_labels, label_size=8):
         """Draw total findings per environment by severity per week."""
         # Get environment types
         if 'environment_type' not in df.columns:
@@ -13051,7 +13053,7 @@ Avg New/Month: {monthly_new.mean():.0f}
                     if total > 0:
                         ax.annotate(f'{int(total)}',
                                    xy=(x[week_idx] + offsets[idx], total),
-                                   ha='center', va='bottom', fontsize=5, color='white',
+                                   ha='center', va='bottom', fontsize=max(4, label_size-2), color='white',
                                    fontweight='bold')
 
                     # Add severity labels within sections
@@ -13067,19 +13069,19 @@ Avg New/Month: {monthly_new.mean():.0f}
                             # Format: "C:5" or "H:20"
                             label = f'{sev_label}:{count}'
                             ax.annotate(label, xy=(x[week_idx] + offsets[idx], section_center),
-                                       ha='center', va='center', fontsize=4, color=text_color,
+                                       ha='center', va='center', fontsize=max(4, label_size-3), color=text_color,
                                        fontweight='bold')
 
         ax.set_xticks(x)
-        ax.set_xticklabels(week_labels, rotation=45, ha='right', fontsize=7)
-        ax.set_ylabel('Total Findings', fontsize=8, color=GUI_DARK_THEME['fg'])
+        ax.set_xticklabels(week_labels, rotation=45, ha='right', fontsize=max(6, label_size-1))
+        ax.set_ylabel('Total Findings', fontsize=label_size, color=GUI_DARK_THEME['fg'])
 
         # Create custom legend for environments with distinct colors
         from matplotlib.patches import Patch
         env_base_colors = ['#2563eb', '#16a34a', '#7c3aed']  # Representative colors
         env_handles = [Patch(facecolor=env_base_colors[i % len(env_base_colors)], label=env)
                       for i, env in enumerate(environments)]
-        ax.legend(handles=env_handles, fontsize=6, loc='upper left')
+        ax.legend(handles=env_handles, fontsize=max(5, label_size-2), loc='upper left')
 
     def _update_risk_charts(self):
         """Update risk analysis visualizations."""
@@ -19605,6 +19607,21 @@ Avg New/Month: {monthly_new.mean():.0f}
         ttk.Checkbutton(defaults_frame, text="Show data labels on charts",
                         variable=show_labels_var).pack(anchor=tk.W, pady=2)
 
+        # Label font size
+        label_size_row = ttk.Frame(defaults_frame)
+        label_size_row.pack(fill=tk.X, pady=(5, 2))
+        ttk.Label(label_size_row, text="Label font size:").pack(side=tk.LEFT)
+        label_size_var = tk.IntVar(value=settings.label_font_size)
+        label_size_scale = ttk.Scale(label_size_row, from_=4, to=16, variable=label_size_var,
+                                      orient=tk.HORIZONTAL, length=120)
+        label_size_scale.pack(side=tk.LEFT, padx=5)
+        label_size_display = ttk.Label(label_size_row, text=str(settings.label_font_size), width=3)
+        label_size_display.pack(side=tk.LEFT)
+        # Update display when scale moves
+        def update_label_size_display(*args):
+            label_size_display.config(text=str(int(label_size_var.get())))
+        label_size_var.trace('w', update_label_size_display)
+
         # Default page size
         page_row = ttk.Frame(defaults_frame)
         page_row.pack(fill=tk.X, pady=(15, 2))
@@ -19667,6 +19684,7 @@ Avg New/Month: {monthly_new.mean():.0f}
                 # Update defaults
                 settings.default_include_info = include_info_var.get()
                 settings.show_data_labels = show_labels_var.get()
+                settings.label_font_size = int(label_size_var.get())
                 settings.default_page_size = int(page_var.get())
 
                 # Update evaluation logging settings
