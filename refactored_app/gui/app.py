@@ -7692,14 +7692,14 @@ Avg New/Month: {monthly_new.mean():.0f}
 
     def _edit_opdir_poc_info(self):
         """Edit POC information for OPDIR generator using dialog."""
-        config_dir = os.path.join(os.path.dirname(__file__), '..', 'config')
-        predefined_file = os.path.join(config_dir, 'predefined.ini')
+        import configparser
+
+        # Ensure config files exist
+        config_dir, predefined_file, _ = self._ensure_poam_config_exists()
 
         # Load existing config
-        import configparser
         config = configparser.ConfigParser()
-        if os.path.exists(predefined_file):
-            config.read(predefined_file)
+        config.read(predefined_file)
 
         # Ensure POC_INFO section exists
         if not config.has_section('POC_INFO'):
@@ -7719,16 +7719,26 @@ Avg New/Month: {monthly_new.mean():.0f}
         y = (dialog.winfo_screenheight() - dialog.winfo_height()) // 2
         dialog.geometry(f"+{x}+{y}")
 
+        # Main container frame
+        main_frame = ttk.Frame(dialog)
+        main_frame.pack(fill="both", expand=True)
+
         # Create scrollable frame
-        canvas = tk.Canvas(dialog)
-        scrollbar = ttk.Scrollbar(dialog, orient="vertical", command=canvas.yview)
+        canvas = tk.Canvas(main_frame, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
         scrollable_frame = ttk.Frame(canvas)
 
         scrollable_frame.bind(
             "<Configure>",
             lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+
+        # Bind canvas resize to update scrollable frame width
+        def on_canvas_configure(event):
+            canvas.itemconfig(canvas_window, width=event.width)
+        canvas.bind('<Configure>', on_canvas_configure)
+
+        canvas_window = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
 
         # Title
@@ -7782,19 +7792,16 @@ Avg New/Month: {monthly_new.mean():.0f}
 
     def _edit_opdir_templates(self):
         """Edit narrative templates for OPDIR generator using dialog."""
-        config_dir = os.path.join(os.path.dirname(__file__), '..', 'config')
-        config_file = os.path.join(config_dir, 'config.ini')
+        import configparser
+
+        # Ensure config files exist
+        config_dir, _, config_file = self._ensure_poam_config_exists()
 
         # Load existing config
-        import configparser
         config = configparser.ConfigParser()
-        if os.path.exists(config_file):
-            config.read(config_file)
+        config.read(config_file)
 
-        # Ensure NARRATIVE_TEMPLATES section exists with defaults
-        if not config.has_section('NARRATIVE_TEMPLATES'):
-            config.add_section('NARRATIVE_TEMPLATES')
-
+        # Defaults for fallback values (config file already has these, but needed for fallback)
         defaults = {
             'reason_cannot_complete': 'Patching requires thorough testing and coordination with operational requirements to ensure system availability during critical mission periods.',
             'operational_impact': 'Disconnecting these assets from the MCEN would significantly impact mission operations and disrupt critical business functions.',
@@ -7822,7 +7829,7 @@ Avg New/Month: {monthly_new.mean():.0f}
         main_frame = ttk.Frame(dialog)
         main_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
-        canvas = tk.Canvas(main_frame)
+        canvas = tk.Canvas(main_frame, highlightthickness=0)
         scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
         scrollable_frame = ttk.Frame(canvas)
 
@@ -7830,7 +7837,13 @@ Avg New/Month: {monthly_new.mean():.0f}
             "<Configure>",
             lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+
+        # Bind canvas resize to update scrollable frame width
+        def on_canvas_configure(event):
+            canvas.itemconfig(canvas_window, width=event.width)
+        canvas.bind('<Configure>', on_canvas_configure)
+
+        canvas_window = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
 
         # Title
@@ -8039,16 +8052,20 @@ Avg New/Month: {monthly_new.mean():.0f}
             messagebox.showwarning("No Selection", "Please select IAVMs to generate POA&Ms for")
             return
 
-        iavms = [self.opdir_iavm_tree.item(item)['values'][0] for item in selected]
-        self._opdir_log(f"Generating POA&Ms for {len(iavms)} selected IAVMs...")
-        self._opdir_log("Note: Full generation requires the standalone generator.")
-        self._opdir_log(f"Selected IAVMs: {', '.join(iavms)}")
+        # Gather selected IAVM data
+        iavm_data = []
+        for item in selected:
+            values = self.opdir_iavm_tree.item(item)['values']
+            iavm_data.append({
+                'iavm': values[0],
+                'opdir': values[1],
+                'subject': values[2],
+                'due_date': values[3],
+                'status': values[4] if len(values) > 4 else ''
+            })
 
-        # For now, show info about using standalone generator
-        messagebox.showinfo("Generation",
-                           f"Selected {len(iavms)} IAVMs for generation.\n\n"
-                           "For full POA&M generation with PDF output, "
-                           "use the 'Open Standalone Generator' button.")
+        self._opdir_log(f"Generating POA&Ms for {len(iavm_data)} selected IAVMs...")
+        self._generate_poam_output(iavm_data)
 
     def _generate_all_opdir_poams(self):
         """Generate POA&Ms for all IAVMs."""
@@ -8057,14 +8074,236 @@ Avg New/Month: {monthly_new.mean():.0f}
             messagebox.showwarning("No Data", "No IAVMs available. Refresh the list first.")
             return
 
-        count = len(all_items)
-        self._opdir_log(f"Generating POA&Ms for all {count} IAVMs...")
-        self._opdir_log("Note: Full generation requires the standalone generator.")
+        # Gather all IAVM data
+        iavm_data = []
+        for item in all_items:
+            values = self.opdir_iavm_tree.item(item)['values']
+            iavm_data.append({
+                'iavm': values[0],
+                'opdir': values[1],
+                'subject': values[2],
+                'due_date': values[3],
+                'status': values[4] if len(values) > 4 else ''
+            })
 
-        messagebox.showinfo("Generation",
-                           f"Found {count} IAVMs for generation.\n\n"
-                           "For full POA&M generation with PDF output, "
-                           "use the 'Open Standalone Generator' button.")
+        self._opdir_log(f"Generating POA&Ms for all {len(iavm_data)} IAVMs...")
+        self._generate_poam_output(iavm_data)
+
+    def _ensure_poam_config_exists(self):
+        """Ensure POA&M config files exist with defaults."""
+        import configparser
+
+        config_dir = os.path.join(os.path.dirname(__file__), '..', 'config')
+        os.makedirs(config_dir, exist_ok=True)
+
+        # Create predefined.ini with defaults if missing
+        predefined_file = os.path.join(config_dir, 'predefined.ini')
+        if not os.path.exists(predefined_file):
+            config = configparser.ConfigParser()
+            config.add_section('POC_INFO')
+            poc_fields = ['rnosc', 'command_unit', 'requestor', 'requestor_phone',
+                         'requestor_email', 'local_iam', 'local_iam_phone',
+                         'local_iam_email', 'regional_iam', 'regional_iam_phone',
+                         'regional_iam_email']
+            for field in poc_fields:
+                config.set('POC_INFO', field, '')
+            with open(predefined_file, 'w') as f:
+                config.write(f)
+
+        # Create config.ini with defaults if missing
+        config_file = os.path.join(config_dir, 'config.ini')
+        if not os.path.exists(config_file):
+            config = configparser.ConfigParser()
+            config.add_section('NARRATIVE_TEMPLATES')
+            defaults = {
+                'reason_cannot_complete': 'Patching requires thorough testing and coordination with operational requirements to ensure system availability during critical mission periods.',
+                'operational_impact': 'Disconnecting these assets from the MCEN would significantly impact mission operations and disrupt critical business functions.',
+                'plan_of_action': '1. Coordinate with system owners to schedule maintenance window\n2. Test patches in development environment\n3. Apply patches during approved maintenance window\n4. Verify system functionality post-patching\n5. Conduct vulnerability scan to confirm remediation',
+                'timeline_milestones': 'Week 1: Coordinate maintenance scheduling\nWeek 2-3: Test patches in development environment\nWeek 4: Apply patches during maintenance window\nWeek 5: Post-patch verification and vulnerability scanning',
+                'vulnerability_detection_method': 'Continuous vulnerability scanning using Nessus and regular compliance assessments. System monitoring through HBSS and network monitoring tools for signs of compromise.',
+                'temporary_mitigations': 'Network segmentation and access controls are in place. Intrusion detection systems are monitoring for suspicious activity. Patch management process ensures timely application of security updates.'
+            }
+            for key, value in defaults.items():
+                config.set('NARRATIVE_TEMPLATES', key, value)
+            with open(config_file, 'w') as f:
+                config.write(f)
+
+        return config_dir, predefined_file, config_file
+
+    def _generate_poam_output(self, iavm_data: list):
+        """Generate POA&M output from IAVM data."""
+        import configparser
+
+        # Ensure config files exist
+        config_dir, predefined_file, config_file = self._ensure_poam_config_exists()
+
+        poc_config = configparser.ConfigParser()
+        poc_config.read(predefined_file)
+
+        template_config = configparser.ConfigParser()
+        template_config.read(config_file)
+
+        # Get POC info
+        poc_info = {}
+        if poc_config.has_section('POC_INFO'):
+            for key in poc_config.options('POC_INFO'):
+                poc_info[key] = poc_config.get('POC_INFO', key)
+
+        # Get templates
+        templates = {}
+        defaults = {
+            'reason_cannot_complete': 'Patching requires thorough testing and coordination with operational requirements.',
+            'operational_impact': 'Disconnecting these assets would significantly impact mission operations.',
+            'plan_of_action': '1. Coordinate maintenance\n2. Test patches\n3. Apply patches\n4. Verify functionality',
+            'timeline_milestones': 'Week 1: Coordinate\nWeek 2-3: Test\nWeek 4: Apply\nWeek 5: Verify',
+            'vulnerability_detection_method': 'Continuous vulnerability scanning using Nessus.',
+            'temporary_mitigations': 'Network segmentation and access controls in place.'
+        }
+        if template_config.has_section('NARRATIVE_TEMPLATES'):
+            for key in defaults:
+                templates[key] = template_config.get('NARRATIVE_TEMPLATES', key, fallback=defaults[key])
+        else:
+            templates = defaults
+
+        # Build POA&M records
+        poam_records = []
+        for idx, iavm in enumerate(iavm_data, start=1):
+            record = {
+                'POA&M ID': f"POAM-{idx:04d}",
+                'IAVM Number': iavm['iavm'],
+                'OPDIR Number': iavm['opdir'],
+                'Subject': iavm['subject'],
+                'Due Date': iavm['due_date'],
+                'Status': iavm.get('status', 'Open'),
+                'Command/Unit': poc_info.get('command_unit', ''),
+                'Requestor': poc_info.get('requestor', ''),
+                'Requestor Phone': poc_info.get('requestor_phone', ''),
+                'Requestor Email': poc_info.get('requestor_email', ''),
+                'Local IAM': poc_info.get('local_iam', ''),
+                'Local IAM Phone': poc_info.get('local_iam_phone', ''),
+                'Local IAM Email': poc_info.get('local_iam_email', ''),
+                'Reason Cannot Complete': templates['reason_cannot_complete'],
+                'Operational Impact': templates['operational_impact'],
+                'Plan of Action': templates['plan_of_action'],
+                'Timeline/Milestones': templates['timeline_milestones'],
+                'Detection Method': templates['vulnerability_detection_method'],
+                'Mitigations': templates['temporary_mitigations'],
+            }
+            poam_records.append(record)
+
+        # Ask user for export format
+        export_choice = messagebox.askyesnocancel(
+            "Export POA&Ms",
+            f"Generated {len(poam_records)} POA&M records.\n\n"
+            "Yes = Export to Excel\n"
+            "No = Export to CSV\n"
+            "Cancel = View in dialog"
+        )
+
+        if export_choice is True:
+            # Export to Excel
+            self._export_poams_excel(poam_records)
+        elif export_choice is False:
+            # Export to CSV
+            self._export_poams_csv(poam_records)
+        else:
+            # Show in dialog
+            self._show_poams_dialog(poam_records)
+
+    def _export_poams_excel(self, poam_records: list):
+        """Export POA&M records to Excel."""
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx")],
+            title="Save POA&Ms to Excel"
+        )
+        if not filepath:
+            return
+
+        try:
+            import pandas as pd
+            df = pd.DataFrame(poam_records)
+            df.to_excel(filepath, index=False, sheet_name='POAMs')
+            self._opdir_log(f"Exported {len(poam_records)} POA&Ms to {os.path.basename(filepath)}")
+            messagebox.showinfo("Export Complete", f"Exported {len(poam_records)} POA&Ms to:\n{filepath}")
+        except Exception as e:
+            self._opdir_log(f"Export error: {e}")
+            messagebox.showerror("Export Error", f"Failed to export: {e}")
+
+    def _export_poams_csv(self, poam_records: list):
+        """Export POA&M records to CSV."""
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv")],
+            title="Save POA&Ms to CSV"
+        )
+        if not filepath:
+            return
+
+        try:
+            import pandas as pd
+            df = pd.DataFrame(poam_records)
+            df.to_csv(filepath, index=False)
+            self._opdir_log(f"Exported {len(poam_records)} POA&Ms to {os.path.basename(filepath)}")
+            messagebox.showinfo("Export Complete", f"Exported {len(poam_records)} POA&Ms to:\n{filepath}")
+        except Exception as e:
+            self._opdir_log(f"Export error: {e}")
+            messagebox.showerror("Export Error", f"Failed to export: {e}")
+
+    def _show_poams_dialog(self, poam_records: list):
+        """Show POA&M records in a preview dialog."""
+        dialog = tk.Toplevel(self.window)
+        dialog.title(f"POA&M Preview ({len(poam_records)} records)")
+        dialog.geometry("900x600")
+        dialog.transient(self.window)
+
+        # Create treeview for records
+        tree_frame = ttk.Frame(dialog)
+        tree_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        columns = ('poam_id', 'iavm', 'opdir', 'subject', 'due_date', 'status')
+        tree = ttk.Treeview(tree_frame, columns=columns, show='headings', height=20)
+
+        tree.heading('poam_id', text='POA&M ID')
+        tree.heading('iavm', text='IAVM')
+        tree.heading('opdir', text='OPDIR')
+        tree.heading('subject', text='Subject')
+        tree.heading('due_date', text='Due Date')
+        tree.heading('status', text='Status')
+
+        tree.column('poam_id', width=80)
+        tree.column('iavm', width=100)
+        tree.column('opdir', width=80)
+        tree.column('subject', width=350)
+        tree.column('due_date', width=100)
+        tree.column('status', width=80)
+
+        scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+
+        tree.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # Populate tree
+        for record in poam_records:
+            tree.insert('', 'end', values=(
+                record['POA&M ID'],
+                record['IAVM Number'],
+                record['OPDIR Number'],
+                record['Subject'][:60] + '...' if len(record['Subject']) > 60 else record['Subject'],
+                record['Due Date'],
+                record['Status']
+            ))
+
+        # Buttons
+        button_frame = ttk.Frame(dialog)
+        button_frame.pack(fill="x", padx=10, pady=10)
+
+        ttk.Button(button_frame, text="Export to Excel",
+                  command=lambda: self._export_poams_excel(poam_records)).pack(side="left", padx=5)
+        ttk.Button(button_frame, text="Export to CSV",
+                  command=lambda: self._export_poams_csv(poam_records)).pack(side="left", padx=5)
+        ttk.Button(button_frame, text="Close", command=dialog.destroy).pack(side="right", padx=5)
 
     def _opdir_log(self, message):
         """Log message to OPDIR generator log panel."""
@@ -8559,6 +8798,7 @@ Avg New/Month: {monthly_new.mean():.0f}
                 all_findings = []
                 temp_dirs = []
                 total_info_count = 0
+                total_scan_files = 0
 
                 for archive_path in self.archive_paths:
                     if archive_path.endswith('.zip'):
@@ -8568,6 +8808,8 @@ Avg New/Month: {monthly_new.mean():.0f}
                         nessus_files = find_files_by_extension(temp_dir, '.nessus')
                     else:
                         nessus_files = [archive_path]
+
+                    total_scan_files += len(nessus_files)
 
                     if nessus_files:
                         findings_df, _ = parse_multiple_nessus_files(nessus_files, self.plugins_dict)
@@ -8586,8 +8828,20 @@ Avg New/Month: {monthly_new.mean():.0f}
                     preview_df = pd.concat(all_findings, ignore_index=True)
                     raw_count = len(preview_df)
 
+                    # Count unique scan dates in archive
+                    unique_scan_dates = 0
+                    if 'scan_date' in preview_df.columns:
+                        preview_df['scan_date'] = pd.to_datetime(preview_df['scan_date'])
+                        unique_scan_dates = preview_df['scan_date'].dt.date.nunique()
+
+                    # Count unique findings by plugin_id + hostname (matches GPM generator logic)
+                    unique_findings = 0
+                    if 'plugin_id' in preview_df.columns and 'hostname' in preview_df.columns:
+                        unique_findings = preview_df.groupby(['plugin_id', 'hostname']).ngroups
+
                     # Estimate duplicates by loading existing DB keys
                     duplicate_estimate = 0
+                    db_finding_count = 0
                     if self.existing_db_path:
                         import sqlite3
                         try:
@@ -8595,12 +8849,12 @@ Avg New/Month: {monthly_new.mean():.0f}
                             existing_df = pd.read_sql_query(
                                 "SELECT hostname, plugin_id, scan_date FROM historical_findings", conn)
                             conn.close()
+                            db_finding_count = len(existing_df)
 
                             if not existing_df.empty:
                                 existing_df['scan_date'] = pd.to_datetime(existing_df['scan_date'])
-                                preview_df['scan_date'] = pd.to_datetime(preview_df['scan_date'])
 
-                                # Count potential duplicates
+                                # Count potential duplicates using full key
                                 key_cols = ['hostname', 'plugin_id', 'scan_date']
                                 if all(col in preview_df.columns for col in key_cols):
                                     existing_keys = set(existing_df[key_cols].apply(tuple, axis=1))
@@ -8613,10 +8867,11 @@ Avg New/Month: {monthly_new.mean():.0f}
                     info_would_exclude = total_info_count if not self.severity_toggles['Info'].get() else 0
                     new_estimate = raw_count - duplicate_estimate - info_would_exclude
 
-                    # Show dialog on main thread
+                    # Show dialog on main thread with extended stats
                     self.window.after(0, lambda: self._display_import_preview(
                         raw_count, total_info_count, info_would_exclude,
-                        duplicate_estimate, max(0, new_estimate)
+                        duplicate_estimate, max(0, new_estimate),
+                        total_scan_files, unique_scan_dates, unique_findings, db_finding_count
                     ))
                 else:
                     self.window.after(0, lambda: self._on_preview_complete(None))
@@ -8628,13 +8883,14 @@ Avg New/Month: {monthly_new.mean():.0f}
         thread = threading.Thread(target=scan_thread, daemon=True)
         thread.start()
 
-    def _display_import_preview(self, raw_count, info_total, info_excluded, duplicates, new_estimate):
+    def _display_import_preview(self, raw_count, info_total, info_excluded, duplicates, new_estimate,
+                                scan_files=0, unique_dates=0, unique_findings=0, db_count=0):
         """Display the import preview dialog with options."""
         self._set_processing(False, "Ready")
 
         dialog = tk.Toplevel(self.window)
         dialog.title("Import Preview")
-        dialog.geometry("450x350")
+        dialog.geometry("500x480")
         dialog.resizable(False, False)
         dialog.transient(self.window)
         dialog.grab_set()
@@ -8649,30 +8905,65 @@ Avg New/Month: {monthly_new.mean():.0f}
         ttk.Label(dialog, text="Archive Import Preview",
                  font=("Arial", 14, "bold")).pack(pady=(20, 10))
 
-        # Stats frame
-        stats_frame = ttk.Frame(dialog)
-        stats_frame.pack(fill=tk.X, padx=30, pady=10)
+        # Archive info frame
+        archive_frame = ttk.LabelFrame(dialog, text="Archive Contents", padding=5)
+        archive_frame.pack(fill=tk.X, padx=20, pady=(5, 10))
 
-        stats = [
-            ("Raw findings in archive:", f"{raw_count:,}"),
-            ("Informational findings:", f"{info_total:,}"),
-            ("Info to be excluded:", f"{info_excluded:,}" if info_excluded > 0 else "0 (Info enabled)"),
-            ("Estimated duplicates:", f"{duplicates:,}"),
-            ("Estimated new findings:", f"{new_estimate:,}"),
+        archive_stats = [
+            ("Scan files in archive:", f"{scan_files:,}"),
+            ("Unique scan dates:", f"{unique_dates:,}"),
+            ("Total rows (all scans):", f"{raw_count:,}"),
+            ("Unique findings (host+plugin):", f"{unique_findings:,}"),
         ]
 
-        for i, (label, value) in enumerate(stats):
-            ttk.Label(stats_frame, text=label).grid(row=i, column=0, sticky='w', pady=2)
+        for i, (label, value) in enumerate(archive_stats):
+            ttk.Label(archive_frame, text=label).grid(row=i, column=0, sticky='w', pady=1)
+            ttk.Label(archive_frame, text=value, font=("Arial", 10, "bold")).grid(
+                row=i, column=1, sticky='e', pady=1, padx=(20, 0))
+        archive_frame.columnconfigure(1, weight=1)
+
+        # Database comparison frame
+        db_frame = ttk.LabelFrame(dialog, text="Database Comparison", padding=5)
+        db_frame.pack(fill=tk.X, padx=20, pady=(0, 10))
+
+        db_stats = [
+            ("Current DB findings:", f"{db_count:,}"),
+            ("Matching rows (duplicates):", f"{duplicates:,}"),
+            ("New rows to add:", f"{new_estimate:,}"),
+        ]
+
+        for i, (label, value) in enumerate(db_stats):
+            ttk.Label(db_frame, text=label).grid(row=i, column=0, sticky='w', pady=1)
             color = 'green' if 'new' in label.lower() and new_estimate > 0 else None
-            lbl = ttk.Label(stats_frame, text=value, font=("Arial", 10, "bold"))
+            lbl = ttk.Label(db_frame, text=value, font=("Arial", 10, "bold"))
             if color:
                 lbl.configure(foreground=color)
-            lbl.grid(row=i, column=1, sticky='e', pady=2, padx=(20, 0))
+            lbl.grid(row=i, column=1, sticky='e', pady=1, padx=(20, 0))
+        db_frame.columnconfigure(1, weight=1)
 
-        stats_frame.columnconfigure(1, weight=1)
+        # Filtering frame
+        filter_frame = ttk.LabelFrame(dialog, text="Filtering", padding=5)
+        filter_frame.pack(fill=tk.X, padx=20, pady=(0, 10))
+
+        filter_stats = [
+            ("Informational findings:", f"{info_total:,}"),
+            ("Info to be excluded:", f"{info_excluded:,}" if info_excluded > 0 else "0 (Info enabled)"),
+        ]
+
+        for i, (label, value) in enumerate(filter_stats):
+            ttk.Label(filter_frame, text=label).grid(row=i, column=0, sticky='w', pady=1)
+            ttk.Label(filter_frame, text=value, font=("Arial", 10, "bold")).grid(
+                row=i, column=1, sticky='e', pady=1, padx=(20, 0))
+        filter_frame.columnconfigure(1, weight=1)
+
+        # Help note explaining the difference
+        if unique_findings > 0 and raw_count > unique_findings:
+            note_text = f"Note: {raw_count:,} total rows across {unique_dates} scan dates = {unique_findings:,} unique vulnerabilities"
+            ttk.Label(dialog, text=note_text, foreground='#888888',
+                     font=("Arial", 9), wraplength=450).pack(pady=(0, 5))
 
         # Separator
-        ttk.Separator(dialog, orient='horizontal').pack(fill=tk.X, padx=20, pady=15)
+        ttk.Separator(dialog, orient='horizontal').pack(fill=tk.X, padx=20, pady=10)
 
         # Question
         ttk.Label(dialog, text="How would you like to proceed?",
@@ -8680,7 +8971,7 @@ Avg New/Month: {monthly_new.mean():.0f}
 
         # Button frame
         btn_frame = ttk.Frame(dialog)
-        btn_frame.pack(pady=20)
+        btn_frame.pack(pady=15)
 
         def on_add_to_db():
             self._review_only_mode = False
@@ -8706,7 +8997,7 @@ Avg New/Month: {monthly_new.mean():.0f}
         # Note
         note = "Review Only: Creates lifecycle analysis without saving to database"
         ttk.Label(dialog, text=note, foreground='gray',
-                 font=("Arial", 9)).pack(pady=(0, 15))
+                 font=("Arial", 9)).pack(pady=(0, 10))
 
     def _on_preview_complete(self, result):
         """Called when preview scan finds no data."""
