@@ -12749,15 +12749,15 @@ Avg New/Month: {monthly_new.mean():.0f}
             if show_labels:
                 for xi, total, new_val in zip(x + offset, total_counts, new_counts):
                     if total > 0:
-                        # Show total at top
-                        ax.annotate(f'{total}', xy=(xi, total), xytext=(0, 2),
+                        # Show total on first line (larger font)
+                        ax.annotate(f'{total}', xy=(xi, total), xytext=(0, 8),
                                    textcoords='offset points', ha='center', va='bottom',
-                                   fontsize=5, color='white', fontweight='bold')
-                    if new_val > 0:
-                        # Show new count in the transparent section
-                        ax.annotate(f'+{new_val}', xy=(xi, new_val/2), xytext=(0, 0),
-                                   textcoords='offset points', ha='center', va='center',
-                                   fontsize=4, color='white', alpha=0.9)
+                                   fontsize=6, color='white', fontweight='bold')
+                        # Show new count on second line below total (smaller, light green)
+                        if new_val > 0:
+                            ax.annotate(f'{new_val} new', xy=(xi, total), xytext=(0, 1),
+                                       textcoords='offset points', ha='center', va='bottom',
+                                       fontsize=5, color='#90EE90')
 
         ax.set_xticks(x)
         ax.set_xticklabels(week_labels, rotation=45, ha='right', fontsize=7)
