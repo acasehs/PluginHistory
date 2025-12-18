@@ -157,6 +157,11 @@ class NessusHistoryTrackerApp:
         # Chart pop-out redraw functions (populated after UI build)
         self.chart_redraw_funcs: Dict[str, Any] = {}
 
+        # Import statistics tracking for management visualizations
+        # Each entry: {'date': datetime, 'week': str, 'raw_count': int, 'info_excluded': int,
+        #              'duplicates_skipped': int, 'new_added': int, 'source_files': list}
+        self.import_statistics: List[Dict[str, Any]] = []
+
         # Settings manager
         self.settings_manager = SettingsManager()
 
@@ -2063,6 +2068,12 @@ class NessusHistoryTrackerApp:
         # Add OPDIR Generator subtab (separate from standard reports)
         self._build_opdir_generator_subtab()
 
+        # Add GPM UID Generator subtab
+        self._build_gpm_uid_subtab()
+
+        # Add Import Statistics subtab
+        self._build_import_statistics_subtab()
+
     def _build_opdir_generator_subtab(self):
         """Build the OPDIR POA&M Generator subtab."""
         frame = ttk.Frame(self.reporting_notebook)
@@ -2221,6 +2232,198 @@ class NessusHistoryTrackerApp:
 
         # Store the IAVA filter set
         self._opdir_iava_filter = set()
+
+    def _build_gpm_uid_subtab(self):
+        """Build the GPM UID Generator subtab."""
+        frame = ttk.Frame(self.reporting_notebook)
+        self.reporting_notebook.add(frame, text="GPM UID")
+
+        # Main layout
+        main_pane = ttk.PanedWindow(frame, orient=tk.HORIZONTAL)
+        main_pane.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # Left panel - Selection
+        left_frame = ttk.Frame(main_pane)
+        main_pane.add(left_frame, weight=1)
+
+        # Source selection
+        source_frame = ttk.LabelFrame(left_frame, text="Select Source", padding=10)
+        source_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        # Source type selection
+        self.gpm_source_type = tk.StringVar(value="nessus")
+        ttk.Radiobutton(source_frame, text="Nessus Scan", variable=self.gpm_source_type,
+                       value="nessus", command=self._update_gpm_source_options).pack(anchor=tk.W)
+        ttk.Radiobutton(source_frame, text="STIG Checklist", variable=self.gpm_source_type,
+                       value="stig", command=self._update_gpm_source_options).pack(anchor=tk.W)
+
+        # Nessus scan date selection
+        self.gpm_nessus_frame = ttk.Frame(source_frame)
+        self.gpm_nessus_frame.pack(fill=tk.X, pady=5)
+        ttk.Label(self.gpm_nessus_frame, text="Scan Date:").pack(side=tk.LEFT)
+        self.gpm_scan_date_combo = ttk.Combobox(self.gpm_nessus_frame, width=20, state='readonly')
+        self.gpm_scan_date_combo.pack(side=tk.LEFT, padx=5)
+        ttk.Button(self.gpm_nessus_frame, text="Refresh",
+                  command=self._refresh_gpm_scan_dates).pack(side=tk.LEFT)
+
+        # STIG checklist selection
+        self.gpm_stig_frame = ttk.Frame(source_frame)
+        ttk.Label(self.gpm_stig_frame, text="Checklists:").pack(anchor=tk.W)
+
+        stig_list_frame = ttk.Frame(self.gpm_stig_frame)
+        stig_list_frame.pack(fill=tk.BOTH, expand=True)
+        self.gpm_stig_listbox = tk.Listbox(stig_list_frame, selectmode=tk.EXTENDED, height=6)
+        stig_scroll = ttk.Scrollbar(stig_list_frame, orient=tk.VERTICAL, command=self.gpm_stig_listbox.yview)
+        self.gpm_stig_listbox.configure(yscrollcommand=stig_scroll.set)
+        self.gpm_stig_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        stig_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        stig_btn_frame = ttk.Frame(self.gpm_stig_frame)
+        stig_btn_frame.pack(fill=tk.X, pady=2)
+        ttk.Button(stig_btn_frame, text="Select All",
+                  command=lambda: self.gpm_stig_listbox.selection_set(0, tk.END)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(stig_btn_frame, text="Clear",
+                  command=lambda: self.gpm_stig_listbox.selection_clear(0, tk.END)).pack(side=tk.LEFT, padx=2)
+
+        # Filter options
+        filter_frame = ttk.LabelFrame(left_frame, text="Filter Options", padding=10)
+        filter_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        self.gpm_exclude_info = tk.BooleanVar(value=True)
+        ttk.Checkbutton(filter_frame, text="Exclude Informational (severity 0)",
+                       variable=self.gpm_exclude_info).pack(anchor=tk.W)
+
+        self.gpm_active_only = tk.BooleanVar(value=True)
+        ttk.Checkbutton(filter_frame, text="Active findings only (exclude Resolved)",
+                       variable=self.gpm_active_only).pack(anchor=tk.W)
+
+        # Generate button
+        gen_frame = ttk.Frame(left_frame)
+        gen_frame.pack(fill=tk.X, padx=5, pady=10)
+        ttk.Button(gen_frame, text="Generate GPM UIDs",
+                  command=self._generate_gpm_uids).pack(fill=tk.X)
+
+        # Right panel - Results
+        right_frame = ttk.Frame(main_pane)
+        main_pane.add(right_frame, weight=2)
+
+        # Results header
+        result_header = ttk.Frame(right_frame)
+        result_header.pack(fill=tk.X, padx=5, pady=5)
+        ttk.Label(result_header, text="GPM UIDs", font=("Arial", 11, "bold")).pack(side=tk.LEFT)
+        self.gpm_count_label = ttk.Label(result_header, text="", foreground='gray')
+        self.gpm_count_label.pack(side=tk.LEFT, padx=10)
+        ttk.Button(result_header, text="Copy to Clipboard",
+                  command=self._copy_gpm_uids_to_clipboard).pack(side=tk.RIGHT)
+
+        # Results treeview
+        result_frame = ttk.Frame(right_frame)
+        result_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        self.gpm_uid_tree = ttk.Treeview(result_frame,
+                                         columns=('gpm_uid', 'source_id', 'hostname', 'name', 'severity'),
+                                         show='headings', selectmode='extended')
+        self.gpm_uid_tree.heading('gpm_uid', text='GPM UID')
+        self.gpm_uid_tree.heading('source_id', text='Plugin/SV ID')
+        self.gpm_uid_tree.heading('hostname', text='Hostname')
+        self.gpm_uid_tree.heading('name', text='Name')
+        self.gpm_uid_tree.heading('severity', text='Severity')
+        self.gpm_uid_tree.column('gpm_uid', width=200)
+        self.gpm_uid_tree.column('source_id', width=80)
+        self.gpm_uid_tree.column('hostname', width=120)
+        self.gpm_uid_tree.column('name', width=250)
+        self.gpm_uid_tree.column('severity', width=70)
+
+        gpm_scroll_y = ttk.Scrollbar(result_frame, orient=tk.VERTICAL, command=self.gpm_uid_tree.yview)
+        gpm_scroll_x = ttk.Scrollbar(result_frame, orient=tk.HORIZONTAL, command=self.gpm_uid_tree.xview)
+        self.gpm_uid_tree.configure(yscrollcommand=gpm_scroll_y.set, xscrollcommand=gpm_scroll_x.set)
+        self.gpm_uid_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        gpm_scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
+        gpm_scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
+
+        # Format note
+        note_frame = ttk.Frame(right_frame)
+        note_frame.pack(fill=tk.X, padx=5, pady=5)
+        ttk.Label(note_frame, text="GPM UID Format: plugin_id.hostname (Nessus) or sv_id.hostname (STIG)",
+                 foreground='gray').pack(anchor=tk.W)
+
+        # Initialize with Nessus view
+        self._update_gpm_source_options()
+
+    def _build_import_statistics_subtab(self):
+        """Build the Import Statistics management visualization subtab."""
+        frame = ttk.Frame(self.reporting_notebook)
+        self.reporting_notebook.add(frame, text="Import Statistics")
+
+        # Header
+        header_frame = ttk.Frame(frame)
+        header_frame.pack(fill=tk.X, padx=10, pady=10)
+        ttk.Label(header_frame, text="Import Statistics & Management Visualizations",
+                 font=("Arial", 12, "bold")).pack(side=tk.LEFT)
+        ttk.Button(header_frame, text="Refresh",
+                  command=self._refresh_import_statistics).pack(side=tk.RIGHT)
+        ttk.Button(header_frame, text="Export to CSV",
+                  command=self._export_import_statistics).pack(side=tk.RIGHT, padx=5)
+
+        # Main content with paned window
+        main_pane = ttk.PanedWindow(frame, orient=tk.VERTICAL)
+        main_pane.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # Top - Summary statistics
+        summary_frame = ttk.LabelFrame(frame, text="Weekly Import Summary", padding=10)
+        main_pane.add(summary_frame, weight=1)
+
+        # Summary treeview
+        summary_tree_frame = ttk.Frame(summary_frame)
+        summary_tree_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.import_stats_tree = ttk.Treeview(summary_tree_frame,
+                                              columns=('week', 'imports', 'raw_total', 'info_excluded',
+                                                      'duplicates', 'new_added', 'add_rate'),
+                                              show='headings', height=8)
+        self.import_stats_tree.heading('week', text='Week')
+        self.import_stats_tree.heading('imports', text='Imports')
+        self.import_stats_tree.heading('raw_total', text='Raw Findings')
+        self.import_stats_tree.heading('info_excluded', text='Info Excluded')
+        self.import_stats_tree.heading('duplicates', text='Duplicates')
+        self.import_stats_tree.heading('new_added', text='New Added')
+        self.import_stats_tree.heading('add_rate', text='Add Rate')
+        self.import_stats_tree.column('week', width=100)
+        self.import_stats_tree.column('imports', width=60)
+        self.import_stats_tree.column('raw_total', width=90)
+        self.import_stats_tree.column('info_excluded', width=90)
+        self.import_stats_tree.column('duplicates', width=80)
+        self.import_stats_tree.column('new_added', width=80)
+        self.import_stats_tree.column('add_rate', width=70)
+
+        stats_scroll = ttk.Scrollbar(summary_tree_frame, orient=tk.VERTICAL, command=self.import_stats_tree.yview)
+        self.import_stats_tree.configure(yscrollcommand=stats_scroll.set)
+        self.import_stats_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        stats_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Bottom - Chart visualization
+        chart_frame = ttk.LabelFrame(frame, text="Weekly Breakdown Chart", padding=10)
+        main_pane.add(chart_frame, weight=2)
+
+        if HAS_MATPLOTLIB:
+            self.import_stats_fig = Figure(figsize=(10, 4), dpi=100)
+            self.import_stats_fig.patch.set_facecolor(GUI_DARK_THEME['bg'])
+            self.import_stats_canvas = FigureCanvasTkAgg(self.import_stats_fig, master=chart_frame)
+            self.import_stats_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        else:
+            ttk.Label(chart_frame, text="Matplotlib not available for charts").pack()
+
+        # Totals summary at bottom
+        totals_frame = ttk.Frame(frame)
+        totals_frame.pack(fill=tk.X, padx=10, pady=10)
+
+        self.import_totals_label = ttk.Label(totals_frame, text="No import data available", foreground='gray')
+        self.import_totals_label.pack(anchor=tk.W)
+
+        # Note about data persistence
+        ttk.Label(totals_frame,
+                 text="Note: Statistics are tracked per session. Load a database to see historical imports.",
+                 foreground='gray').pack(anchor=tk.W)
 
     def _build_report_subtab(self, report_key, config):
         """Build a single report subtab with options, preview, and export."""
@@ -7870,10 +8073,342 @@ Avg New/Month: {monthly_new.mean():.0f}
             self.opdir_gen_log.insert(tk.END, f"[{timestamp}] {message}\n")
             self.opdir_gen_log.see(tk.END)
 
+    # GPM UID Generator Methods
+    def _update_gpm_source_options(self):
+        """Update GPM source selection UI based on selected type."""
+        source_type = self.gpm_source_type.get()
+
+        if source_type == "nessus":
+            self.gpm_nessus_frame.pack(fill=tk.X, pady=5)
+            self.gpm_stig_frame.pack_forget()
+            self._refresh_gpm_scan_dates()
+        else:
+            self.gpm_nessus_frame.pack_forget()
+            self.gpm_stig_frame.pack(fill=tk.X, pady=5)
+            self._refresh_gpm_stig_list()
+
+    def _refresh_gpm_scan_dates(self):
+        """Refresh available scan dates for GPM UID generation."""
+        if self.historical_df.empty:
+            self.gpm_scan_date_combo['values'] = []
+            return
+
+        if 'scan_date' in self.historical_df.columns:
+            dates = self.historical_df['scan_date'].dropna().unique()
+            date_strings = sorted([pd.to_datetime(d).strftime('%Y-%m-%d') for d in dates], reverse=True)
+            self.gpm_scan_date_combo['values'] = ['All Dates'] + date_strings
+            if date_strings:
+                self.gpm_scan_date_combo.set(date_strings[0])
+
+    def _refresh_gpm_stig_list(self):
+        """Refresh available STIG checklists for GPM UID generation."""
+        self.gpm_stig_listbox.delete(0, tk.END)
+
+        if self.stig_df.empty:
+            return
+
+        # Get unique checklist sources
+        if 'source_file' in self.stig_df.columns:
+            sources = self.stig_df['source_file'].dropna().unique()
+            for source in sorted(sources):
+                self.gpm_stig_listbox.insert(tk.END, os.path.basename(str(source)))
+
+    def _generate_gpm_uids(self):
+        """Generate GPM UIDs based on selected source."""
+        # Clear existing items
+        for item in self.gpm_uid_tree.get_children():
+            self.gpm_uid_tree.delete(item)
+
+        source_type = self.gpm_source_type.get()
+
+        if source_type == "nessus":
+            self._generate_nessus_gpm_uids()
+        else:
+            self._generate_stig_gpm_uids()
+
+    def _generate_nessus_gpm_uids(self):
+        """Generate GPM UIDs for Nessus findings."""
+        if self.historical_df.empty:
+            messagebox.showwarning("No Data", "No Nessus data loaded.")
+            return
+
+        # Get selected date
+        selected_date = self.gpm_scan_date_combo.get()
+        df = self.historical_df.copy()
+
+        # Filter by date
+        if selected_date and selected_date != 'All Dates':
+            df['scan_date'] = pd.to_datetime(df['scan_date'])
+            df = df[df['scan_date'].dt.strftime('%Y-%m-%d') == selected_date]
+
+        # Apply filters
+        if self.gpm_exclude_info.get() and 'severity_text' in df.columns:
+            df = df[df['severity_text'] != 'Info']
+
+        if self.gpm_active_only.get():
+            # Use lifecycle data to check status
+            if not self.lifecycle_df.empty and 'status' in self.lifecycle_df.columns:
+                active_keys = set()
+                for _, row in self.lifecycle_df[self.lifecycle_df['status'] != 'Resolved'].iterrows():
+                    key = (row.get('plugin_id'), row.get('hostname'))
+                    active_keys.add(key)
+                df = df[df.apply(lambda r: (r.get('plugin_id'), r.get('hostname')) in active_keys, axis=1)]
+
+        # Generate GPM UIDs
+        gpm_data = []
+        seen_uids = set()
+        for _, row in df.iterrows():
+            plugin_id = row.get('plugin_id', '')
+            hostname = row.get('hostname', row.get('canonical_hostname', ''))
+            if not plugin_id or not hostname:
+                continue
+
+            gpm_uid = f"{plugin_id}.{hostname}"
+            if gpm_uid in seen_uids:
+                continue
+            seen_uids.add(gpm_uid)
+
+            gpm_data.append({
+                'gpm_uid': gpm_uid,
+                'source_id': plugin_id,
+                'hostname': hostname,
+                'name': row.get('name', row.get('plugin_name', 'Unknown'))[:50],
+                'severity': row.get('severity_text', 'Unknown')
+            })
+
+        # Populate treeview
+        for item in gpm_data:
+            self.gpm_uid_tree.insert('', 'end', values=(
+                item['gpm_uid'], item['source_id'], item['hostname'],
+                item['name'], item['severity']
+            ))
+
+        self.gpm_count_label.config(text=f"Count: {len(gpm_data)}")
+
+    def _generate_stig_gpm_uids(self):
+        """Generate GPM UIDs for STIG findings."""
+        if self.stig_df.empty:
+            messagebox.showwarning("No Data", "No STIG data loaded.")
+            return
+
+        # Get selected checklists
+        selected_indices = self.gpm_stig_listbox.curselection()
+        df = self.stig_df.copy()
+
+        if selected_indices:
+            selected_files = [self.gpm_stig_listbox.get(i) for i in selected_indices]
+            if 'source_file' in df.columns:
+                df = df[df['source_file'].apply(lambda x: os.path.basename(str(x)) in selected_files)]
+
+        # Apply filters
+        if self.gpm_exclude_info.get() and 'severity' in df.columns:
+            df = df[df['severity'].str.lower() != 'info']
+
+        # Generate GPM UIDs (sv_id.hostname format)
+        gpm_data = []
+        seen_uids = set()
+        for _, row in df.iterrows():
+            sv_id = row.get('vuln_id', row.get('stig_id', row.get('rule_id', '')))
+            hostname = row.get('hostname', row.get('target_name', ''))
+            if not sv_id or not hostname:
+                continue
+
+            gpm_uid = f"{sv_id}.{hostname}"
+            if gpm_uid in seen_uids:
+                continue
+            seen_uids.add(gpm_uid)
+
+            gpm_data.append({
+                'gpm_uid': gpm_uid,
+                'source_id': sv_id,
+                'hostname': hostname,
+                'name': row.get('rule_title', row.get('title', 'Unknown'))[:50],
+                'severity': row.get('severity', 'Unknown')
+            })
+
+        # Populate treeview
+        for item in gpm_data:
+            self.gpm_uid_tree.insert('', 'end', values=(
+                item['gpm_uid'], item['source_id'], item['hostname'],
+                item['name'], item['severity']
+            ))
+
+        self.gpm_count_label.config(text=f"Count: {len(gpm_data)}")
+
+    def _copy_gpm_uids_to_clipboard(self):
+        """Copy GPM UID table to clipboard for Excel paste."""
+        items = self.gpm_uid_tree.get_children()
+        if not items:
+            messagebox.showinfo("No Data", "No GPM UIDs to copy.")
+            return
+
+        # Build tab-separated table
+        lines = ["GPM UID\tPlugin/SV ID\tHostname\tName\tSeverity"]
+        for item in items:
+            values = self.gpm_uid_tree.item(item)['values']
+            lines.append(f"{values[0]}\t{values[1]}\t{values[2]}\t{values[3]}\t{values[4]}")
+
+        clipboard_text = "\n".join(lines)
+        self.window.clipboard_clear()
+        self.window.clipboard_append(clipboard_text)
+
+        messagebox.showinfo("Copied", f"Copied {len(items)} GPM UIDs to clipboard.\nReady to paste into Excel.")
+
+    # Import Statistics Methods
+    def _record_import_statistics(self, raw_count: int, info_excluded: int,
+                                  duplicates_skipped: int, new_added: int,
+                                  source_files: List[str] = None):
+        """Record import statistics for management visualization."""
+        import_date = datetime.now()
+        week_str = import_date.strftime('%Y-W%W')
+
+        stat_entry = {
+            'date': import_date,
+            'week': week_str,
+            'raw_count': raw_count,
+            'info_excluded': info_excluded,
+            'duplicates_skipped': duplicates_skipped,
+            'new_added': new_added,
+            'source_files': source_files or []
+        }
+
+        self.import_statistics.append(stat_entry)
+        self._log(f"Recorded import stats: {raw_count} raw, {info_excluded} info excluded, "
+                 f"{duplicates_skipped} duplicates, {new_added} added")
+
+    def _refresh_import_statistics(self):
+        """Refresh the import statistics visualization."""
+        # Clear existing items
+        for item in self.import_stats_tree.get_children():
+            self.import_stats_tree.delete(item)
+
+        if not self.import_statistics:
+            self.import_totals_label.config(text="No import data available")
+            return
+
+        # Group by week
+        weekly_stats = {}
+        for stat in self.import_statistics:
+            week = stat['week']
+            if week not in weekly_stats:
+                weekly_stats[week] = {
+                    'imports': 0,
+                    'raw_total': 0,
+                    'info_excluded': 0,
+                    'duplicates': 0,
+                    'new_added': 0
+                }
+            weekly_stats[week]['imports'] += 1
+            weekly_stats[week]['raw_total'] += stat['raw_count']
+            weekly_stats[week]['info_excluded'] += stat['info_excluded']
+            weekly_stats[week]['duplicates'] += stat['duplicates_skipped']
+            weekly_stats[week]['new_added'] += stat['new_added']
+
+        # Populate treeview
+        total_raw = 0
+        total_info = 0
+        total_dup = 0
+        total_added = 0
+
+        for week in sorted(weekly_stats.keys(), reverse=True):
+            stats = weekly_stats[week]
+            add_rate = f"{(stats['new_added'] / stats['raw_total'] * 100):.1f}%" if stats['raw_total'] > 0 else "N/A"
+            self.import_stats_tree.insert('', 'end', values=(
+                week, stats['imports'], stats['raw_total'], stats['info_excluded'],
+                stats['duplicates'], stats['new_added'], add_rate
+            ))
+            total_raw += stats['raw_total']
+            total_info += stats['info_excluded']
+            total_dup += stats['duplicates']
+            total_added += stats['new_added']
+
+        # Update totals
+        overall_rate = f"{(total_added / total_raw * 100):.1f}%" if total_raw > 0 else "N/A"
+        self.import_totals_label.config(
+            text=f"Totals: {total_raw:,} raw | {total_info:,} info excluded | "
+                 f"{total_dup:,} duplicates | {total_added:,} added ({overall_rate})"
+        )
+
+        # Update chart if matplotlib available
+        if HAS_MATPLOTLIB:
+            self._draw_import_statistics_chart(weekly_stats)
+
+    def _draw_import_statistics_chart(self, weekly_stats: dict):
+        """Draw the import statistics bar chart."""
+        self.import_stats_fig.clear()
+        ax = self.import_stats_fig.add_subplot(111)
+        ax.set_facecolor(GUI_DARK_THEME['bg'])
+
+        if not weekly_stats:
+            ax.text(0.5, 0.5, 'No data', ha='center', va='center',
+                   color=GUI_DARK_THEME['fg'], fontsize=12)
+            self.import_stats_canvas.draw()
+            return
+
+        # Prepare data
+        weeks = sorted(weekly_stats.keys())[-12:]  # Last 12 weeks
+        info_vals = [weekly_stats[w]['info_excluded'] for w in weeks]
+        dup_vals = [weekly_stats[w]['duplicates'] for w in weeks]
+        added_vals = [weekly_stats[w]['new_added'] for w in weeks]
+
+        x = range(len(weeks))
+        width = 0.25
+
+        bars1 = ax.bar([i - width for i in x], info_vals, width, label='Info Excluded', color='#607D8B')
+        bars2 = ax.bar(x, dup_vals, width, label='Duplicates', color='#FF9800')
+        bars3 = ax.bar([i + width for i in x], added_vals, width, label='New Added', color='#4CAF50')
+
+        ax.set_xlabel('Week', color=GUI_DARK_THEME['fg'])
+        ax.set_ylabel('Count', color=GUI_DARK_THEME['fg'])
+        ax.set_title('Weekly Import Breakdown', color=GUI_DARK_THEME['fg'])
+        ax.set_xticks(x)
+        ax.set_xticklabels([w.split('-')[1] for w in weeks], rotation=45, ha='right',
+                          color=GUI_DARK_THEME['fg'])
+        ax.tick_params(colors=GUI_DARK_THEME['fg'])
+        ax.legend(facecolor=GUI_DARK_THEME['bg'], labelcolor=GUI_DARK_THEME['fg'])
+
+        self.import_stats_fig.tight_layout()
+        self.import_stats_canvas.draw()
+
+    def _export_import_statistics(self):
+        """Export import statistics to CSV."""
+        if not self.import_statistics:
+            messagebox.showinfo("No Data", "No import statistics to export.")
+            return
+
+        filepath = filedialog.asksaveasfilename(
+            title="Export Import Statistics",
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+        )
+        if not filepath:
+            return
+
+        try:
+            import csv
+            with open(filepath, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow(['Date', 'Week', 'Raw Count', 'Info Excluded',
+                               'Duplicates Skipped', 'New Added', 'Source Files'])
+                for stat in self.import_statistics:
+                    writer.writerow([
+                        stat['date'].strftime('%Y-%m-%d %H:%M:%S'),
+                        stat['week'],
+                        stat['raw_count'],
+                        stat['info_excluded'],
+                        stat['duplicates_skipped'],
+                        stat['new_added'],
+                        '; '.join(stat.get('source_files', []))
+                    ])
+            messagebox.showinfo("Export Complete", f"Exported to:\n{filepath}")
+        except Exception as e:
+            messagebox.showerror("Export Error", f"Failed to export: {e}")
+
     # Evaluation Logging Methods
     def _write_evaluation_log(self, findings_df: pd.DataFrame, output_dir: str = None):
         """
-        Write evaluation log file grouped by source filename.
+        Write evaluation log file with statistics only (no data contents).
+        Groups findings by source file and provides count summaries.
 
         Args:
             findings_df: DataFrame with findings to log
@@ -7894,12 +8429,14 @@ Avg New/Month: {monthly_new.mean():.0f}
                 # Default to user's home directory
                 output_dir = os.path.expanduser('~')
 
+        # Calculate info excluded count
+        total_findings = len(findings_df)
+        info_excluded = 0
+
         # Filter out Info plugins if setting is disabled
         if not self.settings_manager.settings.log_evaluation_info_plugins:
             findings_to_log = findings_df[findings_df['severity_text'] != 'Info'].copy()
-            info_count = len(findings_df) - len(findings_to_log)
-            if info_count > 0:
-                self._log(f"Evaluation log: Excluded {info_count} Info findings (disabled in settings)")
+            info_excluded = total_findings - len(findings_to_log)
         else:
             findings_to_log = findings_df.copy()
 
@@ -7910,7 +8447,6 @@ Avg New/Month: {monthly_new.mean():.0f}
         # Group by source file
         source_col = 'source_file' if 'source_file' in findings_to_log.columns else 'scan_file'
         if source_col not in findings_to_log.columns:
-            self._log("Warning: No source file column found for grouping")
             source_col = None
 
         # Generate log filename with timestamp
@@ -7921,72 +8457,62 @@ Avg New/Month: {monthly_new.mean():.0f}
         try:
             with open(log_path, 'w', encoding='utf-8') as f:
                 f.write("=" * 80 + "\n")
-                f.write(f"EVALUATION LOG - Generated {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"EVALUATION STATISTICS LOG\n")
+                f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
                 f.write("=" * 80 + "\n\n")
 
-                # Summary
-                f.write(f"Total Findings: {len(findings_to_log)}\n")
+                # Overall Summary
+                f.write("OVERALL SUMMARY\n")
+                f.write("-" * 40 + "\n")
+                f.write(f"Total Findings Processed: {total_findings}\n")
+                f.write(f"Info Excluded (pre-processing): {info_excluded}\n")
+                f.write(f"Findings After Filter: {len(findings_to_log)}\n\n")
+
+                # Severity breakdown
                 if 'severity_text' in findings_to_log.columns:
+                    f.write("BY SEVERITY\n")
+                    f.write("-" * 40 + "\n")
+                    severity_order = ['Critical', 'High', 'Medium', 'Low', 'Info']
                     severity_counts = findings_to_log['severity_text'].value_counts()
-                    f.write("By Severity:\n")
-                    for sev, count in severity_counts.items():
-                        f.write(f"  {sev}: {count}\n")
-                f.write("\n")
+                    for sev in severity_order:
+                        count = severity_counts.get(sev, 0)
+                        if count > 0:
+                            f.write(f"  {sev}: {count}\n")
+                    f.write("\n")
 
-                # Group by source file
+                # By source file (stats only)
                 if source_col:
+                    f.write("BY SOURCE FILE\n")
+                    f.write("-" * 40 + "\n")
                     grouped = findings_to_log.groupby(source_col)
-                    f.write(f"Findings grouped by {len(grouped)} source file(s):\n")
-                    f.write("-" * 80 + "\n\n")
-
                     for source_file, group in grouped:
-                        f.write(f"\n{'=' * 80}\n")
-                        f.write(f"SOURCE FILE: {os.path.basename(str(source_file))}\n")
-                        f.write(f"Findings: {len(group)}\n")
-                        f.write("=" * 80 + "\n\n")
+                        filename = os.path.basename(str(source_file))
+                        f.write(f"\n  {filename}\n")
+                        f.write(f"    Total: {len(group)}\n")
 
-                        # Sort by severity, then plugin_id
-                        severity_order = {'Critical': 0, 'High': 1, 'Medium': 2, 'Low': 3, 'Info': 4}
-                        group = group.copy()
+                        # Severity counts for this file
                         if 'severity_text' in group.columns:
-                            group['_sev_order'] = group['severity_text'].map(severity_order).fillna(5)
-                            group = group.sort_values(['_sev_order', 'plugin_id'])
+                            file_sev_counts = group['severity_text'].value_counts()
+                            sev_parts = []
+                            for sev in severity_order:
+                                count = file_sev_counts.get(sev, 0)
+                                if count > 0:
+                                    sev_parts.append(f"{sev[0]}:{count}")
+                            if sev_parts:
+                                f.write(f"    Severity: {', '.join(sev_parts)}\n")
 
-                        for idx, row in group.iterrows():
-                            plugin_id = row.get('plugin_id', 'N/A')
-                            plugin_name = row.get('name', row.get('plugin_name', 'Unknown'))
-                            severity = row.get('severity_text', 'Unknown')
-                            hostname = row.get('hostname', 'N/A')
-                            port = row.get('port_full', row.get('port', 'N/A'))
-                            cvss = row.get('cvss3_base_score', row.get('cvss_score', 'N/A'))
+                        # Unique hosts count
+                        if 'hostname' in group.columns:
+                            unique_hosts = group['hostname'].nunique()
+                            f.write(f"    Unique Hosts: {unique_hosts}\n")
 
-                            f.write(f"Plugin {plugin_id}: {plugin_name}\n")
-                            f.write(f"  Severity: {severity} | CVSS: {cvss}\n")
-                            f.write(f"  Host: {hostname} | Port: {port}\n")
-
-                            # Include CVEs if available
-                            cves = row.get('cves', '')
-                            if cves and not pd.isna(cves):
-                                f.write(f"  CVEs: {cves[:100]}{'...' if len(str(cves)) > 100 else ''}\n")
-
-                            # Include IAVX if available
-                            iavx = row.get('iavx', '')
-                            if iavx and not pd.isna(iavx):
-                                f.write(f"  IAVX: {iavx[:100]}{'...' if len(str(iavx)) > 100 else ''}\n")
-
-                            f.write("\n")
-                else:
-                    # No grouping - just list all findings
-                    for idx, row in findings_to_log.iterrows():
-                        plugin_id = row.get('plugin_id', 'N/A')
-                        plugin_name = row.get('name', row.get('plugin_name', 'Unknown'))
-                        severity = row.get('severity_text', 'Unknown')
-                        hostname = row.get('hostname', 'N/A')
-
-                        f.write(f"Plugin {plugin_id}: {plugin_name} [{severity}] - {hostname}\n")
+                        # Unique plugins count
+                        if 'plugin_id' in group.columns:
+                            unique_plugins = group['plugin_id'].nunique()
+                            f.write(f"    Unique Plugins: {unique_plugins}\n")
 
                 f.write("\n" + "=" * 80 + "\n")
-                f.write("END OF EVALUATION LOG\n")
+                f.write("END OF STATISTICS LOG\n")
                 f.write("=" * 80 + "\n")
 
             self._log(f"Evaluation log saved: {log_path}")
@@ -8399,10 +8925,30 @@ Avg New/Month: {monthly_new.mean():.0f}
                             self._log_safe(f"  Filtered (Info disabled): {total_info_excluded}")
                         self._log_safe(f"  Duplicates (already in DB): {duplicate_count}")
                         self._log_safe(f"  New unique findings added: {len(unique_new_findings)}")
+
+                        # Record import statistics for management visualization
+                        source_files = [os.path.basename(p) for p in self.archive_paths]
+                        self.window.after(0, lambda: self._record_import_statistics(
+                            raw_count=new_count + total_info_excluded,
+                            info_excluded=total_info_excluded,
+                            duplicates_skipped=duplicate_count,
+                            new_added=len(unique_new_findings),
+                            source_files=source_files
+                        ))
                     else:
                         self._log_safe("No new unique findings to append")
                         self._log_safe(f"All {new_count} findings were duplicates of existing data")
                         self._pending_new_findings_count = 0
+
+                        # Record import statistics even when all duplicates
+                        source_files = [os.path.basename(p) for p in self.archive_paths]
+                        self.window.after(0, lambda: self._record_import_statistics(
+                            raw_count=new_count + total_info_excluded,
+                            info_excluded=total_info_excluded,
+                            duplicates_skipped=duplicate_count,
+                            new_added=0,
+                            source_files=source_files
+                        ))
                 else:
                     # No key columns available, just append all
                     self.historical_df = pd.concat([self.historical_df, new_findings_df], ignore_index=True)
