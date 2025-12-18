@@ -8133,6 +8133,7 @@ Avg New/Month: {monthly_new.mean():.0f}
     def _generate_poam_output(self, iavm_data: list):
         """Generate POA&M output from IAVM data."""
         import configparser
+        from ..export.pdf_generator import is_pdf_available, generate_poam_pdfs
 
         # Ensure config files exist
         config_dir, predefined_file, config_file = self._ensure_poam_config_exists()
@@ -8165,7 +8166,65 @@ Avg New/Month: {monthly_new.mean():.0f}
         else:
             templates = defaults
 
-        # Build POA&M records
+        # Check if PDF template and output directory are configured
+        pdf_template = self.opdir_gen_template_var.get() if hasattr(self, 'opdir_gen_template_var') else ''
+        output_dir = self.opdir_gen_output_var.get() if hasattr(self, 'opdir_gen_output_var') else ''
+        pdf_ready = pdf_template and os.path.exists(pdf_template) and output_dir and is_pdf_available()
+
+        # Build export options message
+        if pdf_ready:
+            msg = (f"Generated {len(iavm_data)} POA&M records.\n\n"
+                   "Choose export format:\n\n"
+                   "Yes = Generate PDF files (using template)\n"
+                   "No = Export to Excel/CSV\n"
+                   "Cancel = View in dialog")
+            export_choice = messagebox.askyesnocancel("Export POA&Ms", msg)
+
+            if export_choice is True:
+                # Generate PDFs
+                self._generate_poam_pdfs(iavm_data, poc_info, templates, pdf_template, output_dir)
+                return
+            elif export_choice is False:
+                # Fall through to Excel/CSV choice
+                pass
+            else:
+                # Show in dialog
+                self._show_poams_dialog(self._build_poam_records(iavm_data, poc_info, templates))
+                return
+        else:
+            # No PDF template configured - show why if PDF was expected
+            if not is_pdf_available():
+                pdf_note = "\n(PDF generation requires PyMuPDF: pip install PyMuPDF)"
+            elif not pdf_template:
+                pdf_note = "\n(Select PDF Template in config to enable PDF generation)"
+            elif not output_dir:
+                pdf_note = "\n(Select Output Directory in config to enable PDF generation)"
+            else:
+                pdf_note = ""
+
+        # Excel/CSV choice
+        poam_records = self._build_poam_records(iavm_data, poc_info, templates)
+
+        export_choice = messagebox.askyesnocancel(
+            "Export POA&Ms",
+            f"Generated {len(poam_records)} POA&M records.\n\n"
+            "Yes = Export to Excel\n"
+            "No = Export to CSV\n"
+            f"Cancel = View in dialog{pdf_note if not pdf_ready else ''}"
+        )
+
+        if export_choice is True:
+            # Export to Excel
+            self._export_poams_excel(poam_records)
+        elif export_choice is False:
+            # Export to CSV
+            self._export_poams_csv(poam_records)
+        else:
+            # Show in dialog
+            self._show_poams_dialog(poam_records)
+
+    def _build_poam_records(self, iavm_data: list, poc_info: dict, templates: dict) -> list:
+        """Build POA&M records from IAVM data."""
         poam_records = []
         for idx, iavm in enumerate(iavm_data, start=1):
             record = {
@@ -8190,25 +8249,65 @@ Avg New/Month: {monthly_new.mean():.0f}
                 'Mitigations': templates['temporary_mitigations'],
             }
             poam_records.append(record)
+        return poam_records
 
-        # Ask user for export format
-        export_choice = messagebox.askyesnocancel(
-            "Export POA&Ms",
-            f"Generated {len(poam_records)} POA&M records.\n\n"
-            "Yes = Export to Excel\n"
-            "No = Export to CSV\n"
-            "Cancel = View in dialog"
-        )
+    def _generate_poam_pdfs(self, iavm_data: list, poc_info: dict, templates: dict,
+                           template_path: str, output_dir: str):
+        """Generate POA&M PDFs using the template."""
+        from ..export.pdf_generator import generate_poam_pdfs
 
-        if export_choice is True:
-            # Export to Excel
-            self._export_poams_excel(poam_records)
-        elif export_choice is False:
-            # Export to CSV
-            self._export_poams_csv(poam_records)
-        else:
-            # Show in dialog
-            self._show_poams_dialog(poam_records)
+        self._opdir_log(f"Generating {len(iavm_data)} POA&M PDFs...")
+        self.opdir_gen_status.config(text="Generating PDFs...")
+        self.opdir_gen_progress['value'] = 0
+        self.opdir_gen_progress['maximum'] = len(iavm_data)
+        self.window.update()
+
+        def progress_callback(current, total, message):
+            self.opdir_gen_progress['value'] = current
+            self.opdir_gen_status.config(text=message)
+            self.window.update()
+
+        try:
+            success, fail, output_files = generate_poam_pdfs(
+                template_path=template_path,
+                output_dir=output_dir,
+                iavm_list=iavm_data,
+                poc_info=poc_info,
+                templates=templates,
+                historical_df=self.historical_df if hasattr(self, 'historical_df') else None,
+                progress_callback=progress_callback
+            )
+
+            self.opdir_gen_progress['value'] = len(iavm_data)
+            self.opdir_gen_status.config(text=f"Complete: {success} success, {fail} failed")
+
+            self._opdir_log(f"PDF generation complete: {success} success, {fail} failed")
+
+            if success > 0:
+                messagebox.showinfo(
+                    "PDF Generation Complete",
+                    f"Generated {success} POA&M PDFs\n"
+                    f"Failed: {fail}\n\n"
+                    f"Output directory:\n{output_dir}"
+                )
+
+                # Offer to open output directory
+                if messagebox.askyesno("Open Folder", "Open output folder?"):
+                    import subprocess
+                    import sys
+                    if sys.platform == 'win32':
+                        os.startfile(output_dir)
+                    elif sys.platform == 'darwin':
+                        subprocess.run(['open', output_dir])
+                    else:
+                        subprocess.run(['xdg-open', output_dir])
+            else:
+                messagebox.showwarning("PDF Generation", f"No PDFs generated. {fail} failed.")
+
+        except Exception as e:
+            self._opdir_log(f"PDF generation error: {e}")
+            self.opdir_gen_status.config(text="Error")
+            messagebox.showerror("PDF Generation Error", f"Failed to generate PDFs:\n{e}")
 
     def _export_poams_excel(self, poam_records: list):
         """Export POA&M records to Excel."""
