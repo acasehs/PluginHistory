@@ -2731,7 +2731,7 @@ class NessusHistoryTrackerApp:
         for section in enabled:
             text_widget.insert(tk.END, f"  - {section}\n", 'success')
 
-        if self.df.empty and self.lifecycle_df.empty:
+        if self.historical_df.empty and self.lifecycle_df.empty:
             text_widget.insert(tk.END, "\nNo scan data loaded.\n", 'warning')
             text_widget.insert(tk.END, "Load data and click 'Generate Preview' again.\n")
         else:
@@ -4751,7 +4751,7 @@ class NessusHistoryTrackerApp:
                 self.window.after(0, self._update_poam_tab)
 
                 # Match POAMs to findings if scan data is available
-                if not self.df.empty or not self.stig_df.empty:
+                if not self.historical_df.empty or not self.stig_df.empty:
                     self._perform_poam_matching()
 
                 messagebox.showinfo("POAM Loaded",
@@ -4893,10 +4893,10 @@ class NessusHistoryTrackerApp:
 
             # Match ACAS POAMs to Tenable findings
             acas_matches = 0
-            if not self.df.empty:
+            if not self.historical_df.empty:
                 # Build findings index
                 findings_by_key = {}
-                for idx, row in self.df.iterrows():
+                for idx, row in self.historical_df.iterrows():
                     hostname = str(row.get('hostname', '') or '').lower()
                     plugin_id = str(row.get('plugin_id', ''))
                     if hostname and plugin_id:
@@ -4918,12 +4918,12 @@ class NessusHistoryTrackerApp:
                             acas_matches += 1
                             # Mark as having POAM in the DataFrame
                             for finding_idx in findings_by_key[key]:
-                                if 'poam_status' not in self.df.columns:
-                                    self.df['poam_status'] = ''
-                                    self.filtered_df['poam_status'] = ''
-                                self.df.loc[finding_idx, 'poam_status'] = entry.poam_status
-                                if finding_idx in self.filtered_df.index:
-                                    self.filtered_df.loc[finding_idx, 'poam_status'] = entry.poam_status
+                                if 'poam_status' not in self.historical_df.columns:
+                                    self.historical_df['poam_status'] = ''
+                                    self.filtered_historical_df['poam_status'] = ''
+                                self.historical_df.loc[finding_idx, 'poam_status'] = entry.poam_status
+                                if finding_idx in self.filtered_historical_df.index:
+                                    self.filtered_historical_df.loc[finding_idx, 'poam_status'] = entry.poam_status
 
             # Match STIG POAMs to STIG findings
             stig_matches = 0
