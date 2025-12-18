@@ -4053,11 +4053,11 @@ class NessusHistoryTrackerApp:
         # Group by category and environment
         grouped = df.groupby([category_col, 'environment_type'], observed=False).size().unstack(fill_value=0)
 
-        # Ensure all categories are present
-        for cat in categories:
-            if cat not in grouped.index:
-                grouped.loc[cat] = 0
-        grouped = grouped.reindex(categories)
+        # Ensure all categories are present and in order (use reindex directly to avoid duplicate index issues)
+        # First, ensure index is unique by keeping first occurrence
+        if grouped.index.duplicated().any():
+            grouped = grouped[~grouped.index.duplicated(keep='first')]
+        grouped = grouped.reindex(categories, fill_value=0)
 
         # Ensure all environments are present
         for env in present_envs:
@@ -4181,11 +4181,11 @@ class NessusHistoryTrackerApp:
         else:
             grouped = df.groupby([category_col, 'environment_type'], observed=False)[metric_col].count().unstack(fill_value=0)
 
-        # Ensure all categories are present
-        for cat in categories:
-            if cat not in grouped.index:
-                grouped.loc[cat] = 0
-        grouped = grouped.reindex(categories)
+        # Ensure all categories are present and in order (use reindex directly to avoid duplicate index issues)
+        # First, ensure index is unique by keeping first occurrence
+        if grouped.index.duplicated().any():
+            grouped = grouped[~grouped.index.duplicated(keep='first')]
+        grouped = grouped.reindex(categories, fill_value=0)
 
         # Draw bars for each environment
         for i, env in enumerate(present_envs):
