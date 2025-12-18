@@ -12855,12 +12855,15 @@ Avg New/Month: {monthly_new.mean():.0f}
                     # Add severity labels within sections
                     for sev, section_bottom, section_height in sections:
                         section_center = section_bottom + section_height / 2
-                        label = sev_labels[sev]
+                        sev_label = sev_labels[sev]
+                        count = int(section_height)
                         text_color = sev_text_colors[sev]
 
-                        # Only show label if section is tall enough (> 5% of total or > 3 units)
+                        # Only show label if section is tall enough (> 8% of total or > 3 units)
                         min_height_for_label = max(total * 0.08, 3) if total > 0 else 3
                         if section_height >= min_height_for_label:
+                            # Format: "C:5" or "H:20"
+                            label = f'{sev_label}:{count}'
                             ax.annotate(label, xy=(x[week_idx] + offsets[idx], section_center),
                                        ha='center', va='center', fontsize=4, color=text_color,
                                        fontweight='bold')
