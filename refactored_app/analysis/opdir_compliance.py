@@ -62,6 +62,7 @@ def parse_iavab_reference(iavab_str: str, opdir_year: Optional[int] = None) -> D
     Formats handled:
     - Full format: 2024-B-0201 → {'full': '2024-B-0201', 'suffix': 'B-0201', 'year': 2024}
     - Suffix-only: B-0201 → {'full': 'YYYY-B-0201', 'suffix': 'B-0201', 'year': from OPDIR}
+    - Short format: A-001 → normalized to A-0001
 
     Args:
         iavab_str: IAVA/B reference string
@@ -75,6 +76,10 @@ def parse_iavab_reference(iavab_str: str, opdir_year: Optional[int] = None) -> D
 
     iavab_str = str(iavab_str).strip()
 
+    # Skip N/A, NA, n/a, None, etc.
+    if iavab_str.upper() in ('N/A', 'NA', 'NONE', '-', '', 'NULL'):
+        return {'full': '', 'suffix': '', 'year': None, 'type': ''}
+
     # Try full format first: YYYY-X-NNNN
     full_pattern = r'^(\d{4})-([ABT])-(\d+)$'
     match = re.match(full_pattern, iavab_str, re.IGNORECASE)
@@ -86,8 +91,8 @@ def parse_iavab_reference(iavab_str: str, opdir_year: Optional[int] = None) -> D
         full = f"{year}-{type_letter}-{number}"
         return {'full': full, 'suffix': suffix, 'year': year, 'type': type_letter}
 
-    # Try suffix-only format: X-NNNN
-    suffix_pattern = r'^([ABT])-(\d+)$'
+    # Try suffix-only format: X-NNNN or X-NNN or X-NN or X-N (normalize to 4 digits)
+    suffix_pattern = r'^([ABT])-(\d{1,4})$'
     match = re.match(suffix_pattern, iavab_str, re.IGNORECASE)
     if match:
         type_letter = match.group(1).upper()
@@ -95,8 +100,8 @@ def parse_iavab_reference(iavab_str: str, opdir_year: Optional[int] = None) -> D
         suffix = f"{type_letter}-{number}"
         # Use OPDIR year to enhance to full format
         if opdir_year:
-            full = f"{opdir_year}-{type_letter}-{number}"
-            return {'full': full, 'suffix': suffix, 'year': opdir_year, 'type': type_letter}
+            full = f"{int(opdir_year)}-{type_letter}-{number}"
+            return {'full': full, 'suffix': suffix, 'year': int(opdir_year), 'type': type_letter}
         else:
             return {'full': suffix, 'suffix': suffix, 'year': None, 'type': type_letter}
 
@@ -108,8 +113,8 @@ def parse_iavab_reference(iavab_str: str, opdir_year: Optional[int] = None) -> D
         number = match.group(2).zfill(4)
         suffix = f"{type_letter}-{number}"
         if opdir_year:
-            full = f"{opdir_year}-{type_letter}-{number}"
-            return {'full': full, 'suffix': suffix, 'year': opdir_year, 'type': type_letter}
+            full = f"{int(opdir_year)}-{type_letter}-{number}"
+            return {'full': full, 'suffix': suffix, 'year': int(opdir_year), 'type': type_letter}
         else:
             return {'full': suffix, 'suffix': suffix, 'year': None, 'type': type_letter}
 
@@ -280,23 +285,45 @@ def load_opdir_mapping(opdir_file: str) -> pd.DataFrame:
             'opdir number': 'opdir_number',
             'opdir_number': 'opdir_number',
             'opdir': 'opdir_number',
+            'opdir #': 'opdir_number',
+            'opdir#': 'opdir_number',
+            # IAVA/B column variations
             'iava/b': 'iavab',
             'iava_b': 'iavab',
             'iavab': 'iavab',
             'iava': 'iavab',
             'iavb': 'iavab',
+            'iav': 'iavab',
+            'iavm': 'iavab',
+            'iavm #': 'iavab',
+            'iavm#': 'iavab',
+            'iavm number': 'iavab',
+            'iavm_number': 'iavab',
+            'iav #': 'iavab',
+            'iav#': 'iavab',
+            'iav number': 'iavab',
+            'iav_number': 'iavab',
+            'advisory': 'iavab',
+            'advisory #': 'iavab',
+            'advisory number': 'iavab',
+            # Date columns
             'poa&m due date': 'poam_due_date',
             'poam due date': 'poam_due_date',
             'poam_due_date': 'poam_due_date',
+            'poam date': 'poam_due_date',
             'final due date': 'final_due_date',
             'final_due_date': 'final_due_date',
             'due date': 'final_due_date',
             'due_date': 'final_due_date',
+            'compliance date': 'final_due_date',
+            'compliance_date': 'final_due_date',
             'subject': 'subject',
             'title': 'subject',
+            'description': 'subject',
             'release date': 'release_date',
             'release_date': 'release_date',
             'released': 'release_date',
+            'released date': 'release_date',
             # CVE column mappings for CVE-based OPDIR matching
             'cve': 'cves',
             'cves': 'cves',
@@ -309,7 +336,14 @@ def load_opdir_mapping(opdir_file: str) -> pd.DataFrame:
         }
 
         opdir_df.columns = opdir_df.columns.str.lower().str.strip()
+
+        # Debug: Print actual column names found
+        print(f"OPDIR file columns found: {list(opdir_df.columns)}")
+
         opdir_df = opdir_df.rename(columns=column_mappings)
+
+        # Debug: Print columns after mapping
+        print(f"OPDIR columns after mapping: {list(opdir_df.columns)}")
 
         # Parse dates
         for date_col in ['poam_due_date', 'final_due_date', 'release_date']:
@@ -338,6 +372,10 @@ def load_opdir_mapping(opdir_file: str) -> pd.DataFrame:
 
         # Parse IAVA/B column - enhance suffix-only with year from OPDIR NUMBER
         if 'iavab' in opdir_df.columns:
+            # Debug: Show sample of raw IAVAB values
+            raw_sample = opdir_df['iavab'].dropna().head(5).tolist()
+            print(f"IAVAB column sample values: {raw_sample}")
+
             def parse_row_iavab(row):
                 return parse_iavab_reference(row.get('iavab'), row.get('opdir_year'))
 
@@ -346,7 +384,13 @@ def load_opdir_mapping(opdir_file: str) -> pd.DataFrame:
             opdir_df['iavab_suffix'] = parsed_iavab.apply(lambda x: x['suffix'])
             opdir_df['iavab_year'] = parsed_iavab.apply(lambda x: x['year'])
             opdir_df['iavab_type'] = parsed_iavab.apply(lambda x: x['type'])
+
+            # Debug: Count parsed vs empty
+            parsed_count = (opdir_df['iavab_full'] != '').sum()
+            empty_count = (opdir_df['iavab_full'] == '').sum()
+            print(f"IAVAB parsing: {parsed_count} parsed, {empty_count} empty/N-A")
         else:
+            print("WARNING: No 'iavab' column found after mapping. Check column names above.")
             opdir_df['iavab_full'] = ''
             opdir_df['iavab_suffix'] = ''
             opdir_df['iavab_year'] = None
