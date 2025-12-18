@@ -98,8 +98,8 @@ def parse_iavab_reference(iavab_str: str, opdir_year: Optional[int] = None) -> D
         type_letter = match.group(1).upper()
         number = match.group(2).zfill(4)
         suffix = f"{type_letter}-{number}"
-        # Use OPDIR year to enhance to full format
-        if opdir_year:
+        # Use OPDIR year to enhance to full format (check for NaN)
+        if opdir_year is not None and not pd.isna(opdir_year):
             full = f"{int(opdir_year)}-{type_letter}-{number}"
             return {'full': full, 'suffix': suffix, 'year': int(opdir_year), 'type': type_letter}
         else:
@@ -112,7 +112,7 @@ def parse_iavab_reference(iavab_str: str, opdir_year: Optional[int] = None) -> D
         type_letter = match.group(1).upper()
         number = match.group(2).zfill(4)
         suffix = f"{type_letter}-{number}"
-        if opdir_year:
+        if opdir_year is not None and not pd.isna(opdir_year):
             full = f"{int(opdir_year)}-{type_letter}-{number}"
             return {'full': full, 'suffix': suffix, 'year': int(opdir_year), 'type': type_letter}
         else:
