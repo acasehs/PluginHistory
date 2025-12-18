@@ -7692,14 +7692,14 @@ Avg New/Month: {monthly_new.mean():.0f}
 
     def _edit_opdir_poc_info(self):
         """Edit POC information for OPDIR generator using dialog."""
-        config_dir = os.path.join(os.path.dirname(__file__), '..', 'config')
-        predefined_file = os.path.join(config_dir, 'predefined.ini')
+        import configparser
+
+        # Ensure config files exist
+        config_dir, predefined_file, _ = self._ensure_poam_config_exists()
 
         # Load existing config
-        import configparser
         config = configparser.ConfigParser()
-        if os.path.exists(predefined_file):
-            config.read(predefined_file)
+        config.read(predefined_file)
 
         # Ensure POC_INFO section exists
         if not config.has_section('POC_INFO'):
@@ -7792,19 +7792,16 @@ Avg New/Month: {monthly_new.mean():.0f}
 
     def _edit_opdir_templates(self):
         """Edit narrative templates for OPDIR generator using dialog."""
-        config_dir = os.path.join(os.path.dirname(__file__), '..', 'config')
-        config_file = os.path.join(config_dir, 'config.ini')
+        import configparser
+
+        # Ensure config files exist
+        config_dir, _, config_file = self._ensure_poam_config_exists()
 
         # Load existing config
-        import configparser
         config = configparser.ConfigParser()
-        if os.path.exists(config_file):
-            config.read(config_file)
+        config.read(config_file)
 
-        # Ensure NARRATIVE_TEMPLATES section exists with defaults
-        if not config.has_section('NARRATIVE_TEMPLATES'):
-            config.add_section('NARRATIVE_TEMPLATES')
-
+        # Defaults for fallback values (config file already has these, but needed for fallback)
         defaults = {
             'reason_cannot_complete': 'Patching requires thorough testing and coordination with operational requirements to ensure system availability during critical mission periods.',
             'operational_impact': 'Disconnecting these assets from the MCEN would significantly impact mission operations and disrupt critical business functions.',
@@ -8092,22 +8089,59 @@ Avg New/Month: {monthly_new.mean():.0f}
         self._opdir_log(f"Generating POA&Ms for all {len(iavm_data)} IAVMs...")
         self._generate_poam_output(iavm_data)
 
+    def _ensure_poam_config_exists(self):
+        """Ensure POA&M config files exist with defaults."""
+        import configparser
+
+        config_dir = os.path.join(os.path.dirname(__file__), '..', 'config')
+        os.makedirs(config_dir, exist_ok=True)
+
+        # Create predefined.ini with defaults if missing
+        predefined_file = os.path.join(config_dir, 'predefined.ini')
+        if not os.path.exists(predefined_file):
+            config = configparser.ConfigParser()
+            config.add_section('POC_INFO')
+            poc_fields = ['rnosc', 'command_unit', 'requestor', 'requestor_phone',
+                         'requestor_email', 'local_iam', 'local_iam_phone',
+                         'local_iam_email', 'regional_iam', 'regional_iam_phone',
+                         'regional_iam_email']
+            for field in poc_fields:
+                config.set('POC_INFO', field, '')
+            with open(predefined_file, 'w') as f:
+                config.write(f)
+
+        # Create config.ini with defaults if missing
+        config_file = os.path.join(config_dir, 'config.ini')
+        if not os.path.exists(config_file):
+            config = configparser.ConfigParser()
+            config.add_section('NARRATIVE_TEMPLATES')
+            defaults = {
+                'reason_cannot_complete': 'Patching requires thorough testing and coordination with operational requirements to ensure system availability during critical mission periods.',
+                'operational_impact': 'Disconnecting these assets from the MCEN would significantly impact mission operations and disrupt critical business functions.',
+                'plan_of_action': '1. Coordinate with system owners to schedule maintenance window\n2. Test patches in development environment\n3. Apply patches during approved maintenance window\n4. Verify system functionality post-patching\n5. Conduct vulnerability scan to confirm remediation',
+                'timeline_milestones': 'Week 1: Coordinate maintenance scheduling\nWeek 2-3: Test patches in development environment\nWeek 4: Apply patches during maintenance window\nWeek 5: Post-patch verification and vulnerability scanning',
+                'vulnerability_detection_method': 'Continuous vulnerability scanning using Nessus and regular compliance assessments. System monitoring through HBSS and network monitoring tools for signs of compromise.',
+                'temporary_mitigations': 'Network segmentation and access controls are in place. Intrusion detection systems are monitoring for suspicious activity. Patch management process ensures timely application of security updates.'
+            }
+            for key, value in defaults.items():
+                config.set('NARRATIVE_TEMPLATES', key, value)
+            with open(config_file, 'w') as f:
+                config.write(f)
+
+        return config_dir, predefined_file, config_file
+
     def _generate_poam_output(self, iavm_data: list):
         """Generate POA&M output from IAVM data."""
         import configparser
 
-        # Load POC info
-        config_dir = os.path.join(os.path.dirname(__file__), '..', 'config')
-        predefined_file = os.path.join(config_dir, 'predefined.ini')
-        config_file = os.path.join(config_dir, 'config.ini')
+        # Ensure config files exist
+        config_dir, predefined_file, config_file = self._ensure_poam_config_exists()
 
         poc_config = configparser.ConfigParser()
-        if os.path.exists(predefined_file):
-            poc_config.read(predefined_file)
+        poc_config.read(predefined_file)
 
         template_config = configparser.ConfigParser()
-        if os.path.exists(config_file):
-            template_config.read(config_file)
+        template_config.read(config_file)
 
         # Get POC info
         poc_info = {}
