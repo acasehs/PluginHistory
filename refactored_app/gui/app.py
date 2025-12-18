@@ -7719,16 +7719,26 @@ Avg New/Month: {monthly_new.mean():.0f}
         y = (dialog.winfo_screenheight() - dialog.winfo_height()) // 2
         dialog.geometry(f"+{x}+{y}")
 
+        # Main container frame
+        main_frame = ttk.Frame(dialog)
+        main_frame.pack(fill="both", expand=True)
+
         # Create scrollable frame
-        canvas = tk.Canvas(dialog)
-        scrollbar = ttk.Scrollbar(dialog, orient="vertical", command=canvas.yview)
+        canvas = tk.Canvas(main_frame, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
         scrollable_frame = ttk.Frame(canvas)
 
         scrollable_frame.bind(
             "<Configure>",
             lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+
+        # Bind canvas resize to update scrollable frame width
+        def on_canvas_configure(event):
+            canvas.itemconfig(canvas_window, width=event.width)
+        canvas.bind('<Configure>', on_canvas_configure)
+
+        canvas_window = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
 
         # Title
@@ -7822,7 +7832,7 @@ Avg New/Month: {monthly_new.mean():.0f}
         main_frame = ttk.Frame(dialog)
         main_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
-        canvas = tk.Canvas(main_frame)
+        canvas = tk.Canvas(main_frame, highlightthickness=0)
         scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
         scrollable_frame = ttk.Frame(canvas)
 
@@ -7830,7 +7840,13 @@ Avg New/Month: {monthly_new.mean():.0f}
             "<Configure>",
             lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+
+        # Bind canvas resize to update scrollable frame width
+        def on_canvas_configure(event):
+            canvas.itemconfig(canvas_window, width=event.width)
+        canvas.bind('<Configure>', on_canvas_configure)
+
+        canvas_window = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
 
         # Title
@@ -8039,16 +8055,20 @@ Avg New/Month: {monthly_new.mean():.0f}
             messagebox.showwarning("No Selection", "Please select IAVMs to generate POA&Ms for")
             return
 
-        iavms = [self.opdir_iavm_tree.item(item)['values'][0] for item in selected]
-        self._opdir_log(f"Generating POA&Ms for {len(iavms)} selected IAVMs...")
-        self._opdir_log("Note: Full generation requires the standalone generator.")
-        self._opdir_log(f"Selected IAVMs: {', '.join(iavms)}")
+        # Gather selected IAVM data
+        iavm_data = []
+        for item in selected:
+            values = self.opdir_iavm_tree.item(item)['values']
+            iavm_data.append({
+                'iavm': values[0],
+                'opdir': values[1],
+                'subject': values[2],
+                'due_date': values[3],
+                'status': values[4] if len(values) > 4 else ''
+            })
 
-        # For now, show info about using standalone generator
-        messagebox.showinfo("Generation",
-                           f"Selected {len(iavms)} IAVMs for generation.\n\n"
-                           "For full POA&M generation with PDF output, "
-                           "use the 'Open Standalone Generator' button.")
+        self._opdir_log(f"Generating POA&Ms for {len(iavm_data)} selected IAVMs...")
+        self._generate_poam_output(iavm_data)
 
     def _generate_all_opdir_poams(self):
         """Generate POA&Ms for all IAVMs."""
@@ -8057,14 +8077,199 @@ Avg New/Month: {monthly_new.mean():.0f}
             messagebox.showwarning("No Data", "No IAVMs available. Refresh the list first.")
             return
 
-        count = len(all_items)
-        self._opdir_log(f"Generating POA&Ms for all {count} IAVMs...")
-        self._opdir_log("Note: Full generation requires the standalone generator.")
+        # Gather all IAVM data
+        iavm_data = []
+        for item in all_items:
+            values = self.opdir_iavm_tree.item(item)['values']
+            iavm_data.append({
+                'iavm': values[0],
+                'opdir': values[1],
+                'subject': values[2],
+                'due_date': values[3],
+                'status': values[4] if len(values) > 4 else ''
+            })
 
-        messagebox.showinfo("Generation",
-                           f"Found {count} IAVMs for generation.\n\n"
-                           "For full POA&M generation with PDF output, "
-                           "use the 'Open Standalone Generator' button.")
+        self._opdir_log(f"Generating POA&Ms for all {len(iavm_data)} IAVMs...")
+        self._generate_poam_output(iavm_data)
+
+    def _generate_poam_output(self, iavm_data: list):
+        """Generate POA&M output from IAVM data."""
+        import configparser
+
+        # Load POC info
+        config_dir = os.path.join(os.path.dirname(__file__), '..', 'config')
+        predefined_file = os.path.join(config_dir, 'predefined.ini')
+        config_file = os.path.join(config_dir, 'config.ini')
+
+        poc_config = configparser.ConfigParser()
+        if os.path.exists(predefined_file):
+            poc_config.read(predefined_file)
+
+        template_config = configparser.ConfigParser()
+        if os.path.exists(config_file):
+            template_config.read(config_file)
+
+        # Get POC info
+        poc_info = {}
+        if poc_config.has_section('POC_INFO'):
+            for key in poc_config.options('POC_INFO'):
+                poc_info[key] = poc_config.get('POC_INFO', key)
+
+        # Get templates
+        templates = {}
+        defaults = {
+            'reason_cannot_complete': 'Patching requires thorough testing and coordination with operational requirements.',
+            'operational_impact': 'Disconnecting these assets would significantly impact mission operations.',
+            'plan_of_action': '1. Coordinate maintenance\n2. Test patches\n3. Apply patches\n4. Verify functionality',
+            'timeline_milestones': 'Week 1: Coordinate\nWeek 2-3: Test\nWeek 4: Apply\nWeek 5: Verify',
+            'vulnerability_detection_method': 'Continuous vulnerability scanning using Nessus.',
+            'temporary_mitigations': 'Network segmentation and access controls in place.'
+        }
+        if template_config.has_section('NARRATIVE_TEMPLATES'):
+            for key in defaults:
+                templates[key] = template_config.get('NARRATIVE_TEMPLATES', key, fallback=defaults[key])
+        else:
+            templates = defaults
+
+        # Build POA&M records
+        poam_records = []
+        for idx, iavm in enumerate(iavm_data, start=1):
+            record = {
+                'POA&M ID': f"POAM-{idx:04d}",
+                'IAVM Number': iavm['iavm'],
+                'OPDIR Number': iavm['opdir'],
+                'Subject': iavm['subject'],
+                'Due Date': iavm['due_date'],
+                'Status': iavm.get('status', 'Open'),
+                'Command/Unit': poc_info.get('command_unit', ''),
+                'Requestor': poc_info.get('requestor', ''),
+                'Requestor Phone': poc_info.get('requestor_phone', ''),
+                'Requestor Email': poc_info.get('requestor_email', ''),
+                'Local IAM': poc_info.get('local_iam', ''),
+                'Local IAM Phone': poc_info.get('local_iam_phone', ''),
+                'Local IAM Email': poc_info.get('local_iam_email', ''),
+                'Reason Cannot Complete': templates['reason_cannot_complete'],
+                'Operational Impact': templates['operational_impact'],
+                'Plan of Action': templates['plan_of_action'],
+                'Timeline/Milestones': templates['timeline_milestones'],
+                'Detection Method': templates['vulnerability_detection_method'],
+                'Mitigations': templates['temporary_mitigations'],
+            }
+            poam_records.append(record)
+
+        # Ask user for export format
+        export_choice = messagebox.askyesnocancel(
+            "Export POA&Ms",
+            f"Generated {len(poam_records)} POA&M records.\n\n"
+            "Yes = Export to Excel\n"
+            "No = Export to CSV\n"
+            "Cancel = View in dialog"
+        )
+
+        if export_choice is True:
+            # Export to Excel
+            self._export_poams_excel(poam_records)
+        elif export_choice is False:
+            # Export to CSV
+            self._export_poams_csv(poam_records)
+        else:
+            # Show in dialog
+            self._show_poams_dialog(poam_records)
+
+    def _export_poams_excel(self, poam_records: list):
+        """Export POA&M records to Excel."""
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx")],
+            title="Save POA&Ms to Excel"
+        )
+        if not filepath:
+            return
+
+        try:
+            import pandas as pd
+            df = pd.DataFrame(poam_records)
+            df.to_excel(filepath, index=False, sheet_name='POAMs')
+            self._opdir_log(f"Exported {len(poam_records)} POA&Ms to {os.path.basename(filepath)}")
+            messagebox.showinfo("Export Complete", f"Exported {len(poam_records)} POA&Ms to:\n{filepath}")
+        except Exception as e:
+            self._opdir_log(f"Export error: {e}")
+            messagebox.showerror("Export Error", f"Failed to export: {e}")
+
+    def _export_poams_csv(self, poam_records: list):
+        """Export POA&M records to CSV."""
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv")],
+            title="Save POA&Ms to CSV"
+        )
+        if not filepath:
+            return
+
+        try:
+            import pandas as pd
+            df = pd.DataFrame(poam_records)
+            df.to_csv(filepath, index=False)
+            self._opdir_log(f"Exported {len(poam_records)} POA&Ms to {os.path.basename(filepath)}")
+            messagebox.showinfo("Export Complete", f"Exported {len(poam_records)} POA&Ms to:\n{filepath}")
+        except Exception as e:
+            self._opdir_log(f"Export error: {e}")
+            messagebox.showerror("Export Error", f"Failed to export: {e}")
+
+    def _show_poams_dialog(self, poam_records: list):
+        """Show POA&M records in a preview dialog."""
+        dialog = tk.Toplevel(self.window)
+        dialog.title(f"POA&M Preview ({len(poam_records)} records)")
+        dialog.geometry("900x600")
+        dialog.transient(self.window)
+
+        # Create treeview for records
+        tree_frame = ttk.Frame(dialog)
+        tree_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        columns = ('poam_id', 'iavm', 'opdir', 'subject', 'due_date', 'status')
+        tree = ttk.Treeview(tree_frame, columns=columns, show='headings', height=20)
+
+        tree.heading('poam_id', text='POA&M ID')
+        tree.heading('iavm', text='IAVM')
+        tree.heading('opdir', text='OPDIR')
+        tree.heading('subject', text='Subject')
+        tree.heading('due_date', text='Due Date')
+        tree.heading('status', text='Status')
+
+        tree.column('poam_id', width=80)
+        tree.column('iavm', width=100)
+        tree.column('opdir', width=80)
+        tree.column('subject', width=350)
+        tree.column('due_date', width=100)
+        tree.column('status', width=80)
+
+        scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+
+        tree.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # Populate tree
+        for record in poam_records:
+            tree.insert('', 'end', values=(
+                record['POA&M ID'],
+                record['IAVM Number'],
+                record['OPDIR Number'],
+                record['Subject'][:60] + '...' if len(record['Subject']) > 60 else record['Subject'],
+                record['Due Date'],
+                record['Status']
+            ))
+
+        # Buttons
+        button_frame = ttk.Frame(dialog)
+        button_frame.pack(fill="x", padx=10, pady=10)
+
+        ttk.Button(button_frame, text="Export to Excel",
+                  command=lambda: self._export_poams_excel(poam_records)).pack(side="left", padx=5)
+        ttk.Button(button_frame, text="Export to CSV",
+                  command=lambda: self._export_poams_csv(poam_records)).pack(side="left", padx=5)
+        ttk.Button(button_frame, text="Close", command=dialog.destroy).pack(side="right", padx=5)
 
     def _opdir_log(self, message):
         """Log message to OPDIR generator log panel."""
