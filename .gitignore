@@ -24,3 +24,7 @@ dist/
 *.tmp
 *.temp
 temp/
+
+# User config files (contain sensitive POC/contact info)
+refactored_app/config/predefined.ini
+refactored_app/config/config.ini
