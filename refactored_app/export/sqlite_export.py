@@ -106,7 +106,7 @@ def export_to_sqlite(historical_df: pd.DataFrame,
     try:
         conn = sqlite3.connect(filepath)
 
-        # Convert datetime columns to string for SQLite compatibility
+        # Convert datetime columns and list columns to string for SQLite compatibility
         def prepare_df(df):
             if df.empty:
                 return df
@@ -116,6 +116,16 @@ def export_to_sqlite(historical_df: pd.DataFrame,
             for col in df.columns:
                 if pd.api.types.is_datetime64_any_dtype(df[col]):
                     df[col] = df[col].dt.strftime('%Y-%m-%d %H:%M:%S')
+                else:
+                    # Check for list/array columns and convert to comma-separated strings
+                    # Check a sample of non-null values to detect list types
+                    sample = df[col].dropna().head(10)
+                    if len(sample) > 0:
+                        first_val = sample.iloc[0]
+                        if isinstance(first_val, (list, tuple)):
+                            df[col] = df[col].apply(
+                                lambda x: ', '.join(str(item) for item in x) if isinstance(x, (list, tuple)) else (str(x) if pd.notna(x) else '')
+                            )
             return df
 
         # Filter out Info findings from historical data (saved separately to yearly DBs)
