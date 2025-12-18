@@ -199,6 +199,15 @@ def export_to_sqlite(historical_df: pd.DataFrame,
                 overrides_df.to_sql('host_overrides', conn, if_exists='replace', index=False)
                 print(f"Exported {len(overrides_df)} rows to host_overrides")
 
+        # Extract and save plugins from historical findings
+        plugins_saved = 0
+        new_plugins_count = 0
+        if not historical_df.empty:
+            plugins_df, new_plugins_count = extract_and_save_plugins(conn, historical_df)
+            plugins_saved = len(plugins_df) if not plugins_df.empty else 0
+            if plugins_saved > 0:
+                print(f"Exported {plugins_saved} plugins ({new_plugins_count} new)")
+
         # Create summary table (counts exclude Info findings)
         summary_data = {
             'export_timestamp': [datetime.now().strftime('%Y-%m-%d %H:%M:%S')],
@@ -211,6 +220,8 @@ def export_to_sqlite(historical_df: pd.DataFrame,
             'total_stig_findings': [len(stig_df) if stig_df is not None and not stig_df.empty else 0],
             'total_poam_entries': [len(poam_df) if poam_df is not None and not poam_df.empty else 0],
             'total_host_overrides': [len(host_overrides) if host_overrides else 0],
+            'total_plugins': [plugins_saved],
+            'new_plugins': [new_plugins_count],
             'info_findings_excluded': [info_excluded_count]
         }
         pd.DataFrame(summary_data).to_sql('export_summary', conn, if_exists='replace', index=False)
@@ -799,6 +810,220 @@ def save_plugins_to_database(conn: sqlite3.Connection, plugins_df: pd.DataFrame)
 
     conn.commit()
     return count
+
+
+def extract_and_save_plugins(conn: sqlite3.Connection, historical_df: pd.DataFrame) -> tuple:
+    """
+    Extract unique plugins from historical findings and save to database.
+
+    Compares against existing plugins in the database to identify new ones.
+
+    Args:
+        conn: SQLite connection object
+        historical_df: DataFrame with historical findings
+
+    Returns:
+        Tuple of (plugins_df, new_plugins_count)
+    """
+    if historical_df.empty:
+        return pd.DataFrame(), 0
+
+    # Columns to extract for plugin metadata
+    plugin_cols = [
+        'plugin_id', 'name', 'family', 'severity_text', 'severity_value',
+        'cvss3_base_score', 'cvss2_base_score', 'cves', 'iavx',
+        'description', 'solution', 'synopsis', 'see_also',
+        'exploit_available', 'exploit_ease', 'stig_severity',
+        'vuln_publication_date', 'patch_publication_date',
+        'plugin_publication_date', 'plugin_modification_date'
+    ]
+
+    # Get available columns
+    available_cols = [c for c in plugin_cols if c in historical_df.columns]
+
+    if 'plugin_id' not in available_cols:
+        print("Warning: plugin_id column not found in historical data")
+        return pd.DataFrame(), 0
+
+    # Extract unique plugins
+    plugins_df = historical_df[available_cols].drop_duplicates(subset=['plugin_id'])
+
+    # Rename columns to match plugin table schema
+    rename_map = {
+        'name': 'plugin_name',
+        'severity_text': 'severity'
+    }
+    plugins_df = plugins_df.rename(columns=rename_map)
+
+    # Get existing plugin IDs from database
+    existing_plugins = get_existing_plugin_ids(conn)
+
+    # Identify new plugins
+    new_plugin_ids = set(plugins_df['plugin_id'].astype(str)) - existing_plugins
+    new_plugins_count = len(new_plugin_ids)
+
+    # Save all plugins (INSERT OR REPLACE handles updates)
+    saved_count = save_plugins_to_database(conn, plugins_df)
+
+    return plugins_df, new_plugins_count
+
+
+def get_existing_plugin_ids(conn: sqlite3.Connection) -> set:
+    """
+    Get set of plugin IDs already in the database.
+
+    Args:
+        conn: SQLite connection object
+
+    Returns:
+        Set of plugin_id strings
+    """
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT plugin_id FROM plugins")
+        return {str(row[0]) for row in cursor.fetchall()}
+    except sqlite3.OperationalError:
+        # Table doesn't exist yet
+        return set()
+
+
+def get_new_plugins(conn: sqlite3.Connection, plugins_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Identify plugins in the DataFrame that are not in the database.
+
+    Args:
+        conn: SQLite connection object
+        plugins_df: DataFrame with plugin data (must have plugin_id column)
+
+    Returns:
+        DataFrame containing only new plugins
+    """
+    if plugins_df.empty or 'plugin_id' not in plugins_df.columns:
+        return pd.DataFrame()
+
+    existing_ids = get_existing_plugin_ids(conn)
+
+    # Filter to only new plugins
+    plugins_df = plugins_df.copy()
+    plugins_df['plugin_id'] = plugins_df['plugin_id'].astype(str)
+    new_plugins = plugins_df[~plugins_df['plugin_id'].isin(existing_ids)]
+
+    return new_plugins
+
+
+def get_plugin_comparison(conn: sqlite3.Connection, historical_df: pd.DataFrame) -> Dict[str, Any]:
+    """
+    Compare plugins in historical data against database and return statistics.
+
+    Args:
+        conn: SQLite connection object
+        historical_df: DataFrame with historical findings
+
+    Returns:
+        Dictionary with comparison statistics:
+        - total_in_scan: Total unique plugins in scan data
+        - total_in_db: Total plugins in database
+        - new_plugins: Count of plugins not in database
+        - existing_plugins: Count of plugins already in database
+        - new_plugin_ids: List of new plugin IDs
+    """
+    if historical_df.empty or 'plugin_id' not in historical_df.columns:
+        return {
+            'total_in_scan': 0,
+            'total_in_db': 0,
+            'new_plugins': 0,
+            'existing_plugins': 0,
+            'new_plugin_ids': []
+        }
+
+    # Get unique plugin IDs from scan
+    scan_plugin_ids = set(historical_df['plugin_id'].astype(str).unique())
+
+    # Get existing plugin IDs from database
+    existing_ids = get_existing_plugin_ids(conn)
+
+    # Calculate statistics
+    new_ids = scan_plugin_ids - existing_ids
+    existing_in_both = scan_plugin_ids & existing_ids
+
+    return {
+        'total_in_scan': len(scan_plugin_ids),
+        'total_in_db': len(existing_ids),
+        'new_plugins': len(new_ids),
+        'existing_plugins': len(existing_in_both),
+        'new_plugin_ids': sorted(list(new_ids))
+    }
+
+
+def drop_and_reimport_plugins(conn: sqlite3.Connection, plugins_df: pd.DataFrame) -> int:
+    """
+    Drop the entire plugins table and reimport from the provided DataFrame.
+
+    Use this for a full refresh of the plugin table.
+
+    Args:
+        conn: SQLite connection object
+        plugins_df: DataFrame with plugin data
+
+    Returns:
+        Number of plugins imported
+    """
+    cursor = conn.cursor()
+
+    # Drop existing data (but keep table structure)
+    try:
+        cursor.execute("DELETE FROM plugins")
+        conn.commit()
+        print("Cleared existing plugins table")
+    except sqlite3.OperationalError:
+        # Table doesn't exist, will be created
+        pass
+
+    # Import all plugins
+    if plugins_df.empty:
+        return 0
+
+    # Ensure plugin_id column exists
+    if 'plugin_id' not in plugins_df.columns:
+        print("Warning: plugin_id column not found")
+        return 0
+
+    # Rename columns if needed
+    rename_map = {
+        'name': 'plugin_name',
+        'severity_text': 'severity'
+    }
+    plugins_df = plugins_df.rename(columns=rename_map)
+
+    return save_plugins_to_database(conn, plugins_df)
+
+
+def load_plugins_from_database(filepath: str) -> pd.DataFrame:
+    """
+    Load plugins table from a SQLite database.
+
+    Args:
+        filepath: Database file path
+
+    Returns:
+        DataFrame with plugin data
+    """
+    try:
+        conn = sqlite3.connect(filepath)
+        df = pd.read_sql_query("SELECT * FROM plugins", conn)
+        conn.close()
+
+        # Convert date columns
+        date_cols = ['first_observed', 'last_observed', 'vuln_publication_date',
+                     'patch_publication_date', 'plugin_publication_date', 'plugin_modification_date']
+        for col in date_cols:
+            if col in df.columns:
+                df[col] = pd.to_datetime(df[col], errors='coerce')
+
+        return df
+    except Exception as e:
+        print(f"Error loading plugins from database: {e}")
+        return pd.DataFrame()
 
 
 def save_host_aliases_to_database(conn: sqlite3.Connection, aliases: List[Dict[str, str]]) -> int:

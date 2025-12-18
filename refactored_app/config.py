@@ -181,7 +181,8 @@ SQLITE_INDEXES = {
     'host_presence': ['hostname', 'status'],
     'scan_changes': ['scan_date'],
     'opdir_mapping': ['opdir_number', 'opdir_number_normalized', 'opdir_year'],
-    'iavm_notices': ['iavm_number', 'iavm_number_normalized', 'iavm_year', 'iavm_type', 'status']
+    'iavm_notices': ['iavm_number', 'iavm_number_normalized', 'iavm_year', 'iavm_type', 'status'],
+    'plugins': ['plugin_id', 'family', 'severity', 'first_observed', 'last_observed']
 }
 
 # Date formats
