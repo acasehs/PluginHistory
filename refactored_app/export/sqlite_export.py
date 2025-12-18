@@ -104,7 +104,8 @@ def export_to_sqlite(historical_df: pd.DataFrame,
         True if successful
     """
     try:
-        conn = sqlite3.connect(filepath)
+        # Use create_sqlite_database to ensure all tables exist
+        conn = create_sqlite_database(filepath)
 
         # Convert datetime columns and list columns to string for SQLite compatibility
         def prepare_df(df):
