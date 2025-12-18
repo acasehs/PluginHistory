@@ -98,8 +98,8 @@ def parse_iavab_reference(iavab_str: str, opdir_year: Optional[int] = None) -> D
         type_letter = match.group(1).upper()
         number = match.group(2).zfill(4)
         suffix = f"{type_letter}-{number}"
-        # Use OPDIR year to enhance to full format
-        if opdir_year:
+        # Use OPDIR year to enhance to full format (check for NaN)
+        if opdir_year is not None and not pd.isna(opdir_year):
             full = f"{int(opdir_year)}-{type_letter}-{number}"
             return {'full': full, 'suffix': suffix, 'year': int(opdir_year), 'type': type_letter}
         else:
@@ -112,7 +112,7 @@ def parse_iavab_reference(iavab_str: str, opdir_year: Optional[int] = None) -> D
         type_letter = match.group(1).upper()
         number = match.group(2).zfill(4)
         suffix = f"{type_letter}-{number}"
-        if opdir_year:
+        if opdir_year is not None and not pd.isna(opdir_year):
             full = f"{int(opdir_year)}-{type_letter}-{number}"
             return {'full': full, 'suffix': suffix, 'year': int(opdir_year), 'type': type_letter}
         else:
@@ -345,9 +345,24 @@ def load_opdir_mapping(opdir_file: str) -> pd.DataFrame:
         # Debug: Print columns after mapping
         print(f"OPDIR columns after mapping: {list(opdir_df.columns)}")
 
-        # Parse dates
+        # Parse dates - handle formats like "Thu 01/08/2026:" with leading weekday
+        def clean_date_value(val):
+            """Clean date value by stripping leading weekday and trailing colons."""
+            if pd.isna(val) or val is None:
+                return val
+            val_str = str(val).strip()
+            # Remove leading weekday names (Mon, Tue, Wed, Thu, Fri, Sat, Sun)
+            weekday_pattern = r'^(Mon|Tue|Wed|Thu|Fri|Sat|Sun|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\s+'
+            val_str = re.sub(weekday_pattern, '', val_str, flags=re.IGNORECASE)
+            # Remove trailing colons
+            val_str = val_str.rstrip(':').strip()
+            return val_str
+
         for date_col in ['poam_due_date', 'final_due_date', 'release_date']:
             if date_col in opdir_df.columns:
+                # Clean date values first
+                opdir_df[date_col] = opdir_df[date_col].apply(clean_date_value)
+                # Then parse to datetime
                 opdir_df[date_col] = pd.to_datetime(opdir_df[date_col], errors='coerce')
 
         # Parse OPDIR NUMBER to extract year
