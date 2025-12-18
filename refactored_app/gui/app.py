@@ -8534,6 +8534,192 @@ Avg New/Month: {monthly_new.mean():.0f}
             messagebox.showinfo("Processing", "Processing is already in progress")
             return
 
+        # If we have both existing DB and archives, show preview dialog first
+        if self.existing_db_path and self.archive_paths:
+            self._show_import_preview_dialog()
+        else:
+            # No preview needed - just process
+            self._review_only_mode = False
+            self._start_processing_thread()
+
+    def _show_import_preview_dialog(self):
+        """Show preview dialog for archive import with counts."""
+        import tempfile
+
+        self._set_processing(True, "Scanning archives for preview...")
+
+        def scan_thread():
+            """Background thread to scan archives and get counts."""
+            try:
+                # Load plugins database first (needed for parsing)
+                if self.plugins_db_path and not self.plugins_dict:
+                    self.plugins_dict = load_plugins_database(self.plugins_db_path)
+
+                # Scan archives to get preview counts
+                all_findings = []
+                temp_dirs = []
+                total_info_count = 0
+
+                for archive_path in self.archive_paths:
+                    if archive_path.endswith('.zip'):
+                        temp_dir = tempfile.mkdtemp()
+                        temp_dirs.append(temp_dir)
+                        extract_nested_archives(archive_path, temp_dir)
+                        nessus_files = find_files_by_extension(temp_dir, '.nessus')
+                    else:
+                        nessus_files = [archive_path]
+
+                    if nessus_files:
+                        findings_df, _ = parse_multiple_nessus_files(nessus_files, self.plugins_dict)
+                        if not findings_df.empty:
+                            # Count info findings
+                            if 'severity_text' in findings_df.columns:
+                                info_count = len(findings_df[findings_df['severity_text'] == 'Info'])
+                                total_info_count += info_count
+                            all_findings.append(findings_df)
+
+                # Cleanup temp directories
+                for temp_dir in temp_dirs:
+                    cleanup_temp_directory(temp_dir)
+
+                if all_findings:
+                    preview_df = pd.concat(all_findings, ignore_index=True)
+                    raw_count = len(preview_df)
+
+                    # Estimate duplicates by loading existing DB keys
+                    duplicate_estimate = 0
+                    if self.existing_db_path:
+                        import sqlite3
+                        try:
+                            conn = sqlite3.connect(self.existing_db_path)
+                            existing_df = pd.read_sql_query(
+                                "SELECT hostname, plugin_id, scan_date FROM historical_findings", conn)
+                            conn.close()
+
+                            if not existing_df.empty:
+                                existing_df['scan_date'] = pd.to_datetime(existing_df['scan_date'])
+                                preview_df['scan_date'] = pd.to_datetime(preview_df['scan_date'])
+
+                                # Count potential duplicates
+                                key_cols = ['hostname', 'plugin_id', 'scan_date']
+                                if all(col in preview_df.columns for col in key_cols):
+                                    existing_keys = set(existing_df[key_cols].apply(tuple, axis=1))
+                                    preview_keys = preview_df[key_cols].apply(tuple, axis=1)
+                                    duplicate_estimate = preview_keys.isin(existing_keys).sum()
+                        except Exception as e:
+                            self._log_safe(f"Could not estimate duplicates: {e}")
+
+                    # Calculate estimates
+                    info_would_exclude = total_info_count if not self.severity_toggles['Info'].get() else 0
+                    new_estimate = raw_count - duplicate_estimate - info_would_exclude
+
+                    # Show dialog on main thread
+                    self.window.after(0, lambda: self._display_import_preview(
+                        raw_count, total_info_count, info_would_exclude,
+                        duplicate_estimate, max(0, new_estimate)
+                    ))
+                else:
+                    self.window.after(0, lambda: self._on_preview_complete(None))
+
+            except Exception as e:
+                self.window.after(0, lambda: self._on_preview_error(str(e)))
+
+        import threading
+        thread = threading.Thread(target=scan_thread, daemon=True)
+        thread.start()
+
+    def _display_import_preview(self, raw_count, info_total, info_excluded, duplicates, new_estimate):
+        """Display the import preview dialog with options."""
+        self._set_processing(False, "Ready")
+
+        dialog = tk.Toplevel(self.window)
+        dialog.title("Import Preview")
+        dialog.geometry("450x350")
+        dialog.resizable(False, False)
+        dialog.transient(self.window)
+        dialog.grab_set()
+
+        # Center dialog
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() - dialog.winfo_width()) // 2
+        y = (dialog.winfo_screenheight() - dialog.winfo_height()) // 2
+        dialog.geometry(f"+{x}+{y}")
+
+        # Title
+        ttk.Label(dialog, text="Archive Import Preview",
+                 font=("Arial", 14, "bold")).pack(pady=(20, 10))
+
+        # Stats frame
+        stats_frame = ttk.Frame(dialog)
+        stats_frame.pack(fill=tk.X, padx=30, pady=10)
+
+        stats = [
+            ("Raw findings in archive:", f"{raw_count:,}"),
+            ("Informational findings:", f"{info_total:,}"),
+            ("Info to be excluded:", f"{info_excluded:,}" if info_excluded > 0 else "0 (Info enabled)"),
+            ("Estimated duplicates:", f"{duplicates:,}"),
+            ("Estimated new findings:", f"{new_estimate:,}"),
+        ]
+
+        for i, (label, value) in enumerate(stats):
+            ttk.Label(stats_frame, text=label).grid(row=i, column=0, sticky='w', pady=2)
+            color = 'green' if 'new' in label.lower() and new_estimate > 0 else None
+            lbl = ttk.Label(stats_frame, text=value, font=("Arial", 10, "bold"))
+            if color:
+                lbl.configure(foreground=color)
+            lbl.grid(row=i, column=1, sticky='e', pady=2, padx=(20, 0))
+
+        stats_frame.columnconfigure(1, weight=1)
+
+        # Separator
+        ttk.Separator(dialog, orient='horizontal').pack(fill=tk.X, padx=20, pady=15)
+
+        # Question
+        ttk.Label(dialog, text="How would you like to proceed?",
+                 font=("Arial", 11)).pack(pady=5)
+
+        # Button frame
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(pady=20)
+
+        def on_add_to_db():
+            self._review_only_mode = False
+            dialog.destroy()
+            self._start_processing_thread()
+
+        def on_review_only():
+            self._review_only_mode = True
+            dialog.destroy()
+            self._start_processing_thread()
+
+        def on_cancel():
+            dialog.destroy()
+            self._set_processing(False, "Cancelled")
+
+        ttk.Button(btn_frame, text="Add to Database",
+                  command=on_add_to_db, width=18).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Review Only",
+                  command=on_review_only, width=18).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Cancel",
+                  command=on_cancel, width=12).pack(side=tk.LEFT, padx=5)
+
+        # Note
+        note = "Review Only: Creates lifecycle analysis without saving to database"
+        ttk.Label(dialog, text=note, foreground='gray',
+                 font=("Arial", 9)).pack(pady=(0, 15))
+
+    def _on_preview_complete(self, result):
+        """Called when preview scan finds no data."""
+        self._set_processing(False, "Ready")
+        messagebox.showinfo("No Data", "No findings found in the selected archives.")
+
+    def _on_preview_error(self, error_msg):
+        """Called when preview scan encounters an error."""
+        self._set_processing(False, "Error")
+        messagebox.showerror("Preview Error", f"Failed to scan archives: {error_msg}")
+
+    def _start_processing_thread(self):
+        """Start the main processing thread."""
         self._is_processing = True
         self._set_processing(True, "Starting processing...")
 
@@ -8544,49 +8730,61 @@ Avg New/Month: {monthly_new.mean():.0f}
             try:
                 self._log_safe("Starting processing...")
 
-                # Load plugins database first (needed for processing new archives)
+                # 1. Load plugins database first (needed for processing archives)
                 if self.plugins_db_path:
                     self._log_safe("Loading plugins database...")
                     self.plugins_dict = load_plugins_database(self.plugins_db_path)
 
-                # Process archives and/or load existing DB
+                # 2. Load existing database (if provided)
                 if self.existing_db_path:
-                    # Always load existing database first
                     self._load_existing_database_thread()
 
-                    if self.archive_paths:
-                        # Both DB and new archives - append new findings
+                # 3. Load/merge OPDIR from file BEFORE processing archives
+                if self.opdir_file_path:
+                    self._log_safe("Loading OPDIR mapping from file...")
+                    file_opdir_df = load_opdir_mapping(self.opdir_file_path)
+                    if not file_opdir_df.empty:
+                        if self.opdir_df.empty:
+                            self.opdir_df = file_opdir_df
+                            self._log_safe(f"Loaded {len(self.opdir_df)} OPDIR mappings from file")
+                        else:
+                            # Merge file data with DB data
+                            before_count = len(self.opdir_df)
+                            self.opdir_df = self._merge_reference_data(
+                                self.opdir_df, file_opdir_df, 'opdir_number', 'OPDIR')
+                            self._log_safe(f"Merged OPDIR: {before_count} from DB + file = {len(self.opdir_df)} total")
+
+                # 4. Load/merge IAVM from file BEFORE processing archives
+                if self.iavm_file_path:
+                    self._log_safe("Loading IAVM notice summaries from file...")
+                    file_iavm_df = load_iavm_summaries(self.iavm_file_path)
+                    if not file_iavm_df.empty:
+                        if self.iavm_df.empty:
+                            self.iavm_df = file_iavm_df
+                            self._log_safe(f"Loaded {len(self.iavm_df)} IAVM notices from file")
+                        else:
+                            # Merge file data with DB data
+                            before_count = len(self.iavm_df)
+                            key_col = 'iavm_id' if 'iavm_id' in file_iavm_df.columns else 'iava_id'
+                            self.iavm_df = self._merge_reference_data(
+                                self.iavm_df, file_iavm_df, key_col, 'IAVM')
+                            self._log_safe(f"Merged IAVM: {before_count} from DB + file = {len(self.iavm_df)} total")
+
+                # 5. NOW process archives (reference data is already loaded)
+                if self.archive_paths:
+                    if self.existing_db_path:
+                        # Append mode
                         existing_count = len(self.historical_df)
                         self._log_safe(f"Appending new archives to existing {existing_count} findings...")
                         self._append_new_archives_thread()
-                else:
-                    # No existing DB - process archives as new
-                    self._process_new_archives_thread()
-
-                # After loading database, check if we need to load OPDIR from file
-                if self.opdir_file_path:
-                    if self.opdir_df.empty:
-                        self._log_safe("Loading OPDIR mapping from file...")
-                        self.opdir_df = load_opdir_mapping(self.opdir_file_path)
-                        if not self.opdir_df.empty:
-                            self._log_safe(f"Loaded {len(self.opdir_df)} OPDIR mappings from file")
                     else:
-                        self._log_safe(f"Using {len(self.opdir_df)} OPDIR mappings from database")
+                        # New data mode
+                        self._process_new_archives_thread()
 
-                # Same for IAVM notices
-                if self.iavm_file_path:
-                    if self.iavm_df.empty:
-                        self._log_safe("Loading IAVM notice summaries from file...")
-                        self.iavm_df = load_iavm_summaries(self.iavm_file_path)
-                        if not self.iavm_df.empty:
-                            self._log_safe(f"Loaded {len(self.iavm_df)} IAVM notices from file")
-                    else:
-                        self._log_safe(f"Using {len(self.iavm_df)} IAVM notices from database")
-
-                # Apply default 180-day date filter (must be on main thread)
+                # 6. Apply default 180-day date filter (must be on main thread)
                 self.window.after(0, self._apply_default_date_filter)
 
-                # Auto-save informational findings
+                # 7. Auto-save informational findings
                 self._auto_save_info_findings()
 
                 self._log_safe("Processing complete!")
@@ -8596,9 +8794,55 @@ Avg New/Month: {monthly_new.mean():.0f}
                 self._log_safe(f"ERROR: {str(e)}")
                 self.window.after(0, lambda: self._on_processing_complete(False, str(e)))
 
-        # Start background thread
         thread = threading.Thread(target=process_thread, daemon=True)
         thread.start()
+
+    def _merge_reference_data(self, db_df: pd.DataFrame, file_df: pd.DataFrame,
+                              key_col: str, data_type: str) -> pd.DataFrame:
+        """Merge reference data from file with data from database.
+
+        File data takes precedence for matching keys (newer data).
+        New entries from file are added.
+        """
+        if db_df.empty:
+            return file_df.copy()
+        if file_df.empty:
+            return db_df.copy()
+
+        # Standardize key column
+        if key_col not in db_df.columns:
+            # Try to find alternative key
+            for alt_key in ['opdir_number', 'iavab', 'iavm_id', 'iava_id']:
+                if alt_key in db_df.columns:
+                    key_col = alt_key
+                    break
+
+        if key_col not in file_df.columns or key_col not in db_df.columns:
+            self._log_safe(f"Warning: Could not find key column for {data_type} merge")
+            return db_df.copy()
+
+        # Get keys from both sources
+        db_keys = set(db_df[key_col].dropna().astype(str).str.upper())
+        file_keys = set(file_df[key_col].dropna().astype(str).str.upper())
+
+        # Create normalized key column for merging
+        db_df = db_df.copy()
+        file_df = file_df.copy()
+        db_df['_merge_key'] = db_df[key_col].astype(str).str.upper()
+        file_df['_merge_key'] = file_df[key_col].astype(str).str.upper()
+
+        # Keep DB entries that are NOT in file (file takes precedence)
+        db_only = db_df[~db_df['_merge_key'].isin(file_keys)]
+
+        # Combine: file data + DB-only data
+        merged = pd.concat([file_df, db_only], ignore_index=True)
+        merged = merged.drop(columns=['_merge_key'], errors='ignore')
+
+        new_from_file = len(file_keys - db_keys)
+        updated_from_file = len(file_keys & db_keys)
+        self._log_safe(f"  {data_type} merge: {new_from_file} new, {updated_from_file} updated from file")
+
+        return merged
 
     def _on_processing_complete(self, success: bool, error_msg: str = ""):
         """Called when processing completes (on main thread)."""
@@ -8607,7 +8851,16 @@ Avg New/Month: {monthly_new.mean():.0f}
             self._set_processing(False, "Processing complete")
             # Update reporting date dropdowns
             self._update_reporting_date_dropdowns()
-            messagebox.showinfo("Success", "Data processed successfully!")
+
+            # Show appropriate message based on review mode
+            review_mode = getattr(self, '_review_only_mode', False)
+            if review_mode:
+                messagebox.showinfo("Review Complete",
+                    "Data processed in REVIEW ONLY mode.\n\n"
+                    "Lifecycle analysis has been created.\n"
+                    "No changes will be saved to the database.")
+            else:
+                messagebox.showinfo("Success", "Data processed successfully!")
         else:
             self._set_processing(False, "Processing failed")
             messagebox.showerror("Error", f"Processing failed: {error_msg}")
@@ -8751,7 +9004,20 @@ Avg New/Month: {monthly_new.mean():.0f}
 
         if all_findings:
             self.historical_df = pd.concat(all_findings, ignore_index=True)
-            self._log_safe(f"Total findings: {len(self.historical_df)}")
+            new_count = len(self.historical_df)
+            self._log_safe(f"Total findings: {new_count}")
+
+            # Record import statistics for new archive processing
+            source_files = [os.path.basename(p) for p in self.archive_paths]
+            raw = new_count + total_info_excluded
+            info_ex = total_info_excluded
+            added = new_count
+            files = source_files[:]
+            self.window.after(0, lambda r=raw, i=info_ex, a=added, f=files:
+                self._record_import_statistics(
+                    raw_count=r, info_excluded=i, duplicates_skipped=0,
+                    new_added=a, source_files=f
+                ))
 
             # Detect hostname aliases and apply normalization
             self._apply_hostname_normalization()
@@ -8920,21 +9186,25 @@ Avg New/Month: {monthly_new.mean():.0f}
 
                         # Summary breakdown for diagnostics
                         self._log_safe("--- Archive Import Summary ---")
-                        self._log_safe(f"  Raw findings in archive: {new_count}")
+                        self._log_safe(f"  Raw findings in archive: {new_count + total_info_excluded}")
                         if total_info_excluded > 0:
                             self._log_safe(f"  Filtered (Info disabled): {total_info_excluded}")
                         self._log_safe(f"  Duplicates (already in DB): {duplicate_count}")
                         self._log_safe(f"  New unique findings added: {len(unique_new_findings)}")
 
                         # Record import statistics for management visualization
+                        # Use default args to capture values at definition time (closure fix)
                         source_files = [os.path.basename(p) for p in self.archive_paths]
-                        self.window.after(0, lambda: self._record_import_statistics(
-                            raw_count=new_count + total_info_excluded,
-                            info_excluded=total_info_excluded,
-                            duplicates_skipped=duplicate_count,
-                            new_added=len(unique_new_findings),
-                            source_files=source_files
-                        ))
+                        raw = new_count + total_info_excluded
+                        info_ex = total_info_excluded
+                        dups = duplicate_count
+                        added = len(unique_new_findings)
+                        files = source_files[:]
+                        self.window.after(0, lambda r=raw, i=info_ex, d=dups, a=added, f=files:
+                            self._record_import_statistics(
+                                raw_count=r, info_excluded=i, duplicates_skipped=d,
+                                new_added=a, source_files=f
+                            ))
                     else:
                         self._log_safe("No new unique findings to append")
                         self._log_safe(f"All {new_count} findings were duplicates of existing data")
@@ -8942,23 +9212,49 @@ Avg New/Month: {monthly_new.mean():.0f}
 
                         # Record import statistics even when all duplicates
                         source_files = [os.path.basename(p) for p in self.archive_paths]
-                        self.window.after(0, lambda: self._record_import_statistics(
-                            raw_count=new_count + total_info_excluded,
-                            info_excluded=total_info_excluded,
-                            duplicates_skipped=duplicate_count,
-                            new_added=0,
-                            source_files=source_files
-                        ))
+                        raw = new_count + total_info_excluded
+                        info_ex = total_info_excluded
+                        dups = duplicate_count
+                        files = source_files[:]
+                        self.window.after(0, lambda r=raw, i=info_ex, d=dups, f=files:
+                            self._record_import_statistics(
+                                raw_count=r, info_excluded=i, duplicates_skipped=d,
+                                new_added=0, source_files=f
+                            ))
                 else:
                     # No key columns available, just append all
                     self.historical_df = pd.concat([self.historical_df, new_findings_df], ignore_index=True)
                     self._log_safe(f"Appended {new_count} findings (no dedup possible)")
                     self._pending_new_findings_count = new_count
+
+                    # Record import statistics
+                    source_files = [os.path.basename(p) for p in self.archive_paths]
+                    raw = new_count + total_info_excluded
+                    info_ex = total_info_excluded
+                    added = new_count
+                    files = source_files[:]
+                    self.window.after(0, lambda r=raw, i=info_ex, a=added, f=files:
+                        self._record_import_statistics(
+                            raw_count=r, info_excluded=i, duplicates_skipped=0,
+                            new_added=a, source_files=f
+                        ))
             else:
                 # No existing data, just set
                 self.historical_df = new_findings_df
                 self._log_safe(f"Set {new_count} findings as initial data")
                 self._pending_new_findings_count = new_count
+
+                # Record import statistics for initial load
+                source_files = [os.path.basename(p) for p in self.archive_paths]
+                raw = new_count + total_info_excluded
+                info_ex = total_info_excluded
+                added = new_count
+                files = source_files[:]
+                self.window.after(0, lambda r=raw, i=info_ex, a=added, f=files:
+                    self._record_import_statistics(
+                        raw_count=r, info_excluded=i, duplicates_skipped=0,
+                        new_added=a, source_files=f
+                    ))
         else:
             self._pending_new_findings_count = 0
 
@@ -9255,6 +9551,13 @@ Avg New/Month: {monthly_new.mean():.0f}
         """Refresh analysis and prompt to save if new findings were added."""
         # First refresh the analysis
         self._refresh_analysis_internal()
+
+        # Check if in review-only mode - don't prompt to save
+        review_mode = getattr(self, '_review_only_mode', False)
+        if review_mode:
+            self._log("Review mode: Skipping database save prompt")
+            self._pending_new_findings_count = 0
+            return
 
         # Check if there are pending new findings to save
         pending_count = getattr(self, '_pending_new_findings_count', 0)
