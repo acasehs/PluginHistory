@@ -1143,8 +1143,11 @@ def detect_hostname_aliases(df: pd.DataFrame) -> List[Dict[str, str]]:
     """
     Detect hostname aliases based on IP address matching.
 
-    Identifies cases where the same IP has multiple hostnames
-    (e.g., server1 and server1-mgmt).
+    Identifies cases where the same IP has multiple hostnames.
+
+    NOTE: Management interfaces (-mgmt, -ilom, -ilo, -oob, -bmc) are treated as
+    separate devices even if they share an IP, since they typically represent
+    distinct physical interfaces with their own vulnerabilities.
 
     Args:
         df: DataFrame with hostname and ip_address columns
@@ -1156,6 +1159,9 @@ def detect_hostname_aliases(df: pd.DataFrame) -> List[Dict[str, str]]:
 
     if df.empty or 'hostname' not in df.columns or 'ip_address' not in df.columns:
         return []
+
+    # Management interface suffixes - these are separate devices, not aliases
+    mgmt_suffixes = ('-mgmt', '-ilom', '-ilo', '-oob', '-bmc')
 
     # Group hostnames by IP
     ip_to_hostnames = {}
@@ -1173,9 +1179,18 @@ def detect_hostname_aliases(df: pd.DataFrame) -> List[Dict[str, str]]:
         if len(hostnames) <= 1:
             continue
 
-        # Normalize all hostnames to find the canonical one
+        # Separate management interfaces from regular hosts
+        # Management interfaces are NOT aliases - they're separate devices
+        regular_hosts = [h for h in hostnames if not h.endswith(mgmt_suffixes)]
+        mgmt_hosts = [h for h in hostnames if h.endswith(mgmt_suffixes)]
+
+        # Only look for aliases among regular hosts (not management interfaces)
+        if len(regular_hosts) <= 1:
+            continue
+
+        # Normalize all regular hostnames to find the canonical one
         normalized_map = {}
-        for hostname in hostnames:
+        for hostname in regular_hosts:
             normalized = normalize_hostname_for_matching(hostname)
             if normalized not in normalized_map:
                 normalized_map[normalized] = []
@@ -1192,12 +1207,11 @@ def detect_hostname_aliases(df: pd.DataFrame) -> List[Dict[str, str]]:
 
             # Add aliases for all non-canonical hostnames
             for hostname in sorted_hostnames[1:]:
-                alias_type = 'management' if any(s in hostname for s in ['-mgmt', '-ilom', '-ilo', '-oob']) else 'alternate'
                 aliases.append({
                     'canonical_hostname': canonical,
                     'alias_hostname': hostname,
                     'ip_address': ip,
-                    'alias_type': alias_type
+                    'alias_type': 'alternate'
                 })
 
     return aliases

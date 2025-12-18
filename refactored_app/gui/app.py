@@ -9440,9 +9440,10 @@ Avg New/Month: {monthly_new.mean():.0f}
                     self._log_safe(f"Could not load aliases: {e}")
 
             # Detect new aliases from current data
+            # Note: Management interfaces (-mgmt, -ilom, etc.) are treated as separate devices
             new_aliases = detect_hostname_aliases(self.historical_df)
             if new_aliases:
-                self._log_safe(f"Detected {len(new_aliases)} hostname aliases (e.g., server-mgmt variants)")
+                self._log_safe(f"Detected {len(new_aliases)} hostname aliases")
                 # Add to alias map
                 for alias in new_aliases:
                     alias_map[alias['alias_hostname'].lower()] = alias['canonical_hostname'].lower()
