@@ -8798,6 +8798,7 @@ Avg New/Month: {monthly_new.mean():.0f}
                 all_findings = []
                 temp_dirs = []
                 total_info_count = 0
+                total_scan_files = 0
 
                 for archive_path in self.archive_paths:
                     if archive_path.endswith('.zip'):
@@ -8807,6 +8808,8 @@ Avg New/Month: {monthly_new.mean():.0f}
                         nessus_files = find_files_by_extension(temp_dir, '.nessus')
                     else:
                         nessus_files = [archive_path]
+
+                    total_scan_files += len(nessus_files)
 
                     if nessus_files:
                         findings_df, _ = parse_multiple_nessus_files(nessus_files, self.plugins_dict)
@@ -8825,8 +8828,20 @@ Avg New/Month: {monthly_new.mean():.0f}
                     preview_df = pd.concat(all_findings, ignore_index=True)
                     raw_count = len(preview_df)
 
+                    # Count unique scan dates in archive
+                    unique_scan_dates = 0
+                    if 'scan_date' in preview_df.columns:
+                        preview_df['scan_date'] = pd.to_datetime(preview_df['scan_date'])
+                        unique_scan_dates = preview_df['scan_date'].dt.date.nunique()
+
+                    # Count unique findings by plugin_id + hostname (matches GPM generator logic)
+                    unique_findings = 0
+                    if 'plugin_id' in preview_df.columns and 'hostname' in preview_df.columns:
+                        unique_findings = preview_df.groupby(['plugin_id', 'hostname']).ngroups
+
                     # Estimate duplicates by loading existing DB keys
                     duplicate_estimate = 0
+                    db_finding_count = 0
                     if self.existing_db_path:
                         import sqlite3
                         try:
@@ -8834,12 +8849,12 @@ Avg New/Month: {monthly_new.mean():.0f}
                             existing_df = pd.read_sql_query(
                                 "SELECT hostname, plugin_id, scan_date FROM historical_findings", conn)
                             conn.close()
+                            db_finding_count = len(existing_df)
 
                             if not existing_df.empty:
                                 existing_df['scan_date'] = pd.to_datetime(existing_df['scan_date'])
-                                preview_df['scan_date'] = pd.to_datetime(preview_df['scan_date'])
 
-                                # Count potential duplicates
+                                # Count potential duplicates using full key
                                 key_cols = ['hostname', 'plugin_id', 'scan_date']
                                 if all(col in preview_df.columns for col in key_cols):
                                     existing_keys = set(existing_df[key_cols].apply(tuple, axis=1))
@@ -8852,10 +8867,11 @@ Avg New/Month: {monthly_new.mean():.0f}
                     info_would_exclude = total_info_count if not self.severity_toggles['Info'].get() else 0
                     new_estimate = raw_count - duplicate_estimate - info_would_exclude
 
-                    # Show dialog on main thread
+                    # Show dialog on main thread with extended stats
                     self.window.after(0, lambda: self._display_import_preview(
                         raw_count, total_info_count, info_would_exclude,
-                        duplicate_estimate, max(0, new_estimate)
+                        duplicate_estimate, max(0, new_estimate),
+                        total_scan_files, unique_scan_dates, unique_findings, db_finding_count
                     ))
                 else:
                     self.window.after(0, lambda: self._on_preview_complete(None))
@@ -8867,13 +8883,14 @@ Avg New/Month: {monthly_new.mean():.0f}
         thread = threading.Thread(target=scan_thread, daemon=True)
         thread.start()
 
-    def _display_import_preview(self, raw_count, info_total, info_excluded, duplicates, new_estimate):
+    def _display_import_preview(self, raw_count, info_total, info_excluded, duplicates, new_estimate,
+                                scan_files=0, unique_dates=0, unique_findings=0, db_count=0):
         """Display the import preview dialog with options."""
         self._set_processing(False, "Ready")
 
         dialog = tk.Toplevel(self.window)
         dialog.title("Import Preview")
-        dialog.geometry("450x350")
+        dialog.geometry("500x480")
         dialog.resizable(False, False)
         dialog.transient(self.window)
         dialog.grab_set()
@@ -8888,30 +8905,65 @@ Avg New/Month: {monthly_new.mean():.0f}
         ttk.Label(dialog, text="Archive Import Preview",
                  font=("Arial", 14, "bold")).pack(pady=(20, 10))
 
-        # Stats frame
-        stats_frame = ttk.Frame(dialog)
-        stats_frame.pack(fill=tk.X, padx=30, pady=10)
+        # Archive info frame
+        archive_frame = ttk.LabelFrame(dialog, text="Archive Contents", padding=5)
+        archive_frame.pack(fill=tk.X, padx=20, pady=(5, 10))
 
-        stats = [
-            ("Raw findings in archive:", f"{raw_count:,}"),
-            ("Informational findings:", f"{info_total:,}"),
-            ("Info to be excluded:", f"{info_excluded:,}" if info_excluded > 0 else "0 (Info enabled)"),
-            ("Estimated duplicates:", f"{duplicates:,}"),
-            ("Estimated new findings:", f"{new_estimate:,}"),
+        archive_stats = [
+            ("Scan files in archive:", f"{scan_files:,}"),
+            ("Unique scan dates:", f"{unique_dates:,}"),
+            ("Total rows (all scans):", f"{raw_count:,}"),
+            ("Unique findings (host+plugin):", f"{unique_findings:,}"),
         ]
 
-        for i, (label, value) in enumerate(stats):
-            ttk.Label(stats_frame, text=label).grid(row=i, column=0, sticky='w', pady=2)
+        for i, (label, value) in enumerate(archive_stats):
+            ttk.Label(archive_frame, text=label).grid(row=i, column=0, sticky='w', pady=1)
+            ttk.Label(archive_frame, text=value, font=("Arial", 10, "bold")).grid(
+                row=i, column=1, sticky='e', pady=1, padx=(20, 0))
+        archive_frame.columnconfigure(1, weight=1)
+
+        # Database comparison frame
+        db_frame = ttk.LabelFrame(dialog, text="Database Comparison", padding=5)
+        db_frame.pack(fill=tk.X, padx=20, pady=(0, 10))
+
+        db_stats = [
+            ("Current DB findings:", f"{db_count:,}"),
+            ("Matching rows (duplicates):", f"{duplicates:,}"),
+            ("New rows to add:", f"{new_estimate:,}"),
+        ]
+
+        for i, (label, value) in enumerate(db_stats):
+            ttk.Label(db_frame, text=label).grid(row=i, column=0, sticky='w', pady=1)
             color = 'green' if 'new' in label.lower() and new_estimate > 0 else None
-            lbl = ttk.Label(stats_frame, text=value, font=("Arial", 10, "bold"))
+            lbl = ttk.Label(db_frame, text=value, font=("Arial", 10, "bold"))
             if color:
                 lbl.configure(foreground=color)
-            lbl.grid(row=i, column=1, sticky='e', pady=2, padx=(20, 0))
+            lbl.grid(row=i, column=1, sticky='e', pady=1, padx=(20, 0))
+        db_frame.columnconfigure(1, weight=1)
 
-        stats_frame.columnconfigure(1, weight=1)
+        # Filtering frame
+        filter_frame = ttk.LabelFrame(dialog, text="Filtering", padding=5)
+        filter_frame.pack(fill=tk.X, padx=20, pady=(0, 10))
+
+        filter_stats = [
+            ("Informational findings:", f"{info_total:,}"),
+            ("Info to be excluded:", f"{info_excluded:,}" if info_excluded > 0 else "0 (Info enabled)"),
+        ]
+
+        for i, (label, value) in enumerate(filter_stats):
+            ttk.Label(filter_frame, text=label).grid(row=i, column=0, sticky='w', pady=1)
+            ttk.Label(filter_frame, text=value, font=("Arial", 10, "bold")).grid(
+                row=i, column=1, sticky='e', pady=1, padx=(20, 0))
+        filter_frame.columnconfigure(1, weight=1)
+
+        # Help note explaining the difference
+        if unique_findings > 0 and raw_count > unique_findings:
+            note_text = f"Note: {raw_count:,} total rows across {unique_dates} scan dates = {unique_findings:,} unique vulnerabilities"
+            ttk.Label(dialog, text=note_text, foreground='#888888',
+                     font=("Arial", 9), wraplength=450).pack(pady=(0, 5))
 
         # Separator
-        ttk.Separator(dialog, orient='horizontal').pack(fill=tk.X, padx=20, pady=15)
+        ttk.Separator(dialog, orient='horizontal').pack(fill=tk.X, padx=20, pady=10)
 
         # Question
         ttk.Label(dialog, text="How would you like to proceed?",
@@ -8919,7 +8971,7 @@ Avg New/Month: {monthly_new.mean():.0f}
 
         # Button frame
         btn_frame = ttk.Frame(dialog)
-        btn_frame.pack(pady=20)
+        btn_frame.pack(pady=15)
 
         def on_add_to_db():
             self._review_only_mode = False
@@ -8945,7 +8997,7 @@ Avg New/Month: {monthly_new.mean():.0f}
         # Note
         note = "Review Only: Creates lifecycle analysis without saving to database"
         ttk.Label(dialog, text=note, foreground='gray',
-                 font=("Arial", 9)).pack(pady=(0, 15))
+                 font=("Arial", 9)).pack(pady=(0, 10))
 
     def _on_preview_complete(self, result):
         """Called when preview scan finds no data."""
