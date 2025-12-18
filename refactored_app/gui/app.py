@@ -1289,10 +1289,18 @@ class NessusHistoryTrackerApp:
             self.rolling_canvas = FigureCanvasTkAgg(self.rolling_fig, master=rolling_frame)
             self.rolling_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-            # Bind double-click for pop-out
-            hint = ttk.Label(rolling_frame, text="Double-click chart to pop-out",
+            # Bottom bar with hints and export button
+            bottom_bar = ttk.Frame(rolling_frame)
+            bottom_bar.pack(fill=tk.X, padx=5, pady=2)
+
+            hint = ttk.Label(bottom_bar, text="Double-click chart to pop-out",
                             font=('Arial', 8), foreground='gray')
-            hint.pack(anchor=tk.SE, padx=5)
+            hint.pack(side=tk.LEFT)
+
+            export_btn = ttk.Button(bottom_bar, text="Export Data",
+                                   command=lambda: self._export_chart_data('rolling'))
+            export_btn.pack(side=tk.RIGHT, padx=5)
+
             self._bind_chart_popouts_rolling()
         else:
             ttk.Label(rolling_frame, text="Install matplotlib for visualizations").pack(pady=50)
@@ -1325,10 +1333,18 @@ class NessusHistoryTrackerApp:
             self.unique_canvas = FigureCanvasTkAgg(self.unique_fig, master=unique_frame)
             self.unique_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
-            # Bind double-click for pop-out
-            hint = ttk.Label(unique_frame, text="Double-click chart to pop-out",
+            # Bottom bar with hints and export button
+            bottom_bar = ttk.Frame(unique_frame)
+            bottom_bar.pack(fill=tk.X, padx=5, pady=2)
+
+            hint = ttk.Label(bottom_bar, text="Double-click chart to pop-out",
                             font=('Arial', 8), foreground='gray')
-            hint.pack(anchor=tk.SE, padx=5)
+            hint.pack(side=tk.LEFT)
+
+            export_btn = ttk.Button(bottom_bar, text="Export Data",
+                                   command=lambda: self._export_chart_data('unique'))
+            export_btn.pack(side=tk.RIGHT, padx=5)
+
             self._bind_chart_popouts_unique()
         else:
             ttk.Label(unique_frame, text="Install matplotlib for visualizations").pack(pady=50)
@@ -18975,6 +18991,184 @@ Avg New/Month: {monthly_new.mean():.0f}
         self._update_metrics_charts()
         self._update_host_tracking_charts()
         self._update_advanced_charts()
+
+    def _export_chart_data(self, chart_type: str):
+        """Export chart data to Excel with formatted tables.
+
+        Args:
+            chart_type: 'rolling' for 8 Week Totals, 'unique' for 8 Week Unique
+        """
+        hist_df = self._get_chart_data('historical')
+
+        if hist_df.empty or 'scan_date' not in hist_df.columns:
+            messagebox.showwarning("No Data", "No historical data available to export")
+            return
+
+        hist_df = hist_df.copy()
+        hist_df['scan_date'] = pd.to_datetime(hist_df['scan_date'])
+
+        # Get the last 8 weeks of data
+        max_date = hist_df['scan_date'].max()
+        min_date = max_date - pd.Timedelta(weeks=8)
+        rolling_df = hist_df[hist_df['scan_date'] >= min_date].copy()
+
+        if rolling_df.empty:
+            messagebox.showwarning("No Data", "No data in last 8 weeks")
+            return
+
+        # Create week labels
+        rolling_df['week'] = rolling_df['scan_date'].dt.to_period('W').apply(lambda x: x.start_time)
+        all_weeks = pd.date_range(start=min_date, end=max_date, freq='W-MON')
+        weeks = all_weeks[-8:]
+        week_labels = [w.strftime('%m/%d') for w in weeks]
+
+        severities = ['Critical', 'High', 'Medium', 'Low']
+
+        # Prepare data sheets based on chart type
+        sheets = {}
+
+        if chart_type == 'rolling':
+            # Sheet 1: Total findings by severity per week
+            data = {'Week': week_labels}
+            for sev in severities:
+                counts = []
+                for week in weeks:
+                    week_start = week
+                    week_end = week + pd.Timedelta(days=7)
+                    week_data = rolling_df[(rolling_df['scan_date'] >= week_start) & (rolling_df['scan_date'] < week_end)]
+                    if 'severity_text' in week_data.columns:
+                        count = len(week_data[week_data['severity_text'] == sev])
+                    else:
+                        count = 0
+                    counts.append(count)
+                data[sev] = counts
+            df1 = pd.DataFrame(data)
+            df1['Total'] = df1[severities].sum(axis=1)
+            sheets['Total Findings by Severity'] = df1
+
+            # Sheet 2: Findings by environment per week
+            if 'environment_type' in rolling_df.columns:
+                environments = rolling_df['environment_type'].dropna().unique().tolist()[:3]
+                data = {'Week': week_labels}
+                for env in environments:
+                    counts = []
+                    for week in weeks:
+                        week_start = week
+                        week_end = week + pd.Timedelta(days=7)
+                        week_data = rolling_df[(rolling_df['scan_date'] >= week_start) & (rolling_df['scan_date'] < week_end)]
+                        env_data = week_data[week_data['environment_type'] == env]
+                        counts.append(len(env_data))
+                    data[env] = counts
+                sheets['Findings by Environment'] = pd.DataFrame(data)
+
+            # Sheet 3: Environment totals by severity per week
+            if 'environment_type' in rolling_df.columns:
+                environments = rolling_df['environment_type'].dropna().unique().tolist()[:3]
+                rows = []
+                for env in environments:
+                    for sev in severities:
+                        row = {'Environment': env, 'Severity': sev}
+                        for i, week in enumerate(weeks):
+                            week_start = week
+                            week_end = week + pd.Timedelta(days=7)
+                            week_data = rolling_df[(rolling_df['scan_date'] >= week_start) & (rolling_df['scan_date'] < week_end)]
+                            env_data = week_data[week_data['environment_type'] == env]
+                            if 'severity_text' in env_data.columns:
+                                count = len(env_data[env_data['severity_text'] == sev])
+                            else:
+                                count = 0
+                            row[week_labels[i]] = count
+                        rows.append(row)
+                sheets['Environment Totals by Severity'] = pd.DataFrame(rows)
+
+        elif chart_type == 'unique':
+            # Sheet 1: Unique plugins by severity per week
+            data = {'Week': week_labels}
+            for sev in severities:
+                counts = []
+                for week in weeks:
+                    week_start = week
+                    week_end = week + pd.Timedelta(days=7)
+                    week_data = rolling_df[(rolling_df['scan_date'] >= week_start) & (rolling_df['scan_date'] < week_end)]
+                    if 'severity_text' in week_data.columns and 'plugin_id' in week_data.columns:
+                        unique_plugins = week_data[week_data['severity_text'] == sev]['plugin_id'].nunique()
+                    else:
+                        unique_plugins = 0
+                    counts.append(unique_plugins)
+                data[sev] = counts
+            df1 = pd.DataFrame(data)
+            df1['Total'] = df1[severities].sum(axis=1)
+            sheets['Unique Plugins by Severity'] = df1
+
+            # Sheet 2: Unique plugins by environment and severity per week
+            if 'environment_type' in rolling_df.columns:
+                environments = rolling_df['environment_type'].dropna().unique().tolist()[:3]
+                rows = []
+                for env in environments:
+                    for sev in severities:
+                        row = {'Environment': env, 'Severity': sev}
+                        for i, week in enumerate(weeks):
+                            week_start = week
+                            week_end = week + pd.Timedelta(days=7)
+                            week_data = rolling_df[(rolling_df['scan_date'] >= week_start) & (rolling_df['scan_date'] < week_end)]
+                            env_data = week_data[week_data['environment_type'] == env]
+                            if 'severity_text' in env_data.columns and 'plugin_id' in env_data.columns:
+                                count = env_data[env_data['severity_text'] == sev]['plugin_id'].nunique()
+                            else:
+                                count = 0
+                            row[week_labels[i]] = count
+                        rows.append(row)
+                sheets['Unique Plugins by Environment'] = pd.DataFrame(rows)
+
+        # Ask user for save location
+        default_name = f"chart_data_{chart_type}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        filepath = filedialog.asksaveasfilename(
+            title=f"Export {chart_type.title()} Chart Data",
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+            initialfile=default_name
+        )
+
+        if not filepath:
+            return
+
+        try:
+            with pd.ExcelWriter(filepath, engine='openpyxl') as writer:
+                for sheet_name, df in sheets.items():
+                    # Truncate sheet name to 31 chars (Excel limit)
+                    safe_name = sheet_name[:31]
+                    df.to_excel(writer, sheet_name=safe_name, index=False)
+
+                    # Auto-size columns
+                    worksheet = writer.sheets[safe_name]
+                    for column in worksheet.columns:
+                        max_length = 0
+                        column_letter = column[0].column_letter
+                        for cell in column:
+                            try:
+                                if len(str(cell.value)) > max_length:
+                                    max_length = len(str(cell.value))
+                            except:
+                                pass
+                        adjusted_width = min(max_length + 2, 50)
+                        worksheet.column_dimensions[column_letter].width = adjusted_width
+
+            self._log(f"Exported chart data to: {filepath}")
+            messagebox.showinfo("Export Complete", f"Chart data exported to:\n{filepath}")
+
+            # Ask if user wants to open the file
+            if messagebox.askyesno("Open File", "Would you like to open the exported file?"):
+                import subprocess
+                import sys
+                if sys.platform == 'win32':
+                    subprocess.Popen(['start', '', filepath], shell=True)
+                elif sys.platform == 'darwin':
+                    subprocess.Popen(['open', filepath])
+                else:
+                    subprocess.Popen(['xdg-open', filepath])
+
+        except Exception as e:
+            messagebox.showerror("Export Error", f"Failed to export chart data: {e}")
 
     # Export methods
     def _export_excel(self):
