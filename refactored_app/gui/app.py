@@ -8751,7 +8751,20 @@ Avg New/Month: {monthly_new.mean():.0f}
 
         if all_findings:
             self.historical_df = pd.concat(all_findings, ignore_index=True)
-            self._log_safe(f"Total findings: {len(self.historical_df)}")
+            new_count = len(self.historical_df)
+            self._log_safe(f"Total findings: {new_count}")
+
+            # Record import statistics for new archive processing
+            source_files = [os.path.basename(p) for p in self.archive_paths]
+            raw = new_count + total_info_excluded
+            info_ex = total_info_excluded
+            added = new_count
+            files = source_files[:]
+            self.window.after(0, lambda r=raw, i=info_ex, a=added, f=files:
+                self._record_import_statistics(
+                    raw_count=r, info_excluded=i, duplicates_skipped=0,
+                    new_added=a, source_files=f
+                ))
 
             # Detect hostname aliases and apply normalization
             self._apply_hostname_normalization()
@@ -8920,21 +8933,25 @@ Avg New/Month: {monthly_new.mean():.0f}
 
                         # Summary breakdown for diagnostics
                         self._log_safe("--- Archive Import Summary ---")
-                        self._log_safe(f"  Raw findings in archive: {new_count}")
+                        self._log_safe(f"  Raw findings in archive: {new_count + total_info_excluded}")
                         if total_info_excluded > 0:
                             self._log_safe(f"  Filtered (Info disabled): {total_info_excluded}")
                         self._log_safe(f"  Duplicates (already in DB): {duplicate_count}")
                         self._log_safe(f"  New unique findings added: {len(unique_new_findings)}")
 
                         # Record import statistics for management visualization
+                        # Use default args to capture values at definition time (closure fix)
                         source_files = [os.path.basename(p) for p in self.archive_paths]
-                        self.window.after(0, lambda: self._record_import_statistics(
-                            raw_count=new_count + total_info_excluded,
-                            info_excluded=total_info_excluded,
-                            duplicates_skipped=duplicate_count,
-                            new_added=len(unique_new_findings),
-                            source_files=source_files
-                        ))
+                        raw = new_count + total_info_excluded
+                        info_ex = total_info_excluded
+                        dups = duplicate_count
+                        added = len(unique_new_findings)
+                        files = source_files[:]
+                        self.window.after(0, lambda r=raw, i=info_ex, d=dups, a=added, f=files:
+                            self._record_import_statistics(
+                                raw_count=r, info_excluded=i, duplicates_skipped=d,
+                                new_added=a, source_files=f
+                            ))
                     else:
                         self._log_safe("No new unique findings to append")
                         self._log_safe(f"All {new_count} findings were duplicates of existing data")
@@ -8942,23 +8959,49 @@ Avg New/Month: {monthly_new.mean():.0f}
 
                         # Record import statistics even when all duplicates
                         source_files = [os.path.basename(p) for p in self.archive_paths]
-                        self.window.after(0, lambda: self._record_import_statistics(
-                            raw_count=new_count + total_info_excluded,
-                            info_excluded=total_info_excluded,
-                            duplicates_skipped=duplicate_count,
-                            new_added=0,
-                            source_files=source_files
-                        ))
+                        raw = new_count + total_info_excluded
+                        info_ex = total_info_excluded
+                        dups = duplicate_count
+                        files = source_files[:]
+                        self.window.after(0, lambda r=raw, i=info_ex, d=dups, f=files:
+                            self._record_import_statistics(
+                                raw_count=r, info_excluded=i, duplicates_skipped=d,
+                                new_added=0, source_files=f
+                            ))
                 else:
                     # No key columns available, just append all
                     self.historical_df = pd.concat([self.historical_df, new_findings_df], ignore_index=True)
                     self._log_safe(f"Appended {new_count} findings (no dedup possible)")
                     self._pending_new_findings_count = new_count
+
+                    # Record import statistics
+                    source_files = [os.path.basename(p) for p in self.archive_paths]
+                    raw = new_count + total_info_excluded
+                    info_ex = total_info_excluded
+                    added = new_count
+                    files = source_files[:]
+                    self.window.after(0, lambda r=raw, i=info_ex, a=added, f=files:
+                        self._record_import_statistics(
+                            raw_count=r, info_excluded=i, duplicates_skipped=0,
+                            new_added=a, source_files=f
+                        ))
             else:
                 # No existing data, just set
                 self.historical_df = new_findings_df
                 self._log_safe(f"Set {new_count} findings as initial data")
                 self._pending_new_findings_count = new_count
+
+                # Record import statistics for initial load
+                source_files = [os.path.basename(p) for p in self.archive_paths]
+                raw = new_count + total_info_excluded
+                info_ex = total_info_excluded
+                added = new_count
+                files = source_files[:]
+                self.window.after(0, lambda r=raw, i=info_ex, a=added, f=files:
+                    self._record_import_statistics(
+                        raw_count=r, info_excluded=i, duplicates_skipped=0,
+                        new_added=a, source_files=f
+                    ))
         else:
             self._pending_new_findings_count = 0
 
