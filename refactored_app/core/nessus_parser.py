@@ -97,28 +97,101 @@ def extract_host_scan_time(host_element: ET.Element) -> Tuple[Optional[datetime]
     return None, None, None
 
 
-def extract_hostname_from_plugins(host_element: ET.Element) -> Optional[str]:
+def extract_hostname_from_plugins(host_element: ET.Element) -> Tuple[Optional[str], Optional[str]]:
     """
-    Extract hostname from host properties.
+    Extract hostname from Nessus plugins and host properties.
+
+    Priority order:
+    1. Plugin 12053 (Host FQDN via DNS) - most reliable
+    2. Plugin 55472 (Hostname command output)
+    3. Plugin 10150 (NetBIOS/SMB Information)
+    4. Plugin 45590 (Common Platform Enumeration)
+    5. HostProperties tags (host-fqdn, hostname, netbios-name)
 
     Args:
         host_element: XML ReportHost element
 
     Returns:
-        Extracted hostname or None
+        Tuple of (resolved_hostname, raw_hostname from HostProperties)
     """
-    # Try HostProperties first
+    resolved_hostname = None
+    raw_hostname = None
+
+    # First, get raw hostname from HostProperties for reference
     props = host_element.find('HostProperties')
     if props is not None:
         for tag in props.findall('tag'):
             name = tag.get('name', '')
-            if name in ('hostname', 'host-fqdn', 'netbios-name'):
-                if tag.text:
-                    return tag.text.split('.')[0]  # Return short hostname
-    return None
+            if name == 'host-fqdn' and tag.text:
+                raw_hostname = tag.text.split('.')[0]
+                break
+            elif name == 'hostname' and tag.text and not raw_hostname:
+                raw_hostname = tag.text.split('.')[0]
+            elif name == 'netbios-name' and tag.text and not raw_hostname:
+                raw_hostname = tag.text
+
+    # Priority 1: Plugin 12053 (Host FQDN via DNS Resolution)
+    for item in host_element.findall(".//ReportItem[@pluginID='12053']"):
+        plugin_output = item.find("plugin_output")
+        if plugin_output is not None and plugin_output.text:
+            # Pattern: "192.168.1.1 resolves as server.domain.com."
+            match = re.search(r"resolves as ([\w.-]+)", plugin_output.text)
+            if match:
+                fqdn = match.group(1).rstrip('.')  # Remove trailing dot if present
+                resolved_hostname = fqdn.split('.')[0]
+                return resolved_hostname, raw_hostname
+
+    # Priority 2: Plugin 55472 (Hostname command)
+    for item in host_element.findall(".//ReportItem[@pluginID='55472']"):
+        plugin_output = item.find("plugin_output")
+        if plugin_output is not None and plugin_output.text:
+            lines = plugin_output.text.strip().split("\n")
+            for line in lines:
+                if "hostname" in line.lower():
+                    # Extract hostname - typically first word or after colon
+                    parts = line.split(":")
+                    if len(parts) > 1:
+                        resolved_hostname = parts[1].strip().split('.')[0].split()[0]
+                    else:
+                        resolved_hostname = line.split()[0].split('.')[0]
+                    if resolved_hostname:
+                        return resolved_hostname, raw_hostname
+
+    # Priority 3: Plugin 10150 (NetBIOS/SMB Information)
+    for item in host_element.findall(".//ReportItem[@pluginID='10150']"):
+        plugin_output = item.find("plugin_output")
+        if plugin_output is not None and plugin_output.text:
+            lines = plugin_output.text.strip().split("\n")
+            for line in lines:
+                if "computer name" in line.lower():
+                    parts = line.split(":", 1)
+                    if len(parts) > 1:
+                        resolved_hostname = parts[1].strip().split()[0]
+                        if resolved_hostname:
+                            return resolved_hostname, raw_hostname
+
+    # Priority 4: Plugin 45590 (Common Platform Enumeration)
+    for item in host_element.findall(".//ReportItem[@pluginID='45590']"):
+        plugin_output = item.find("plugin_output")
+        if plugin_output is not None and plugin_output.text:
+            lines = plugin_output.text.strip().split("\n")
+            for line in lines:
+                if "hostname" in line.lower() and ":" in line:
+                    parts = line.split(":", 1)
+                    if len(parts) > 1:
+                        hostname_part = parts[1].strip()
+                        if hostname_part:
+                            resolved_hostname = hostname_part.split('.')[0]
+                            return resolved_hostname, raw_hostname
+
+    # Priority 5: Fall back to HostProperties raw hostname
+    if raw_hostname:
+        resolved_hostname = raw_hostname
+
+    return resolved_hostname, raw_hostname
 
 
-def resolve_hostname(host_name: str, host_element: ET.Element = None) -> str:
+def resolve_hostname(host_name: str, host_element: ET.Element = None) -> Tuple[str, Optional[str]]:
     """
     Resolve hostname from IP or host element.
 
@@ -127,18 +200,22 @@ def resolve_hostname(host_name: str, host_element: ET.Element = None) -> str:
         host_element: Optional XML element for additional resolution
 
     Returns:
-        Resolved hostname
+        Tuple of (resolved_hostname, raw_hostname)
     """
+    resolved = None
+    raw = None
+
     if host_element:
-        extracted = extract_hostname_from_plugins(host_element)
-        if extracted:
-            return extracted
+        resolved, raw = extract_hostname_from_plugins(host_element)
+        if resolved:
+            return resolved, raw
 
-    # If it's not an IP, return short hostname
+    # If it's not an IP, extract short hostname
     if '.' in host_name and not host_name[0].isdigit():
-        return host_name.split('.')[0]
+        resolved = host_name.split('.')[0]
+        return resolved, raw
 
-    return host_name
+    return host_name, raw
 
 
 def parse_credentialed_scan_info(plugin_output: str) -> Dict[str, str]:
@@ -198,19 +275,20 @@ def parse_credentialed_scan_info(plugin_output: str) -> Dict[str, str]:
 def extract_finding_data(item, host_name: str, hostname: str,
                          scan_date: str = None, scan_time: str = None,
                          plugins_dict: Dict = None, source_file: str = None,
-                         source_line: int = None) -> Dict[str, Any]:
+                         source_line: int = None, hostname_raw: str = None) -> Dict[str, Any]:
     """
     Extract finding data from a single ReportItem element.
 
     Args:
         item: XML ReportItem element (ElementTree or lxml element)
         host_name: IP address of the host
-        hostname: Resolved hostname
+        hostname: Resolved hostname (from plugin 12053 preferred)
         scan_date: Scan date string (YYYY-MM-DD) from HOST_START
         scan_time: Scan time string (HH:MM:SS) from HOST_START
         plugins_dict: Optional plugins database for enrichment
         source_file: Source .nessus filename for auditability
         source_line: Line number where this ReportItem starts in the source file
+        hostname_raw: Raw hostname from HostProperties (before plugin resolution)
 
     Returns:
         Dictionary containing finding information
@@ -224,7 +302,7 @@ def extract_finding_data(item, host_name: str, hostname: str,
 
     finding = {
         'plugin_id': plugin_id,
-        'gmp_uid': f"{plugin_id}.{hostname}",
+        'gpm_uid': f"{plugin_id}.{hostname}",
         'name': plugin_name,
         'family': '',
         'severity': severity,
@@ -258,6 +336,7 @@ def extract_finding_data(item, host_name: str, hostname: str,
         'exploit_frameworks': '',
         'iavx': '',
         'hostname': hostname,
+        'hostname_raw': hostname_raw or hostname,  # Store raw hostname from HostProperties
         'svc_name': svc_name,
         'scan_date': scan_date,
         'scan_time': scan_time,
@@ -443,9 +522,10 @@ def parse_nessus_file(nessus_file: str, plugins_dict: Dict = None,
             host_name = host.attrib.get('name', 'Unknown')
 
             try:
-                hostname = extract_hostname_from_plugins(host)
+                # Extract hostname with plugin 12053 priority
+                hostname, hostname_raw = extract_hostname_from_plugins(host)
                 if not hostname:
-                    hostname = resolve_hostname(host_name, host)
+                    hostname, hostname_raw = resolve_hostname(host_name, host)
 
                 # Extract scan date and time from HOST_START tag
                 scan_datetime, scan_date, scan_time = extract_host_scan_time(host)
@@ -483,7 +563,8 @@ def parse_nessus_file(nessus_file: str, plugins_dict: Dict = None,
                                                        scan_date=scan_date, scan_time=scan_time,
                                                        plugins_dict=plugins_dict,
                                                        source_file=original_filename,
-                                                       source_line=source_line)
+                                                       source_line=source_line,
+                                                       hostname_raw=hostname_raw)
                         all_findings.append(finding)
                         host_findings_count += 1
                         import_report['findings_processed'] += 1
