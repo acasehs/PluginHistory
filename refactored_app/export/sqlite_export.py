@@ -75,6 +75,85 @@ def migrate_database_schema(conn: sqlite3.Connection) -> List[str]:
     return migrations
 
 
+def archive_finding_source_history(conn: sqlite3.Connection,
+                                   new_historical_df: pd.DataFrame) -> int:
+    """
+    Archive previous source file/line information before updating findings.
+
+    When findings are re-observed in new scans with different source locations,
+    this saves the previous source file and line number to finding_source_history.
+
+    Args:
+        conn: Database connection
+        new_historical_df: DataFrame with new findings to be imported
+
+    Returns:
+        Number of source history records created
+    """
+    cursor = conn.cursor()
+    archived_count = 0
+
+    # Check if historical_findings table exists and has data
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='historical_findings'")
+    if not cursor.fetchone():
+        return 0
+
+    # Get existing findings with their source info
+    try:
+        cursor.execute("""
+            SELECT id, plugin_id, hostname, port, scan_date, source_file, source_line
+            FROM historical_findings
+            WHERE source_file IS NOT NULL AND source_file != ''
+        """)
+        existing_findings = cursor.fetchall()
+    except sqlite3.OperationalError:
+        # Table might not have source_line column yet
+        return 0
+
+    if not existing_findings:
+        return 0
+
+    # Build lookup for new findings
+    new_findings_lookup = {}
+    if not new_historical_df.empty:
+        for _, row in new_historical_df.iterrows():
+            key = (str(row.get('plugin_id', '')),
+                   str(row.get('hostname', '')).lower(),
+                   str(row.get('port', '')),
+                   str(row.get('scan_date', '')))
+            new_findings_lookup[key] = {
+                'source_file': row.get('source_file', ''),
+                'source_line': row.get('source_line')
+            }
+
+    # For each existing finding, check if it appears in new data with different source
+    from datetime import datetime
+    observed_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    for finding_id, plugin_id, hostname, port, scan_date, old_source_file, old_source_line in existing_findings:
+        key = (str(plugin_id), str(hostname).lower(), str(port), str(scan_date))
+
+        if key in new_findings_lookup:
+            new_source = new_findings_lookup[key]
+            # Check if source location changed
+            if (new_source['source_file'] != old_source_file or
+                new_source['source_line'] != old_source_line):
+                # Archive the old source location
+                cursor.execute("""
+                    INSERT INTO finding_source_history
+                    (finding_id, plugin_id, hostname, port, scan_date, source_file, source_line, observed_date)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (finding_id, plugin_id, hostname, port, scan_date,
+                      old_source_file, old_source_line, observed_date))
+                archived_count += 1
+
+    if archived_count > 0:
+        conn.commit()
+        print(f"Archived {archived_count} source history records")
+
+    return archived_count
+
+
 def export_to_sqlite(historical_df: pd.DataFrame,
                     lifecycle_df: pd.DataFrame,
                     host_presence_df: pd.DataFrame,
@@ -106,6 +185,9 @@ def export_to_sqlite(historical_df: pd.DataFrame,
     try:
         # Use create_sqlite_database to ensure all tables exist
         conn = create_sqlite_database(filepath)
+
+        # Archive source history before replacing findings
+        archive_finding_source_history(conn, historical_df)
 
         # Convert datetime columns and list columns to string for SQLite compatibility
         def prepare_df(df):
@@ -274,6 +356,7 @@ def create_sqlite_database(filepath: str) -> sqlite3.Connection:
             scan_date TEXT,
             scan_file TEXT,
             source_file TEXT,
+            source_line INTEGER,
             name TEXT,
             family TEXT,
             severity_text TEXT,
@@ -446,6 +529,29 @@ def create_sqlite_database(filepath: str) -> sqlite3.Connection:
             last_seen TEXT,
             UNIQUE(canonical_hostname, alias_hostname)
         )
+    ''')
+
+    # Finding source history - track where findings appeared in source files over time
+    # Links to historical_findings.id via finding_id
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS finding_source_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            finding_id INTEGER,
+            plugin_id TEXT NOT NULL,
+            hostname TEXT NOT NULL,
+            port TEXT,
+            scan_date TEXT NOT NULL,
+            source_file TEXT NOT NULL,
+            source_line INTEGER,
+            observed_date TEXT,
+            FOREIGN KEY (finding_id) REFERENCES historical_findings(id)
+        )
+    ''')
+
+    # Create index for efficient lookups
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_finding_source_history_lookup
+        ON finding_source_history(plugin_id, hostname, port)
     ''')
 
     conn.commit()

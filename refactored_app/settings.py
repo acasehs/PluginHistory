@@ -117,6 +117,7 @@ class UserSettings:
     # Chart settings
     show_data_labels: bool = False
     chart_animation: bool = True
+    label_font_size: int = 8  # Font size for data labels in charts (4-16)
 
     # Recent files (persisted)
     recent_plugins_db: str = ''

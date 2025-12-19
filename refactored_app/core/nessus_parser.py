@@ -8,9 +8,17 @@ import re
 import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple, Any
-import xml.etree.ElementTree as ET
 import pandas as pd
 import random
+
+# Try to use lxml for line number tracking, fall back to ElementTree
+try:
+    from lxml import etree as lxml_etree
+    HAS_LXML = True
+except ImportError:
+    HAS_LXML = False
+
+import xml.etree.ElementTree as ET
 
 
 def sanitize_hostname_for_excel(hostname: str) -> str:
@@ -187,20 +195,22 @@ def parse_credentialed_scan_info(plugin_output: str) -> Dict[str, str]:
     return result
 
 
-def extract_finding_data(item: ET.Element, host_name: str, hostname: str,
+def extract_finding_data(item, host_name: str, hostname: str,
                          scan_date: str = None, scan_time: str = None,
-                         plugins_dict: Dict = None, source_file: str = None) -> Dict[str, Any]:
+                         plugins_dict: Dict = None, source_file: str = None,
+                         source_line: int = None) -> Dict[str, Any]:
     """
     Extract finding data from a single ReportItem element.
 
     Args:
-        item: XML ReportItem element
+        item: XML ReportItem element (ElementTree or lxml element)
         host_name: IP address of the host
         hostname: Resolved hostname
         scan_date: Scan date string (YYYY-MM-DD) from HOST_START
         scan_time: Scan time string (HH:MM:SS) from HOST_START
         plugins_dict: Optional plugins database for enrichment
         source_file: Source .nessus filename for auditability
+        source_line: Line number where this ReportItem starts in the source file
 
     Returns:
         Dictionary containing finding information
@@ -251,7 +261,8 @@ def extract_finding_data(item: ET.Element, host_name: str, hostname: str,
         'svc_name': svc_name,
         'scan_date': scan_date,
         'scan_time': scan_time,
-        'source_file': source_file or ''
+        'source_file': source_file or '',
+        'source_line': source_line
     }
 
     # Extract plugin output
@@ -400,10 +411,23 @@ def parse_nessus_file(nessus_file: str, plugins_dict: Dict = None,
         print(f"Parsing {os.path.basename(nessus_file)}...")
         start_time = time.time()
 
-        tree = ET.parse(nessus_file)
-        root = tree.getroot()
-
         original_filename = os.path.basename(nessus_file)
+
+        # Use lxml if available for line number tracking, otherwise fall back to ElementTree
+        use_lxml = HAS_LXML
+        if use_lxml:
+            try:
+                parser = lxml_etree.XMLParser(remove_blank_text=False)
+                tree = lxml_etree.parse(nessus_file, parser)
+                root = tree.getroot()
+            except Exception as e:
+                print(f"lxml parsing failed, falling back to ElementTree: {e}")
+                use_lxml = False
+
+        if not use_lxml:
+            tree = ET.parse(nessus_file)
+            root = tree.getroot()
+
         report_name = original_filename
         report_element = root.find(".//Report")
         if report_element is not None and 'name' in report_element.attrib:
@@ -450,10 +474,16 @@ def parse_nessus_file(nessus_file: str, plugins_dict: Dict = None,
                             cred_info = parse_credentialed_scan_info(plugin_output.text)
 
                     try:
+                        # Get source line from lxml if available
+                        source_line = None
+                        if use_lxml and hasattr(item, 'sourceline'):
+                            source_line = item.sourceline
+
                         finding = extract_finding_data(item, host_name, hostname,
                                                        scan_date=scan_date, scan_time=scan_time,
                                                        plugins_dict=plugins_dict,
-                                                       source_file=original_filename)
+                                                       source_file=original_filename,
+                                                       source_line=source_line)
                         all_findings.append(finding)
                         host_findings_count += 1
                         import_report['findings_processed'] += 1
