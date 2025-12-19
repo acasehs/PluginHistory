@@ -115,7 +115,7 @@ def extract_finding_data(item: ET.Element, host_name: str, hostname: str, plugin
     # Initialize finding data
     finding = {
         'plugin_id': plugin_id,
-        'gmp_uid': f"{plugin_id}.{hostname}",
+        'gpm_uid': f"{plugin_id}.{hostname}",
         'name': plugin_name,
         'family': '',
         'severity': severity,

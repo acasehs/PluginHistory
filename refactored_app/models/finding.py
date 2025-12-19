@@ -69,8 +69,8 @@ class Finding:
         return f"{self.hostname}|{self.plugin_id}"
 
     @property
-    def gmp_uid(self) -> str:
-        """Generate GMP-style unique identifier."""
+    def gpm_uid(self) -> str:
+        """Generate GPM-style unique identifier."""
         return f"{self.plugin_id}.{self.hostname}"
 
     def to_dict(self) -> Dict[str, Any]:

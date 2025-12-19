@@ -32,6 +32,7 @@ def migrate_database_schema(conn: sqlite3.Connection) -> List[str]:
             ('protocol', 'TEXT'),
             ('port_full', 'TEXT'),
             ('canonical_hostname', 'TEXT'),
+            ('hostname_raw', 'TEXT'),  # Raw hostname from HostProperties before plugin resolution
         ],
         'finding_lifecycle': [
             ('source_files', 'TEXT'),
@@ -39,6 +40,7 @@ def migrate_database_schema(conn: sqlite3.Connection) -> List[str]:
             ('protocol', 'TEXT'),
             ('port_full', 'TEXT'),
             ('canonical_hostname', 'TEXT'),
+            ('hostname_raw', 'TEXT'),  # Raw hostname from HostProperties before plugin resolution
         ],
         'info_findings': [
             ('source_file', 'TEXT'),
@@ -46,6 +48,7 @@ def migrate_database_schema(conn: sqlite3.Connection) -> List[str]:
             ('protocol', 'TEXT'),
             ('port_full', 'TEXT'),
             ('canonical_hostname', 'TEXT'),
+            ('hostname_raw', 'TEXT'),  # Raw hostname from HostProperties before plugin resolution
         ],
     }
 
@@ -348,6 +351,7 @@ def create_sqlite_database(filepath: str) -> sqlite3.Connection:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             plugin_id TEXT,
             hostname TEXT,
+            hostname_raw TEXT,
             canonical_hostname TEXT,
             ip_address TEXT,
             port TEXT,
@@ -375,6 +379,7 @@ def create_sqlite_database(filepath: str) -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS finding_lifecycle (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             hostname TEXT,
+            hostname_raw TEXT,
             canonical_hostname TEXT,
             ip_address TEXT,
             port TEXT,
