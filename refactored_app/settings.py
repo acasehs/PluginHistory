@@ -49,6 +49,120 @@ class AISettings:
 
 
 @dataclass
+class ExecutiveRiskSettings:
+    """Executive risk quantification settings for C-suite reporting."""
+
+    # === BASIC FINANCIAL PARAMETERS ===
+    # These are required for financial impact estimates
+    hourly_downtime_cost: float = 10000.0  # Cost per hour of system downtime
+    cost_per_record: float = 165.0  # Cost per compromised record (IBM 2024: $165 avg)
+    estimated_records_at_risk: int = 10000  # Estimated sensitive records in environment
+
+    # Industry vertical affects breach cost multipliers
+    # Options: healthcare, financial, technology, retail, government, manufacturing, other
+    industry_vertical: str = "technology"
+
+    # Industry-specific breach cost multipliers (IBM Cost of Data Breach 2024)
+    # These are automatically applied based on industry_vertical
+    INDUSTRY_MULTIPLIERS: Dict[str, float] = field(default_factory=lambda: {
+        'healthcare': 1.95,      # $9.77M avg - highest
+        'financial': 1.18,       # $5.90M avg
+        'technology': 1.00,      # $5.00M avg (baseline)
+        'energy': 0.98,          # $4.90M avg
+        'industrial': 0.94,      # $4.70M avg
+        'retail': 0.74,          # $3.70M avg
+        'government': 0.70,      # $3.50M avg
+        'manufacturing': 0.66,   # $3.30M avg
+        'other': 0.80            # Conservative default
+    })
+
+    # === COMPLIANCE & REGULATORY ===
+    # Regulatory frameworks that apply (affects penalty calculations)
+    compliance_frameworks: List[str] = field(default_factory=lambda: [])
+    # Options: HIPAA, PCI-DSS, SOX, GDPR, CCPA, FedRAMP, FISMA, CMMC
+
+    # Maximum regulatory penalty exposure (organization-specific)
+    max_regulatory_penalty: float = 0.0  # 0 = not configured
+
+    # === ASSET CRITICALITY (Optional - enables enhanced risk scoring) ===
+    # Map environment types to criticality multipliers
+    environment_criticality: Dict[str, float] = field(default_factory=lambda: {
+        'Production': 1.0,       # Full weight
+        'PSS': 0.5,              # Pre-production - half weight
+        'Shared': 0.75,          # Shared infrastructure - 75%
+        'Unknown': 0.25          # Unknown environments - minimal weight
+    })
+
+    # Asset value tiers (map hostnames/patterns to value tiers)
+    # Tier 1 = Critical (databases, auth servers), Tier 2 = Important, Tier 3 = Standard
+    asset_tier_values: Dict[str, float] = field(default_factory=lambda: {
+        'tier1': 100000.0,  # Critical assets
+        'tier2': 25000.0,   # Important assets
+        'tier3': 5000.0     # Standard assets
+    })
+
+    # Hostname patterns for asset tiers (regex)
+    asset_tier_patterns: Dict[str, List[str]] = field(default_factory=lambda: {
+        'tier1': [r'.*db.*', r'.*sql.*', r'.*auth.*', r'.*ldap.*', r'.*ad-.*'],
+        'tier2': [r'.*app.*', r'.*web.*', r'.*api.*'],
+        'tier3': []  # Default tier for unmatched
+    })
+
+    # === FAIR MODEL PARAMETERS (Optional - enables full FAIR analysis) ===
+    # Loss Event Frequency (LEF) components
+    threat_event_frequency: float = 0.0  # Annual threat events (0 = not configured)
+    vulnerability_percentage: float = 0.0  # % of threats that succeed (0-100, 0 = not configured)
+
+    # Loss Magnitude (LM) components
+    primary_loss_min: float = 0.0  # Minimum direct loss
+    primary_loss_max: float = 0.0  # Maximum direct loss
+    primary_loss_likely: float = 0.0  # Most likely direct loss
+
+    secondary_loss_min: float = 0.0  # Minimum indirect loss (reputation, legal)
+    secondary_loss_max: float = 0.0  # Maximum indirect loss
+    secondary_loss_likely: float = 0.0  # Most likely indirect loss
+
+    # Control effectiveness (0-100, higher = more effective)
+    control_effectiveness: float = 0.0  # 0 = not configured
+
+    # === DISPLAY PREFERENCES ===
+    show_fair_model: bool = True  # Show FAIR analysis when data available
+    risk_tolerance_threshold: float = 100000.0  # Highlight risks above this value
+    currency_symbol: str = "$"
+
+    def is_fair_configured(self) -> bool:
+        """Check if FAIR model has sufficient data for analysis."""
+        return (
+            self.threat_event_frequency > 0 and
+            self.vulnerability_percentage > 0 and
+            self.primary_loss_likely > 0
+        )
+
+    def is_basic_configured(self) -> bool:
+        """Check if basic financial parameters are configured."""
+        return self.hourly_downtime_cost > 0 or self.estimated_records_at_risk > 0
+
+    def get_industry_multiplier(self) -> float:
+        """Get breach cost multiplier for configured industry."""
+        return self.INDUSTRY_MULTIPLIERS.get(self.industry_vertical, 0.80)
+
+    def get_asset_tier(self, hostname: str) -> str:
+        """Determine asset tier based on hostname patterns."""
+        import re
+        hostname_lower = hostname.lower()
+        for tier, patterns in self.asset_tier_patterns.items():
+            for pattern in patterns:
+                if re.search(pattern, hostname_lower):
+                    return tier
+        return 'tier3'  # Default
+
+    def get_asset_value(self, hostname: str) -> float:
+        """Get estimated asset value based on tier."""
+        tier = self.get_asset_tier(hostname)
+        return self.asset_tier_values.get(tier, self.asset_tier_values['tier3'])
+
+
+@dataclass
 class ThreatIntelSettings:
     """Threat intelligence feed configuration."""
 
@@ -194,6 +308,7 @@ class SettingsManager:
     DEFAULT_PATH = os.path.join(os.path.expanduser('~'), '.nessus_tracker', 'settings.json')
     AI_SETTINGS_PATH = os.path.join(os.path.expanduser('~'), '.nessus_tracker', 'ai_settings.json')
     THREAT_INTEL_PATH = os.path.join(os.path.expanduser('~'), '.nessus_tracker', 'threat_intel.json')
+    EXEC_RISK_PATH = os.path.join(os.path.expanduser('~'), '.nessus_tracker', 'executive_risk.json')
 
     def __init__(self, settings_path: str = None):
         """Initialize settings manager."""
@@ -201,6 +316,7 @@ class SettingsManager:
         self.settings = UserSettings()
         self.ai_settings = AISettings()
         self.threat_intel_settings = ThreatIntelSettings()
+        self.executive_risk_settings = ExecutiveRiskSettings()
 
         # Ensure directory exists
         os.makedirs(os.path.dirname(self.settings_path), exist_ok=True)
@@ -242,6 +358,16 @@ class SettingsManager:
             print(f"Error loading threat intel settings: {e}")
             success = False
 
+        # Load executive risk settings
+        try:
+            if os.path.exists(self.EXEC_RISK_PATH):
+                with open(self.EXEC_RISK_PATH, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                self.executive_risk_settings = self._exec_risk_from_dict(data)
+        except Exception as e:
+            print(f"Error loading executive risk settings: {e}")
+            success = False
+
         return success
 
     def _ai_settings_from_dict(self, data: Dict[str, Any]) -> AISettings:
@@ -255,6 +381,12 @@ class SettingsManager:
         known_fields = {f.name for f in ThreatIntelSettings.__dataclass_fields__.values()}
         filtered = {k: v for k, v in data.items() if k in known_fields}
         return ThreatIntelSettings(**filtered)
+
+    def _exec_risk_from_dict(self, data: Dict[str, Any]) -> ExecutiveRiskSettings:
+        """Create ExecutiveRiskSettings from dictionary."""
+        known_fields = {f.name for f in ExecutiveRiskSettings.__dataclass_fields__.values()}
+        filtered = {k: v for k, v in data.items() if k in known_fields}
+        return ExecutiveRiskSettings(**filtered)
 
     def save(self) -> bool:
         """Save all settings to files."""
@@ -284,6 +416,14 @@ class SettingsManager:
             print(f"Error saving threat intel settings: {e}")
             success = False
 
+        # Save executive risk settings
+        try:
+            with open(self.EXEC_RISK_PATH, 'w', encoding='utf-8') as f:
+                json.dump(asdict(self.executive_risk_settings), f, indent=2)
+        except Exception as e:
+            print(f"Error saving executive risk settings: {e}")
+            success = False
+
         return success
 
     def save_ai_settings(self) -> bool:
@@ -306,11 +446,22 @@ class SettingsManager:
             print(f"Error saving threat intel settings: {e}")
             return False
 
+    def save_executive_risk_settings(self) -> bool:
+        """Save only executive risk settings."""
+        try:
+            with open(self.EXEC_RISK_PATH, 'w', encoding='utf-8') as f:
+                json.dump(asdict(self.executive_risk_settings), f, indent=2)
+            return True
+        except Exception as e:
+            print(f"Error saving executive risk settings: {e}")
+            return False
+
     def reset_to_defaults(self):
         """Reset all settings to defaults."""
         self.settings = UserSettings()
         self.ai_settings = AISettings()
         self.threat_intel_settings = ThreatIntelSettings()
+        self.executive_risk_settings = ExecutiveRiskSettings()
         self.save()
 
     def reset_ai_settings(self):

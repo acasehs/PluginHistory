@@ -45,6 +45,9 @@ from ..analysis.advanced_metrics import (
     calculate_remediation_rate, calculate_sla_breach_tracking, calculate_normalized_metrics,
     calculate_risk_reduction_trend
 )
+from ..analysis.executive_risk import (
+    ExecutiveRiskEngine, RiskMetrics, format_currency, get_risk_color
+)
 from ..filters.filter_engine import FilterEngine, apply_filters
 from ..filters.hostname_parser import (
     parse_hostname, HostType, normalize_hostname_for_matching,
@@ -314,6 +317,7 @@ class NessusHistoryTrackerApp:
         self._build_stig_tab()  # STIG checklist findings
         self._build_poam_tab()  # POA&M tracking
         self._build_reporting_tab()  # Weekly resolution reports
+        self._build_executive_risk_tab()  # Executive risk dashboard
         self._build_database_browser_tab()  # Database management
         self._build_logging_tab()  # Moved to last
 
@@ -1737,6 +1741,707 @@ class NessusHistoryTrackerApp:
         status_frame.pack(fill=tk.X, padx=10, pady=2)
         self.report_status_label = ttk.Label(status_frame, text="Ready", foreground='gray')
         self.report_status_label.pack(side=tk.LEFT)
+
+    def _build_executive_risk_tab(self):
+        """Build the Executive Risk Dashboard tab for C-suite reporting."""
+        exec_frame = ttk.Frame(self.notebook)
+        self.notebook.add(exec_frame, text="Executive Risk")
+        self.exec_risk_frame = exec_frame
+
+        # Initialize risk engine
+        self.risk_engine = ExecutiveRiskEngine(
+            self.settings_manager.executive_risk_settings if hasattr(self, 'settings_manager') else None
+        )
+        self.exec_risk_metrics = None
+
+        # Header with controls
+        header_frame = ttk.Frame(exec_frame)
+        header_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        ttk.Label(header_frame, text="Executive Risk Dashboard",
+                 font=('Arial', 12, 'bold')).pack(side=tk.LEFT)
+
+        # Control buttons
+        ttk.Button(header_frame, text="Calculate Risk",
+                  command=self._calculate_executive_risk).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(header_frame, text="Configure",
+                  command=self._show_risk_config_dialog).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(header_frame, text="Export PDF",
+                  command=self._export_executive_risk_pdf).pack(side=tk.RIGHT, padx=5)
+
+        # Main content area with scrollable frame
+        canvas = tk.Canvas(exec_frame, bg='#2b2b2b', highlightthickness=0)
+        scrollbar = ttk.Scrollbar(exec_frame, orient=tk.VERTICAL, command=canvas.yview)
+        self.exec_risk_content = ttk.Frame(canvas)
+
+        self.exec_risk_content.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=self.exec_risk_content, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=5)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Bind mousewheel
+        canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
+
+        # Build initial empty state
+        self._render_executive_risk_empty()
+
+    def _render_executive_risk_empty(self):
+        """Render empty state for executive risk dashboard."""
+        for widget in self.exec_risk_content.winfo_children():
+            widget.destroy()
+
+        empty_frame = ttk.Frame(self.exec_risk_content)
+        empty_frame.pack(fill=tk.BOTH, expand=True, pady=50)
+
+        ttk.Label(empty_frame, text="Executive Risk Dashboard",
+                 font=('Arial', 14, 'bold')).pack(pady=10)
+        ttk.Label(empty_frame, text="Load vulnerability data and click 'Calculate Risk' to generate metrics.",
+                 font=('Arial', 10)).pack(pady=5)
+
+        # Show configuration status
+        config_status = ttk.Frame(empty_frame)
+        config_status.pack(pady=20)
+
+        if hasattr(self, 'settings_manager'):
+            risk_settings = self.settings_manager.executive_risk_settings
+            if risk_settings.is_basic_configured():
+                ttk.Label(config_status, text="✓ Financial parameters configured",
+                         foreground='#28a745').pack()
+            else:
+                ttk.Label(config_status, text="⚠ Financial parameters not configured",
+                         foreground='#ffc107').pack()
+
+            if risk_settings.is_fair_configured():
+                ttk.Label(config_status, text="✓ FAIR model parameters configured",
+                         foreground='#28a745').pack()
+            else:
+                ttk.Label(config_status, text="○ FAIR model parameters not configured (optional)",
+                         foreground='#6c757d').pack()
+
+        ttk.Button(config_status, text="Configure Risk Settings",
+                  command=self._show_risk_config_dialog).pack(pady=10)
+
+    def _calculate_executive_risk(self):
+        """Calculate executive risk metrics from current data."""
+        if self.lifecycle_df.empty:
+            messagebox.showwarning("No Data", "Please load vulnerability data first.")
+            return
+
+        try:
+            # Update risk engine with current settings
+            if hasattr(self, 'settings_manager'):
+                self.risk_engine.settings = self.settings_manager.executive_risk_settings
+
+            # Calculate metrics
+            self.exec_risk_metrics = self.risk_engine.calculate_risk_metrics(
+                self.lifecycle_df,
+                self.historical_df if hasattr(self, 'historical_df') else None
+            )
+
+            # Render the dashboard
+            self._render_executive_risk_dashboard()
+
+            self._log("Executive risk metrics calculated successfully")
+        except Exception as e:
+            self._log(f"Error calculating risk metrics: {e}")
+            messagebox.showerror("Error", f"Failed to calculate risk: {e}")
+
+    def _render_executive_risk_dashboard(self):
+        """Render the executive risk dashboard with calculated metrics."""
+        if not self.exec_risk_metrics:
+            return
+
+        metrics = self.exec_risk_metrics
+
+        # Clear existing content
+        for widget in self.exec_risk_content.winfo_children():
+            widget.destroy()
+
+        # === SECTION 1: Risk Posture Overview ===
+        overview_frame = ttk.LabelFrame(self.exec_risk_content, text="Risk Posture Overview", padding=10)
+        overview_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        # Risk score display - large and prominent
+        score_frame = ttk.Frame(overview_frame)
+        score_frame.pack(fill=tk.X, pady=10)
+
+        # Left: Risk score
+        score_left = ttk.Frame(score_frame)
+        score_left.pack(side=tk.LEFT, padx=20)
+
+        risk_color = get_risk_color(metrics.risk_rating)
+        score_label = tk.Label(score_left, text=f"{metrics.risk_score:.0f}",
+                              font=('Arial', 48, 'bold'), fg=risk_color, bg='#2b2b2b')
+        score_label.pack()
+        ttk.Label(score_left, text="Risk Score (0-100)",
+                 font=('Arial', 10)).pack()
+
+        # Middle: Rating and trend
+        rating_frame = ttk.Frame(score_frame)
+        rating_frame.pack(side=tk.LEFT, padx=30)
+
+        rating_label = tk.Label(rating_frame, text=metrics.risk_rating,
+                               font=('Arial', 24, 'bold'), fg=risk_color, bg='#2b2b2b')
+        rating_label.pack()
+
+        trend_text = f"{'↓' if metrics.risk_trend == 'improving' else '↑' if metrics.risk_trend == 'declining' else '→'} {metrics.risk_trend.title()}"
+        trend_color = '#28a745' if metrics.risk_trend == 'improving' else '#dc3545' if metrics.risk_trend == 'declining' else '#6c757d'
+        ttk.Label(rating_frame, text=trend_text, foreground=trend_color,
+                 font=('Arial', 12)).pack()
+
+        # Right: Key counts
+        counts_frame = ttk.Frame(score_frame)
+        counts_frame.pack(side=tk.LEFT, padx=30)
+
+        counts_data = [
+            ("Total Findings", metrics.total_findings, '#ffffff'),
+            ("Critical", metrics.critical_findings, '#dc3545'),
+            ("High", metrics.high_findings, '#fd7e14'),
+            ("Exploitable", metrics.exploitable_findings, '#ff6b6b'),
+            ("KEV (Active Exploit)", metrics.kev_findings, '#dc3545'),
+            ("SLA Breached", metrics.sla_breached_findings, '#ffc107')
+        ]
+
+        for label, value, color in counts_data:
+            row = ttk.Frame(counts_frame)
+            row.pack(fill=tk.X)
+            ttk.Label(row, text=f"{label}:", width=18, anchor=tk.W).pack(side=tk.LEFT)
+            count_label = tk.Label(row, text=str(value), font=('Arial', 10, 'bold'),
+                                  fg=color, bg='#2b2b2b')
+            count_label.pack(side=tk.LEFT)
+
+        # === SECTION 2: Financial Exposure ===
+        if hasattr(self, 'settings_manager') and self.settings_manager.executive_risk_settings.is_basic_configured():
+            finance_frame = ttk.LabelFrame(self.exec_risk_content, text="Financial Exposure Estimates", padding=10)
+            finance_frame.pack(fill=tk.X, padx=5, pady=5)
+
+            finance_grid = ttk.Frame(finance_frame)
+            finance_grid.pack(fill=tk.X, pady=10)
+
+            currency = self.settings_manager.executive_risk_settings.currency_symbol
+
+            # Financial metrics in columns
+            col1 = ttk.Frame(finance_grid)
+            col1.pack(side=tk.LEFT, padx=20, expand=True)
+
+            ttk.Label(col1, text="Estimated Breach Cost",
+                     font=('Arial', 10)).pack()
+            breach_val = tk.Label(col1, text=format_currency(metrics.estimated_breach_cost, currency),
+                                 font=('Arial', 20, 'bold'), fg='#dc3545', bg='#2b2b2b')
+            breach_val.pack()
+
+            col2 = ttk.Frame(finance_grid)
+            col2.pack(side=tk.LEFT, padx=20, expand=True)
+
+            ttk.Label(col2, text="Estimated Downtime Cost",
+                     font=('Arial', 10)).pack()
+            downtime_val = tk.Label(col2, text=format_currency(metrics.estimated_downtime_cost, currency),
+                                   font=('Arial', 20, 'bold'), fg='#fd7e14', bg='#2b2b2b')
+            downtime_val.pack()
+
+            col3 = ttk.Frame(finance_grid)
+            col3.pack(side=tk.LEFT, padx=20, expand=True)
+
+            ttk.Label(col3, text="Regulatory Penalty Exposure",
+                     font=('Arial', 10)).pack()
+            reg_val = tk.Label(col3, text=format_currency(metrics.regulatory_penalty_exposure, currency),
+                              font=('Arial', 20, 'bold'), fg='#ffc107', bg='#2b2b2b')
+            reg_val.pack()
+
+            col4 = ttk.Frame(finance_grid)
+            col4.pack(side=tk.LEFT, padx=20, expand=True)
+
+            ttk.Label(col4, text="TOTAL EXPOSURE",
+                     font=('Arial', 10, 'bold')).pack()
+            total_val = tk.Label(col4, text=format_currency(metrics.total_financial_exposure, currency),
+                                font=('Arial', 24, 'bold'), fg='#ff4444', bg='#2b2b2b')
+            total_val.pack()
+
+            # Methodology note
+            ttk.Label(finance_frame,
+                     text="Note: Estimates based on IBM Cost of Data Breach 2024 benchmarks and configured parameters.",
+                     font=('Arial', 8), foreground='#888888').pack(pady=5)
+
+        # === SECTION 3: FAIR Model (if configured) ===
+        if metrics.fair_available:
+            fair_frame = ttk.LabelFrame(self.exec_risk_content, text="FAIR Risk Analysis", padding=10)
+            fair_frame.pack(fill=tk.X, padx=5, pady=5)
+
+            currency = self.settings_manager.executive_risk_settings.currency_symbol if hasattr(self, 'settings_manager') else "$"
+
+            fair_content = ttk.Frame(fair_frame)
+            fair_content.pack(fill=tk.X, pady=10)
+
+            # ALE display
+            ale_frame = ttk.Frame(fair_content)
+            ale_frame.pack(side=tk.LEFT, padx=30)
+
+            ttk.Label(ale_frame, text="Annualized Loss Expectancy (ALE)",
+                     font=('Arial', 10)).pack()
+            ale_val = tk.Label(ale_frame, text=format_currency(metrics.annualized_loss_expectancy, currency),
+                              font=('Arial', 28, 'bold'), fg='#ff6b6b', bg='#2b2b2b')
+            ale_val.pack()
+
+            # Loss exceedance
+            if metrics.loss_exceedance_curve:
+                lec_frame = ttk.Frame(fair_content)
+                lec_frame.pack(side=tk.LEFT, padx=30)
+
+                ttk.Label(lec_frame, text="Loss Exceedance Probabilities",
+                         font=('Arial', 10, 'bold')).pack()
+                for pct, value in metrics.loss_exceedance_curve.items():
+                    row = ttk.Frame(lec_frame)
+                    row.pack(fill=tk.X)
+                    ttk.Label(row, text=f"{pct} probability:", width=15).pack(side=tk.LEFT)
+                    ttk.Label(row, text=format_currency(value, currency)).pack(side=tk.LEFT)
+
+        # === SECTION 4: Top Remediation Priorities ===
+        if metrics.top_remediations:
+            remediation_frame = ttk.LabelFrame(self.exec_risk_content, text="Top 10 Remediation Priorities", padding=10)
+            remediation_frame.pack(fill=tk.X, padx=5, pady=5)
+
+            ttk.Label(remediation_frame,
+                     text="Addressing these items will provide the greatest risk reduction:",
+                     font=('Arial', 9)).pack(anchor=tk.W, pady=5)
+
+            # Create treeview for remediation list
+            columns = ('priority', 'plugin', 'severity', 'hosts', 'risk_reduction', 'kev')
+            tree = ttk.Treeview(remediation_frame, columns=columns, show='headings', height=10)
+
+            tree.heading('priority', text='#')
+            tree.heading('plugin', text='Vulnerability')
+            tree.heading('severity', text='Severity')
+            tree.heading('hosts', text='Hosts')
+            tree.heading('risk_reduction', text='Risk Reduction')
+            tree.heading('kev', text='KEV')
+
+            tree.column('priority', width=30, anchor=tk.CENTER)
+            tree.column('plugin', width=400)
+            tree.column('severity', width=70, anchor=tk.CENTER)
+            tree.column('hosts', width=60, anchor=tk.CENTER)
+            tree.column('risk_reduction', width=120, anchor=tk.CENTER)
+            tree.column('kev', width=50, anchor=tk.CENTER)
+
+            for idx, item in enumerate(metrics.top_remediations, 1):
+                kev_marker = "⚠ YES" if item.get('is_kev') else ""
+                tree.insert('', tk.END, values=(
+                    idx,
+                    item['plugin_name'][:60] + ('...' if len(item['plugin_name']) > 60 else ''),
+                    item['severity'],
+                    item['host_count'],
+                    f"{item['risk_reduction_pct']:.1f}%",
+                    kev_marker
+                ))
+
+            tree.pack(fill=tk.X, pady=5)
+
+            # Cumulative impact note
+            if metrics.top_remediations:
+                total_reduction = sum(r['risk_reduction_pct'] for r in metrics.top_remediations)
+                ttk.Label(remediation_frame,
+                         text=f"Remediating all 10 items would reduce risk by approximately {total_reduction:.1f}%",
+                         font=('Arial', 9, 'bold'), foreground='#28a745').pack(pady=5)
+
+        # === SECTION 5: Remediation Performance ===
+        perf_frame = ttk.LabelFrame(self.exec_risk_content, text="Remediation Performance", padding=10)
+        perf_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        perf_grid = ttk.Frame(perf_frame)
+        perf_grid.pack(fill=tk.X, pady=5)
+
+        # MTTR metrics
+        mttr_frame = ttk.Frame(perf_grid)
+        mttr_frame.pack(side=tk.LEFT, padx=20)
+
+        ttk.Label(mttr_frame, text="Mean Time to Remediate (MTTR)",
+                 font=('Arial', 10, 'bold')).pack()
+
+        if metrics.mttr_critical > 0:
+            mttr_crit_color = '#dc3545' if metrics.mttr_critical > 15 else '#28a745'
+            ttk.Label(mttr_frame, text=f"Critical: {metrics.mttr_critical:.1f} days",
+                     foreground=mttr_crit_color).pack()
+        if metrics.mttr_high > 0:
+            mttr_high_color = '#fd7e14' if metrics.mttr_high > 30 else '#28a745'
+            ttk.Label(mttr_frame, text=f"High: {metrics.mttr_high:.1f} days",
+                     foreground=mttr_high_color).pack()
+
+        # Data timestamp
+        timestamp_frame = ttk.Frame(perf_grid)
+        timestamp_frame.pack(side=tk.RIGHT, padx=20)
+        ttk.Label(timestamp_frame, text=f"Data as of: {metrics.data_as_of}",
+                 font=('Arial', 9), foreground='#888888').pack()
+        ttk.Label(timestamp_frame, text=f"Calculated: {metrics.calculation_date}",
+                 font=('Arial', 9), foreground='#888888').pack()
+
+    def _show_risk_config_dialog(self):
+        """Show configuration dialog for executive risk settings."""
+        if not hasattr(self, 'settings_manager'):
+            messagebox.showerror("Error", "Settings manager not initialized")
+            return
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Executive Risk Configuration")
+        dialog.geometry("600x700")
+        dialog.configure(bg='#2b2b2b')
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        settings = self.settings_manager.executive_risk_settings
+
+        # Create notebook for categories
+        notebook = ttk.Notebook(dialog)
+        notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # === TAB 1: Financial Parameters ===
+        finance_tab = ttk.Frame(notebook)
+        notebook.add(finance_tab, text="Financial")
+
+        # Entry variables
+        vars_dict = {}
+
+        # Hourly downtime cost
+        row1 = ttk.Frame(finance_tab)
+        row1.pack(fill=tk.X, padx=10, pady=5)
+        ttk.Label(row1, text="Hourly Downtime Cost ($):", width=25).pack(side=tk.LEFT)
+        vars_dict['hourly_downtime'] = tk.StringVar(value=str(settings.hourly_downtime_cost))
+        ttk.Entry(row1, textvariable=vars_dict['hourly_downtime'], width=15).pack(side=tk.LEFT)
+
+        # Cost per record
+        row2 = ttk.Frame(finance_tab)
+        row2.pack(fill=tk.X, padx=10, pady=5)
+        ttk.Label(row2, text="Cost per Compromised Record ($):", width=25).pack(side=tk.LEFT)
+        vars_dict['cost_per_record'] = tk.StringVar(value=str(settings.cost_per_record))
+        ttk.Entry(row2, textvariable=vars_dict['cost_per_record'], width=15).pack(side=tk.LEFT)
+        ttk.Label(row2, text="(IBM 2024 avg: $165)", foreground='#888888').pack(side=tk.LEFT, padx=5)
+
+        # Records at risk
+        row3 = ttk.Frame(finance_tab)
+        row3.pack(fill=tk.X, padx=10, pady=5)
+        ttk.Label(row3, text="Estimated Records at Risk:", width=25).pack(side=tk.LEFT)
+        vars_dict['records_at_risk'] = tk.StringVar(value=str(settings.estimated_records_at_risk))
+        ttk.Entry(row3, textvariable=vars_dict['records_at_risk'], width=15).pack(side=tk.LEFT)
+
+        # Industry vertical
+        row4 = ttk.Frame(finance_tab)
+        row4.pack(fill=tk.X, padx=10, pady=5)
+        ttk.Label(row4, text="Industry Vertical:", width=25).pack(side=tk.LEFT)
+        vars_dict['industry'] = tk.StringVar(value=settings.industry_vertical)
+        industry_combo = ttk.Combobox(row4, textvariable=vars_dict['industry'], width=15, state='readonly')
+        industry_combo['values'] = ['healthcare', 'financial', 'technology', 'energy',
+                                    'industrial', 'retail', 'government', 'manufacturing', 'other']
+        industry_combo.pack(side=tk.LEFT)
+
+        # Industry multiplier info
+        ttk.Label(finance_tab,
+                 text="Industry multipliers based on IBM Cost of Data Breach Report 2024",
+                 foreground='#888888').pack(pady=10)
+
+        # Regulatory penalty
+        row5 = ttk.Frame(finance_tab)
+        row5.pack(fill=tk.X, padx=10, pady=5)
+        ttk.Label(row5, text="Max Regulatory Penalty ($):", width=25).pack(side=tk.LEFT)
+        vars_dict['max_penalty'] = tk.StringVar(value=str(settings.max_regulatory_penalty))
+        ttk.Entry(row5, textvariable=vars_dict['max_penalty'], width=15).pack(side=tk.LEFT)
+        ttk.Label(row5, text="(0 = not applicable)", foreground='#888888').pack(side=tk.LEFT, padx=5)
+
+        # Compliance frameworks
+        row6 = ttk.Frame(finance_tab)
+        row6.pack(fill=tk.X, padx=10, pady=5)
+        ttk.Label(row6, text="Compliance Frameworks:", width=25).pack(side=tk.LEFT)
+        vars_dict['frameworks'] = tk.StringVar(value=','.join(settings.compliance_frameworks))
+        ttk.Entry(row6, textvariable=vars_dict['frameworks'], width=30).pack(side=tk.LEFT)
+        ttk.Label(row6, text="(comma-separated: FISMA,HIPAA,PCI-DSS)", foreground='#888888').pack(side=tk.LEFT, padx=5)
+
+        # Currency symbol
+        row7 = ttk.Frame(finance_tab)
+        row7.pack(fill=tk.X, padx=10, pady=5)
+        ttk.Label(row7, text="Currency Symbol:", width=25).pack(side=tk.LEFT)
+        vars_dict['currency'] = tk.StringVar(value=settings.currency_symbol)
+        ttk.Entry(row7, textvariable=vars_dict['currency'], width=5).pack(side=tk.LEFT)
+
+        # === TAB 2: FAIR Model (Advanced) ===
+        fair_tab = ttk.Frame(notebook)
+        notebook.add(fair_tab, text="FAIR Model")
+
+        ttk.Label(fair_tab, text="FAIR (Factor Analysis of Information Risk) Parameters",
+                 font=('Arial', 10, 'bold')).pack(pady=10)
+        ttk.Label(fair_tab, text="Leave at 0 if not using FAIR model",
+                 foreground='#888888').pack()
+
+        # Threat Event Frequency
+        row_tef = ttk.Frame(fair_tab)
+        row_tef.pack(fill=tk.X, padx=10, pady=5)
+        ttk.Label(row_tef, text="Annual Threat Events:", width=25).pack(side=tk.LEFT)
+        vars_dict['tef'] = tk.StringVar(value=str(settings.threat_event_frequency))
+        ttk.Entry(row_tef, textvariable=vars_dict['tef'], width=15).pack(side=tk.LEFT)
+        ttk.Label(row_tef, text="(expected attacks/year)", foreground='#888888').pack(side=tk.LEFT, padx=5)
+
+        # Vulnerability percentage
+        row_vuln = ttk.Frame(fair_tab)
+        row_vuln.pack(fill=tk.X, padx=10, pady=5)
+        ttk.Label(row_vuln, text="Vulnerability % (0-100):", width=25).pack(side=tk.LEFT)
+        vars_dict['vuln_pct'] = tk.StringVar(value=str(settings.vulnerability_percentage))
+        ttk.Entry(row_vuln, textvariable=vars_dict['vuln_pct'], width=15).pack(side=tk.LEFT)
+        ttk.Label(row_vuln, text="(% of attacks that succeed)", foreground='#888888').pack(side=tk.LEFT, padx=5)
+
+        # Control effectiveness
+        row_ctrl = ttk.Frame(fair_tab)
+        row_ctrl.pack(fill=tk.X, padx=10, pady=5)
+        ttk.Label(row_ctrl, text="Control Effectiveness (0-100):", width=25).pack(side=tk.LEFT)
+        vars_dict['control_eff'] = tk.StringVar(value=str(settings.control_effectiveness))
+        ttk.Entry(row_ctrl, textvariable=vars_dict['control_eff'], width=15).pack(side=tk.LEFT)
+
+        # Primary loss
+        ttk.Label(fair_tab, text="\nPrimary Loss Estimates (direct costs):",
+                 font=('Arial', 9, 'bold')).pack(anchor=tk.W, padx=10)
+
+        row_pl_min = ttk.Frame(fair_tab)
+        row_pl_min.pack(fill=tk.X, padx=10, pady=2)
+        ttk.Label(row_pl_min, text="Minimum ($):", width=25).pack(side=tk.LEFT)
+        vars_dict['pl_min'] = tk.StringVar(value=str(settings.primary_loss_min))
+        ttk.Entry(row_pl_min, textvariable=vars_dict['pl_min'], width=15).pack(side=tk.LEFT)
+
+        row_pl_likely = ttk.Frame(fair_tab)
+        row_pl_likely.pack(fill=tk.X, padx=10, pady=2)
+        ttk.Label(row_pl_likely, text="Most Likely ($):", width=25).pack(side=tk.LEFT)
+        vars_dict['pl_likely'] = tk.StringVar(value=str(settings.primary_loss_likely))
+        ttk.Entry(row_pl_likely, textvariable=vars_dict['pl_likely'], width=15).pack(side=tk.LEFT)
+
+        row_pl_max = ttk.Frame(fair_tab)
+        row_pl_max.pack(fill=tk.X, padx=10, pady=2)
+        ttk.Label(row_pl_max, text="Maximum ($):", width=25).pack(side=tk.LEFT)
+        vars_dict['pl_max'] = tk.StringVar(value=str(settings.primary_loss_max))
+        ttk.Entry(row_pl_max, textvariable=vars_dict['pl_max'], width=15).pack(side=tk.LEFT)
+
+        # Secondary loss
+        ttk.Label(fair_tab, text="\nSecondary Loss Estimates (reputation, legal):",
+                 font=('Arial', 9, 'bold')).pack(anchor=tk.W, padx=10)
+
+        row_sl_min = ttk.Frame(fair_tab)
+        row_sl_min.pack(fill=tk.X, padx=10, pady=2)
+        ttk.Label(row_sl_min, text="Minimum ($):", width=25).pack(side=tk.LEFT)
+        vars_dict['sl_min'] = tk.StringVar(value=str(settings.secondary_loss_min))
+        ttk.Entry(row_sl_min, textvariable=vars_dict['sl_min'], width=15).pack(side=tk.LEFT)
+
+        row_sl_likely = ttk.Frame(fair_tab)
+        row_sl_likely.pack(fill=tk.X, padx=10, pady=2)
+        ttk.Label(row_sl_likely, text="Most Likely ($):", width=25).pack(side=tk.LEFT)
+        vars_dict['sl_likely'] = tk.StringVar(value=str(settings.secondary_loss_likely))
+        ttk.Entry(row_sl_likely, textvariable=vars_dict['sl_likely'], width=15).pack(side=tk.LEFT)
+
+        row_sl_max = ttk.Frame(fair_tab)
+        row_sl_max.pack(fill=tk.X, padx=10, pady=2)
+        ttk.Label(row_sl_max, text="Maximum ($):", width=25).pack(side=tk.LEFT)
+        vars_dict['sl_max'] = tk.StringVar(value=str(settings.secondary_loss_max))
+        ttk.Entry(row_sl_max, textvariable=vars_dict['sl_max'], width=15).pack(side=tk.LEFT)
+
+        # === Button frame ===
+        button_frame = ttk.Frame(dialog)
+        button_frame.pack(fill=tk.X, padx=10, pady=10)
+
+        def save_settings():
+            try:
+                # Update settings
+                settings.hourly_downtime_cost = float(vars_dict['hourly_downtime'].get())
+                settings.cost_per_record = float(vars_dict['cost_per_record'].get())
+                settings.estimated_records_at_risk = int(vars_dict['records_at_risk'].get())
+                settings.industry_vertical = vars_dict['industry'].get()
+                settings.max_regulatory_penalty = float(vars_dict['max_penalty'].get())
+                settings.compliance_frameworks = [f.strip() for f in vars_dict['frameworks'].get().split(',') if f.strip()]
+                settings.currency_symbol = vars_dict['currency'].get() or "$"
+
+                # FAIR parameters
+                settings.threat_event_frequency = float(vars_dict['tef'].get())
+                settings.vulnerability_percentage = float(vars_dict['vuln_pct'].get())
+                settings.control_effectiveness = float(vars_dict['control_eff'].get())
+                settings.primary_loss_min = float(vars_dict['pl_min'].get())
+                settings.primary_loss_likely = float(vars_dict['pl_likely'].get())
+                settings.primary_loss_max = float(vars_dict['pl_max'].get())
+                settings.secondary_loss_min = float(vars_dict['sl_min'].get())
+                settings.secondary_loss_likely = float(vars_dict['sl_likely'].get())
+                settings.secondary_loss_max = float(vars_dict['sl_max'].get())
+
+                # Save to file
+                self.settings_manager.save_executive_risk_settings()
+                self._log("Executive risk settings saved")
+                dialog.destroy()
+
+                # Refresh dashboard if data exists
+                if self.exec_risk_metrics:
+                    self._calculate_executive_risk()
+            except ValueError as e:
+                messagebox.showerror("Invalid Input", f"Please enter valid numbers: {e}")
+
+        ttk.Button(button_frame, text="Save", command=save_settings).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
+
+    def _export_executive_risk_pdf(self):
+        """Export executive risk dashboard to PDF."""
+        if not self.exec_risk_metrics:
+            messagebox.showwarning("No Data", "Please calculate risk metrics first.")
+            return
+
+        filepath = filedialog.asksaveasfilename(
+            title="Export Executive Risk Report",
+            defaultextension=".pdf",
+            filetypes=[("PDF files", "*.pdf")],
+            initialfile=f"executive_risk_report_{datetime.now().strftime('%Y%m%d')}.pdf"
+        )
+
+        if not filepath:
+            return
+
+        try:
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+            from matplotlib.backends.backend_pdf import PdfPages
+
+            metrics = self.exec_risk_metrics
+            settings = self.settings_manager.executive_risk_settings if hasattr(self, 'settings_manager') else None
+            currency = settings.currency_symbol if settings else "$"
+
+            plt.style.use('dark_background')
+
+            with PdfPages(filepath) as pdf:
+                # === PAGE 1: Executive Summary ===
+                fig = plt.figure(figsize=(11, 8.5))
+                fig.suptitle('Executive Risk Report', fontsize=16, fontweight='bold', y=0.98)
+
+                # Risk score gauge (top left)
+                ax1 = fig.add_subplot(2, 2, 1)
+                risk_color = get_risk_color(metrics.risk_rating)
+                ax1.pie([metrics.risk_score, 100 - metrics.risk_score],
+                       colors=[risk_color, '#333333'],
+                       startangle=90, counterclock=False)
+                centre_circle = plt.Circle((0, 0), 0.70, fc='#1e1e1e')
+                ax1.add_patch(centre_circle)
+                ax1.text(0, 0.1, f'{metrics.risk_score:.0f}', ha='center', va='center',
+                        fontsize=36, fontweight='bold', color=risk_color)
+                ax1.text(0, -0.2, metrics.risk_rating, ha='center', va='center',
+                        fontsize=14, color=risk_color)
+                ax1.set_title('Risk Score', fontweight='bold', pad=20)
+
+                # Key metrics (top right)
+                ax2 = fig.add_subplot(2, 2, 2)
+                ax2.axis('off')
+                metrics_text = f"""
+KEY METRICS
+─────────────────────────
+Total Findings:        {metrics.total_findings:,}
+Critical:              {metrics.critical_findings:,}
+High:                  {metrics.high_findings:,}
+Exploitable:           {metrics.exploitable_findings:,}
+KEV (Active Exploit):  {metrics.kev_findings:,}
+SLA Breached:          {metrics.sla_breached_findings:,}
+Production Findings:   {metrics.production_findings:,}
+
+Risk Trend: {metrics.risk_trend.title()}
+"""
+                ax2.text(0.1, 0.9, metrics_text, transform=ax2.transAxes, fontsize=10,
+                        verticalalignment='top', fontfamily='monospace',
+                        bbox=dict(boxstyle='round', facecolor='#2a2a2a', alpha=0.8))
+
+                # Financial exposure (bottom left)
+                ax3 = fig.add_subplot(2, 2, 3)
+                if settings and settings.is_basic_configured():
+                    exposure_labels = ['Breach\nCost', 'Downtime\nCost', 'Regulatory\nPenalty']
+                    exposure_values = [
+                        metrics.estimated_breach_cost,
+                        metrics.estimated_downtime_cost,
+                        metrics.regulatory_penalty_exposure
+                    ]
+                    colors = ['#dc3545', '#fd7e14', '#ffc107']
+                    bars = ax3.bar(exposure_labels, exposure_values, color=colors)
+                    ax3.set_ylabel('Amount')
+                    ax3.set_title('Financial Exposure Estimates', fontweight='bold')
+                    for bar, val in zip(bars, exposure_values):
+                        ax3.text(bar.get_x() + bar.get_width()/2, bar.get_height(),
+                                format_currency(val, currency), ha='center', va='bottom', fontsize=8)
+                else:
+                    ax3.text(0.5, 0.5, 'Financial parameters\nnot configured',
+                            ha='center', va='center', fontsize=12)
+                    ax3.set_title('Financial Exposure Estimates', fontweight='bold')
+
+                # Total exposure callout (bottom right)
+                ax4 = fig.add_subplot(2, 2, 4)
+                ax4.axis('off')
+                total_text = f"""
+TOTAL FINANCIAL EXPOSURE
+═══════════════════════════
+
+{format_currency(metrics.total_financial_exposure, currency)}
+
+Based on:
+• IBM Cost of Data Breach 2024
+• Industry: {settings.industry_vertical if settings else 'N/A'}
+• Records at Risk: {settings.estimated_records_at_risk:,} if settings else 'N/A'
+
+Report Date: {metrics.calculation_date}
+Data As Of: {metrics.data_as_of}
+"""
+                ax4.text(0.1, 0.9, total_text, transform=ax4.transAxes, fontsize=10,
+                        verticalalignment='top', fontfamily='monospace',
+                        bbox=dict(boxstyle='round', facecolor='#2a2a2a', alpha=0.8))
+
+                plt.tight_layout(rect=[0, 0, 1, 0.95])
+                pdf.savefig(fig)
+                plt.close(fig)
+
+                # === PAGE 2: Top Remediation Priorities ===
+                if metrics.top_remediations:
+                    fig, ax = plt.subplots(figsize=(11, 8.5))
+                    ax.axis('off')
+                    fig.suptitle('Top Remediation Priorities', fontsize=14, fontweight='bold', y=0.98)
+
+                    table_data = [['#', 'Vulnerability', 'Sev', 'Hosts', 'Risk %', 'KEV']]
+                    for idx, item in enumerate(metrics.top_remediations, 1):
+                        table_data.append([
+                            str(idx),
+                            item['plugin_name'][:45] + ('...' if len(item['plugin_name']) > 45 else ''),
+                            item['severity'],
+                            str(item['host_count']),
+                            f"{item['risk_reduction_pct']:.1f}%",
+                            'YES' if item.get('is_kev') else ''
+                        ])
+
+                    table = ax.table(cellText=table_data, loc='center', cellLoc='left',
+                                    colWidths=[0.05, 0.50, 0.08, 0.08, 0.12, 0.08])
+                    table.auto_set_font_size(False)
+                    table.set_fontsize(9)
+                    table.scale(1, 2)
+
+                    # Style cells
+                    for i in range(len(table_data)):
+                        for j in range(len(table_data[0])):
+                            cell = table[(i, j)]
+                            cell.set_text_props(color='white')
+                            if i == 0:
+                                cell.set_facecolor('#3a3a3a')
+                                cell.set_text_props(fontweight='bold', color='white')
+                            else:
+                                cell.set_facecolor('#2d2d2d')
+
+                    # Add note
+                    total_reduction = sum(r['risk_reduction_pct'] for r in metrics.top_remediations)
+                    ax.text(0.5, 0.05, f"Remediating all items reduces risk by ~{total_reduction:.1f}%",
+                           ha='center', transform=ax.transAxes, fontsize=10, color='#28a745')
+
+                    pdf.savefig(fig)
+                    plt.close(fig)
+
+            self._show_export_success(filepath)
+            self._log(f"Exported executive risk report to {filepath}")
+
+        except Exception as e:
+            self._log(f"Error exporting executive risk PDF: {e}")
+            messagebox.showerror("Export Error", f"Failed to export PDF: {e}")
 
     def _build_database_browser_tab(self):
         """Build the Database Browser tab for table management."""
