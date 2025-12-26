@@ -1,11 +1,14 @@
 """
 Database Browser Dialog for viewing SQLite database structure and data.
+Includes SQL Query Runner with results display and Excel export.
 """
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import sqlite3
 from typing import Optional, Dict, List, Tuple
 import os
+import pandas as pd
+from datetime import datetime
 
 
 class DatabaseBrowserDialog:
@@ -25,21 +28,27 @@ class DatabaseBrowserDialog:
         self.db_path = db_path
         self.conn: Optional[sqlite3.Connection] = None
 
-        # Pagination state
+        # Pagination state for table browser
         self.current_table: Optional[str] = None
         self.current_offset = 0
         self.total_rows = 0
         self.col_names: List[str] = []
 
+        # Query runner state
+        self.query_results: Optional[pd.DataFrame] = None
+        self.query_col_names: List[str] = []
+        self.query_offset = 0
+        self.query_total_rows = 0
+
         self.dialog = tk.Toplevel(parent)
-        self.dialog.title("Database Browser")
-        self.dialog.geometry("1000x700")
+        self.dialog.title("Database Browser & Query Runner")
+        self.dialog.geometry("1200x800")
         self.dialog.transient(parent)
 
         # Center on parent
         self.dialog.update_idletasks()
-        x = parent.winfo_x() + (parent.winfo_width() - 1000) // 2
-        y = parent.winfo_y() + (parent.winfo_height() - 700) // 2
+        x = parent.winfo_x() + (parent.winfo_width() - 1200) // 2
+        y = parent.winfo_y() + (parent.winfo_height() - 800) // 2
         self.dialog.geometry(f"+{x}+{y}")
 
         self._build_ui()
@@ -63,8 +72,34 @@ class DatabaseBrowserDialog:
         self.db_label = ttk.Label(toolbar, text="No database loaded", font=('TkDefaultFont', 9, 'italic'))
         self.db_label.pack(side=tk.LEFT, padx=10)
 
+        # Create notebook for tabs
+        self.notebook = ttk.Notebook(main_frame)
+        self.notebook.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        # Tab 1: Table Browser
+        browser_tab = ttk.Frame(self.notebook)
+        self.notebook.add(browser_tab, text="  Table Browser  ")
+        self._build_browser_tab(browser_tab)
+
+        # Tab 2: SQL Query Runner
+        query_tab = ttk.Frame(self.notebook)
+        self.notebook.add(query_tab, text="  SQL Query Runner  ")
+        self._build_query_tab(query_tab)
+
+        # Summary panel at bottom
+        summary_frame = ttk.LabelFrame(main_frame, text="Database Summary", padding="5")
+        summary_frame.pack(fill=tk.X, pady=(5, 0))
+
+        self.summary_text = ttk.Label(summary_frame, text="", wraplength=1150)
+        self.summary_text.pack(fill=tk.X)
+
+        # Close button
+        ttk.Button(main_frame, text="Close", command=self.dialog.destroy).pack(pady=5)
+
+    def _build_browser_tab(self, parent):
+        """Build the table browser tab."""
         # Paned window for tables list and content
-        paned = ttk.PanedWindow(main_frame, orient=tk.HORIZONTAL)
+        paned = ttk.PanedWindow(parent, orient=tk.HORIZONTAL)
         paned.pack(fill=tk.BOTH, expand=True)
 
         # Left panel - Tables list
@@ -154,18 +189,307 @@ class DatabaseBrowserDialog:
         data_frame.grid_rowconfigure(0, weight=1)
         data_frame.grid_columnconfigure(0, weight=1)
 
-        # Summary panel at bottom
-        summary_frame = ttk.LabelFrame(main_frame, text="Database Summary", padding="5")
-        summary_frame.pack(fill=tk.X, pady=(5, 0))
-
-        self.summary_text = ttk.Label(summary_frame, text="", wraplength=950)
-        self.summary_text.pack(fill=tk.X)
-
-        # Close button
-        ttk.Button(main_frame, text="Close", command=self.dialog.destroy).pack(pady=5)
-
         # Initially disable nav buttons
         self._update_nav_buttons()
+
+    def _build_query_tab(self, parent):
+        """Build the SQL query runner tab."""
+        # Main container with vertical layout
+        query_frame = ttk.Frame(parent, padding="5")
+        query_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Top section: SQL input
+        input_frame = ttk.LabelFrame(query_frame, text="SQL Query", padding="5")
+        input_frame.pack(fill=tk.X, pady=(0, 5))
+
+        # Query text area with scrollbar
+        text_frame = ttk.Frame(input_frame)
+        text_frame.pack(fill=tk.X)
+
+        self.query_text = tk.Text(text_frame, height=6, font=('Consolas', 10), wrap=tk.WORD)
+        query_scroll = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, command=self.query_text.yview)
+        self.query_text.configure(yscrollcommand=query_scroll.set)
+
+        self.query_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        query_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Insert sample query
+        self.query_text.insert('1.0', 'SELECT * FROM lifecycle LIMIT 100')
+
+        # Button row
+        btn_frame = ttk.Frame(input_frame)
+        btn_frame.pack(fill=tk.X, pady=(5, 0))
+
+        ttk.Button(btn_frame, text="Execute Query (Ctrl+Enter)",
+                   command=self._execute_query).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_frame, text="Clear", command=self._clear_query).pack(side=tk.LEFT, padx=2)
+
+        # Common queries dropdown
+        ttk.Label(btn_frame, text="Common Queries:").pack(side=tk.LEFT, padx=(20, 5))
+        self.common_queries_var = tk.StringVar(value="Select a query...")
+        common_queries = [
+            "Select a query...",
+            "-- Vulnerability Overview --",
+            "SELECT severity, status, COUNT(*) as count FROM lifecycle GROUP BY severity, status",
+            "-- Active Findings by Host --",
+            "SELECT host_name, COUNT(*) as count FROM lifecycle WHERE status='Active' GROUP BY host_name ORDER BY count DESC",
+            "-- Remediation Rate --",
+            "SELECT severity, COUNT(CASE WHEN status='Remediated' THEN 1 END) * 100.0 / COUNT(*) as rate FROM lifecycle GROUP BY severity",
+            "-- MTTR by Severity --",
+            "SELECT severity, AVG(JULIANDAY(last_seen) - JULIANDAY(first_seen)) as avg_days FROM lifecycle WHERE status='Remediated' GROUP BY severity",
+            "-- OPDIR Compliance --",
+            "SELECT opdir_number, COUNT(*) as count FROM lifecycle WHERE opdir_number IS NOT NULL AND opdir_number != '' GROUP BY opdir_number",
+            "-- Environment Distribution --",
+            "SELECT environment, severity, COUNT(*) as count FROM lifecycle GROUP BY environment, severity",
+            "-- Top 10 Plugins --",
+            "SELECT plugin_id, plugin_name, COUNT(*) as count FROM lifecycle GROUP BY plugin_id, plugin_name ORDER BY count DESC LIMIT 10",
+            "-- Findings by Month --",
+            "SELECT strftime('%Y-%m', first_seen) as month, COUNT(*) as count FROM lifecycle GROUP BY month ORDER BY month",
+        ]
+        self.common_queries_combo = ttk.Combobox(btn_frame, textvariable=self.common_queries_var,
+                                                   values=common_queries, state="readonly", width=60)
+        self.common_queries_combo.pack(side=tk.LEFT, padx=2)
+        self.common_queries_combo.bind('<<ComboboxSelected>>', self._on_common_query_select)
+
+        # Bind Ctrl+Enter to execute
+        self.query_text.bind('<Control-Return>', lambda e: self._execute_query())
+
+        # Status label
+        self.query_status_label = ttk.Label(input_frame, text="", font=('TkDefaultFont', 9))
+        self.query_status_label.pack(fill=tk.X, pady=(5, 0))
+
+        # Results section
+        results_frame = ttk.LabelFrame(query_frame, text="Query Results", padding="5")
+        results_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Results header with navigation and export
+        results_header = ttk.Frame(results_frame)
+        results_header.pack(fill=tk.X)
+
+        # Navigation controls on left
+        qnav_frame = ttk.Frame(results_header)
+        qnav_frame.pack(side=tk.LEFT)
+
+        self.qfirst_btn = ttk.Button(qnav_frame, text="<<", width=3, command=self._query_go_first)
+        self.qfirst_btn.pack(side=tk.LEFT, padx=1)
+
+        self.qprev_btn = ttk.Button(qnav_frame, text="<", width=3, command=self._query_go_prev)
+        self.qprev_btn.pack(side=tk.LEFT, padx=1)
+
+        self.qpage_label = ttk.Label(qnav_frame, text="", width=25)
+        self.qpage_label.pack(side=tk.LEFT, padx=5)
+
+        self.qnext_btn = ttk.Button(qnav_frame, text=">", width=3, command=self._query_go_next)
+        self.qnext_btn.pack(side=tk.LEFT, padx=1)
+
+        self.qlast_btn = ttk.Button(qnav_frame, text=">>", width=3, command=self._query_go_last)
+        self.qlast_btn.pack(side=tk.LEFT, padx=1)
+
+        self.qrow_count_label = ttk.Label(results_header, text="")
+        self.qrow_count_label.pack(side=tk.LEFT, padx=10)
+
+        # Export button on right
+        export_frame = ttk.Frame(results_header)
+        export_frame.pack(side=tk.RIGHT)
+
+        ttk.Button(export_frame, text="Export to Excel",
+                   command=self._export_query_results).pack(side=tk.RIGHT, padx=2)
+        ttk.Button(export_frame, text="Copy to Clipboard",
+                   command=self._copy_query_results).pack(side=tk.RIGHT, padx=2)
+
+        # Results treeview with scrollbars
+        tree_frame = ttk.Frame(results_frame)
+        tree_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        self.query_results_tree = ttk.Treeview(tree_frame, show='headings')
+
+        qres_scroll_y = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.query_results_tree.yview)
+        qres_scroll_x = ttk.Scrollbar(tree_frame, orient=tk.HORIZONTAL, command=self.query_results_tree.xview)
+        self.query_results_tree.configure(yscrollcommand=qres_scroll_y.set, xscrollcommand=qres_scroll_x.set)
+
+        self.query_results_tree.grid(row=0, column=0, sticky='nsew')
+        qres_scroll_y.grid(row=0, column=1, sticky='ns')
+        qres_scroll_x.grid(row=1, column=0, sticky='ew')
+
+        tree_frame.grid_rowconfigure(0, weight=1)
+        tree_frame.grid_columnconfigure(0, weight=1)
+
+        # Initially disable query nav buttons
+        self._update_query_nav_buttons()
+
+    def _on_common_query_select(self, event):
+        """Handle common query selection."""
+        selected = self.common_queries_var.get()
+        if selected and not selected.startswith("Select") and not selected.startswith("--"):
+            self.query_text.delete('1.0', tk.END)
+            self.query_text.insert('1.0', selected)
+
+    def _clear_query(self):
+        """Clear the query text area."""
+        self.query_text.delete('1.0', tk.END)
+
+    def _execute_query(self):
+        """Execute the SQL query and display results."""
+        if not self.conn:
+            messagebox.showwarning("Warning", "No database loaded. Please open a database first.")
+            return
+
+        query = self.query_text.get('1.0', tk.END).strip()
+        if not query:
+            messagebox.showwarning("Warning", "Please enter a SQL query.")
+            return
+
+        try:
+            start_time = datetime.now()
+
+            # Execute query and load into DataFrame
+            self.query_results = pd.read_sql_query(query, self.conn)
+            self.query_col_names = list(self.query_results.columns)
+            self.query_total_rows = len(self.query_results)
+            self.query_offset = 0
+
+            elapsed = (datetime.now() - start_time).total_seconds()
+
+            # Update status
+            self.query_status_label.config(
+                text=f"Query executed successfully: {self.query_total_rows:,} rows returned in {elapsed:.3f}s",
+                foreground="green"
+            )
+
+            # Configure results tree columns
+            self.query_results_tree.delete(*self.query_results_tree.get_children())
+            self.query_results_tree['columns'] = self.query_col_names
+
+            for col_name in self.query_col_names:
+                self.query_results_tree.heading(col_name, text=col_name)
+                self.query_results_tree.column(col_name, width=120, minwidth=50)
+
+            # Load first page of results
+            self._load_query_results_page()
+
+        except Exception as e:
+            self.query_status_label.config(text=f"Error: {str(e)}", foreground="red")
+            self.query_results = None
+            self.query_total_rows = 0
+            self._update_query_nav_buttons()
+
+    def _load_query_results_page(self):
+        """Load current page of query results into treeview."""
+        if self.query_results is None:
+            return
+
+        # Clear existing data
+        self.query_results_tree.delete(*self.query_results_tree.get_children())
+
+        # Get data for current page
+        start_idx = self.query_offset
+        end_idx = min(start_idx + self.PAGE_SIZE, self.query_total_rows)
+        page_data = self.query_results.iloc[start_idx:end_idx]
+
+        for _, row in page_data.iterrows():
+            display_row = []
+            for val in row:
+                if pd.isna(val):
+                    display_row.append('')
+                elif isinstance(val, str) and len(val) > 50:
+                    display_row.append(val[:47] + '...')
+                else:
+                    display_row.append(str(val))
+            self.query_results_tree.insert('', 'end', values=display_row)
+
+        self._update_query_nav_buttons()
+
+    def _update_query_nav_buttons(self):
+        """Update query results navigation button states."""
+        if self.query_results is None or self.query_total_rows == 0:
+            self.qfirst_btn.config(state=tk.DISABLED)
+            self.qprev_btn.config(state=tk.DISABLED)
+            self.qnext_btn.config(state=tk.DISABLED)
+            self.qlast_btn.config(state=tk.DISABLED)
+            self.qpage_label.config(text="")
+            self.qrow_count_label.config(text="")
+            return
+
+        # Calculate current page info
+        current_page = (self.query_offset // self.PAGE_SIZE) + 1
+        total_pages = ((self.query_total_rows - 1) // self.PAGE_SIZE) + 1 if self.query_total_rows > 0 else 1
+        start_row = self.query_offset + 1
+        end_row = min(self.query_offset + self.PAGE_SIZE, self.query_total_rows)
+
+        self.qpage_label.config(text=f"Rows {start_row:,}-{end_row:,} (Page {current_page}/{total_pages})")
+        self.qrow_count_label.config(text=f"Total: {self.query_total_rows:,} rows")
+
+        # Enable/disable buttons based on position
+        can_go_back = self.query_offset > 0
+        can_go_forward = self.query_offset + self.PAGE_SIZE < self.query_total_rows
+
+        self.qfirst_btn.config(state=tk.NORMAL if can_go_back else tk.DISABLED)
+        self.qprev_btn.config(state=tk.NORMAL if can_go_back else tk.DISABLED)
+        self.qnext_btn.config(state=tk.NORMAL if can_go_forward else tk.DISABLED)
+        self.qlast_btn.config(state=tk.NORMAL if can_go_forward else tk.DISABLED)
+
+    def _query_go_first(self):
+        """Go to first page of query results."""
+        self.query_offset = 0
+        self._load_query_results_page()
+
+    def _query_go_prev(self):
+        """Go to previous page of query results."""
+        self.query_offset = max(0, self.query_offset - self.PAGE_SIZE)
+        self._load_query_results_page()
+
+    def _query_go_next(self):
+        """Go to next page of query results."""
+        new_offset = self.query_offset + self.PAGE_SIZE
+        if new_offset < self.query_total_rows:
+            self.query_offset = new_offset
+            self._load_query_results_page()
+
+    def _query_go_last(self):
+        """Go to last page of query results."""
+        if self.query_total_rows > 0:
+            self.query_offset = ((self.query_total_rows - 1) // self.PAGE_SIZE) * self.PAGE_SIZE
+            self._load_query_results_page()
+
+    def _export_query_results(self):
+        """Export query results to Excel file."""
+        if self.query_results is None or self.query_results.empty:
+            messagebox.showwarning("Warning", "No query results to export.")
+            return
+
+        filepath = filedialog.asksaveasfilename(
+            title="Export Query Results",
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx"), ("CSV files", "*.csv"), ("All files", "*.*")]
+        )
+
+        if not filepath:
+            return
+
+        try:
+            if filepath.endswith('.csv'):
+                self.query_results.to_csv(filepath, index=False)
+            else:
+                self.query_results.to_excel(filepath, index=False, engine='openpyxl')
+
+            messagebox.showinfo("Success", f"Query results exported to:\n{filepath}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to export results: {e}")
+
+    def _copy_query_results(self):
+        """Copy query results to clipboard."""
+        if self.query_results is None or self.query_results.empty:
+            messagebox.showwarning("Warning", "No query results to copy.")
+            return
+
+        try:
+            # Format as tab-separated for easy pasting into Excel
+            text = self.query_results.to_csv(sep='\t', index=False)
+            self.dialog.clipboard_clear()
+            self.dialog.clipboard_append(text)
+            messagebox.showinfo("Success", f"Copied {self.query_total_rows:,} rows to clipboard.")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to copy results: {e}")
 
     def _browse_database(self):
         """Browse for a database file."""
