@@ -82,6 +82,10 @@ class MenuBar:
             label="Export to JSON...",
             command=self.app._export_json
         )
+        file_menu.add_command(
+            label="Export Visualizations to Excel...",
+            command=self._export_visualizations
+        )
 
         file_menu.add_separator()
 
@@ -448,6 +452,81 @@ class MenuBar:
         # Use currently loaded database path if available
         db_path = getattr(self.app, 'existing_db_path', None)
         show_database_browser(self.window, db_path)
+
+    def _export_visualizations(self):
+        """Export all visualizations to Excel with embedded charts."""
+        # Check if we have data
+        if self.app.lifecycle_df.empty:
+            messagebox.showwarning(
+                "No Data",
+                "Please load and process vulnerability data first."
+            )
+            return
+
+        # Ask for save location
+        from datetime import datetime
+        default_name = f"visualizations_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+
+        filepath = filedialog.asksaveasfilename(
+            title="Export Visualizations to Excel",
+            defaultextension=".xlsx",
+            initialfile=default_name,
+            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")]
+        )
+
+        if not filepath:
+            return
+
+        # Import the exporter
+        try:
+            from ..export.excel_visualization_export import export_visualizations_to_excel
+        except ImportError:
+            from refactored_app.export.excel_visualization_export import export_visualizations_to_excel
+
+        # Get current filter settings
+        filter_settings = {}
+        if hasattr(self.app, 'severity_filter') and self.app.severity_filter.get() != 'All':
+            filter_settings['severity'] = self.app.severity_filter.get()
+        if hasattr(self.app, 'status_filter') and self.app.status_filter.get() != 'All':
+            filter_settings['status'] = self.app.status_filter.get()
+        if hasattr(self.app, 'env_filter') and self.app.env_filter.get() != 'All':
+            filter_settings['environment'] = self.app.env_filter.get()
+
+        # Get data sources
+        lifecycle_df = self.app.lifecycle_df
+        historical_df = getattr(self.app, 'historical_df', None)
+        opdir_df = getattr(self.app, 'opdir_df', None)
+        host_presence_df = getattr(self.app, 'host_presence_df', None)
+
+        # Show progress
+        self.app._log("Exporting visualizations to Excel...")
+
+        # Perform export
+        try:
+            success, notes = export_visualizations_to_excel(
+                lifecycle_df=lifecycle_df,
+                filepath=filepath,
+                historical_df=historical_df,
+                opdir_df=opdir_df,
+                host_presence_df=host_presence_df,
+                filter_settings=filter_settings if filter_settings else None
+            )
+
+            if success:
+                # Build message with notes about unsupported charts
+                msg = f"Visualizations exported successfully to:\n{filepath}"
+                if notes:
+                    msg += "\n\nNotes:\n" + "\n".join(f"- {note}" for note in notes)
+
+                messagebox.showinfo("Export Complete", msg)
+                self.app._log(f"Visualizations exported to: {filepath}")
+            else:
+                messagebox.showerror("Export Failed", "Failed to export visualizations.")
+
+        except Exception as e:
+            messagebox.showerror("Export Error", f"Error exporting visualizations: {str(e)}")
+            import traceback
+            traceback.print_exc()
 
     def _show_user_guide(self):
         """Show user guide."""
